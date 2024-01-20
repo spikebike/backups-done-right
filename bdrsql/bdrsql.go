@@ -18,14 +18,17 @@ var (
 	}
 )
 
-func Init_db(dataBaseName string, newDB bool, dbg bool) (db *sql.DB, err error) {
+func Init_db(dataBaseName string, newDB bool, debug bool) (db *sql.DB, err error) {
 	if newDB == true {
 		// rm dataBaseName*  (all backups)
 		fps, _ := filepath.Glob(dataBaseName + "*")
 		for _, fp := range fps {
 			err := os.Remove(fp)
 			if err != nil {
+				log.Println("deleted %s", fp)
 				return nil, err
+			} else {
+				log.Println("failed to delete %s", fp)
 			}
 		}
 	}
@@ -34,25 +37,28 @@ func Init_db(dataBaseName string, newDB bool, dbg bool) (db *sql.DB, err error) 
 	if err != nil {
 		log.Printf("couldn't open database: %s", err)
 		os.Exit(1)
+	} else {
+		log.Println("Database opened %s", dataBaseName)
 	}
+	if newDB == true {
+		for _, sqli := range clientSQLs {
+			_, err = db.Exec(sqli)
+			if err != nil && debug == true {
+				fmt.Printf("Failed to create tables error=%s err=%s", sqli, err)
+			} else {
+				log.Println("Tables created for %s", sqli)
+			}
+		}
+	}
+
 	// Allow commits to be buffered, MUCH faster.
 	// debug = true makes database writes synchronous and much slower,
-	if dbg == false {
+	if debug == false {
 		_, err = db.Exec("PRAGMA synchronous=OFF")
 		if err != nil {
-			log.Printf("%s", err)
+			log.Printf("Failed to disable synchronous mode %s", err)
 		}
 	}
-	return db, err
-}
 
-func CreateClientTables(db *sql.DB, debug bool) error {
-	var err error
-	for _, sqli := range clientSQLs {
-		_, err = db.Exec(sqli)
-		if err != nil && debug == true {
-			fmt.Printf("%s", err)
-		}
-	}
-	return err
+	return db, err
 }

@@ -18,18 +18,13 @@ func main() {
 	dataBaseName := "fsmeta.sql"
 	debug = true
 
-	db, err := bdrsql.Init_db(dataBaseName, *newDB, true)
+	db, err := bdrsql.Init_db(dataBaseName, true, debug)
 	if err != nil {
 		log.Printf("could not open %s, error: %s", dataBaseName, err)
 	} else {
 		log.Printf("opened database %v\n", dataBaseName)
 	}
-	err = bdrsql.CreateClientTables(db, true)
-	if err != nil && debug {
-		log.Printf("couldn't create tables: %s", err)
-	} else {
-		log.Printf("created tables\n")
+	if db == nil {
+		log.Printf("missing db")
 	}
-
-	fmt.Printf("%+v\n", db)
 }
