@@ -15,7 +15,6 @@ import (
 )
 
 var (
-	newDB     = flag.Bool("new-db", false, "true = creates a new database | false = use existing database")
 	pool_flag = flag.Int("threads", 0, "overwrites threads in [Client] section in config.cfg")
 
 	upchan = make(chan *bdrupload.Upchan_t, 100)
@@ -153,12 +152,25 @@ func checkPath(dirArray []string, excludeArray []string, dir string) bool {
 	}
 	return false
 }
+func MakeOrVerifyDir(filename string) bool {
+	_, err := os.Stat(filename)
+	if os.IsNotExist(err) { // dir doesn't exit
+		err := os.Mkdir(filename, 0700) // create dir
+		if err != nil {                 // any error
+			log.Printf("Err=%s blobdir=%s", err, filename)
+			log.Fatal(err)
+		}
+	}
+	return true
+}
 
 func main() {
 	var dirList, excludeList []string
 	var err error
 	var bytes int64
 	var bytesDone int64
+
+	resetDB := flag.Bool("resetdb", false, "true = creates a new database | false = use existing database")
 
 	flag.Parse()
 
@@ -192,12 +204,10 @@ func main() {
 	dataBaseName := viper.GetString("client.dataBaseName")
 
 	queueBlobDir := viper.GetString("client.queue_blobs")
-	if err != nil {
-		log.Fatalf("ERROR: %s", err)
-	} else {
-		os.Mkdir(queueBlobDir+"/tmp", 0700)
-		os.Mkdir(queueBlobDir+"/blob", 0700)
-	}
+
+	MakeOrVerifyDir(queueBlobDir)
+	MakeOrVerifyDir(queueBlobDir + "/tmp")
+	MakeOrVerifyDir(queueBlobDir + "/blob")
 
 	err = viper.UnmarshalKey("client.excludeList", &excludeList)
 	if err != nil {
@@ -206,7 +216,7 @@ func main() {
 
 	log.Printf("The database name is: %s\n", dataBaseName)
 
-	db, err := bdrsql.Init_db(dataBaseName, true, debug)
+	db, err := bdrsql.Init_db(dataBaseName, *resetDB, debug)
 	if err != nil {
 		log.Printf("could not open %s, error: %s", dataBaseName, err)
 	} else {
