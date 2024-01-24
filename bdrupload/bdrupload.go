@@ -59,10 +59,13 @@ func Uploader(upchan chan *Upchan_t, done chan int64, dbg bool, UpDir string) {
 			log.Fatal(err)
 		}
 		outF, err := ioutil.TempFile(UpDir+"/tmp", "bdr")
+		if err != nil {
+			log.Fatal(err)
+		}
 		log.Printf("received file=%s blob=%s\n", file.Name(), outF.Name())
 
 		if dbg {
-			fmt.Printf("Opening tmp file %s\n", outF.Name())
+			log.Printf("Opening tmp file %s\n", outF.Name())
 		}
 
 		reader := bufio.NewReader(file)
