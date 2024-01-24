@@ -153,6 +153,17 @@ func checkPath(dirArray []string, excludeArray []string, dir string) bool {
 	}
 	return false
 }
+func MakeOrVerifyDir(filename string) bool {
+	_, err := os.Stat(filename)
+	if os.IsNotExist(err) { // dir doesn't exit
+		err := os.Mkdir(filename, 0700) // create dir
+		if err != nil {                 // any error
+			log.Printf("Err=%s blobdir=%s", err, filename)
+			log.Fatal(err)
+		}
+	}
+	return true
+}
 
 func main() {
 	var dirList, excludeList []string
@@ -192,12 +203,10 @@ func main() {
 	dataBaseName := viper.GetString("client.dataBaseName")
 
 	queueBlobDir := viper.GetString("client.queue_blobs")
-	if err != nil {
-		log.Fatalf("ERROR: %s", err)
-	} else {
-		os.Mkdir(queueBlobDir+"/tmp", 0700)
-		os.Mkdir(queueBlobDir+"/blob", 0700)
-	}
+
+	MakeOrVerifyDir(queueBlobDir)
+	MakeOrVerifyDir(queueBlobDir + "/tmp")
+	MakeOrVerifyDir(queueBlobDir + "/blob")
 
 	err = viper.UnmarshalKey("client.excludeList", &excludeList)
 	if err != nil {
