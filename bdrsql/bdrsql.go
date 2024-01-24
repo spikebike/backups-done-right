@@ -3,6 +3,7 @@ package bdrsql
 import (
 	"database/sql"
 	"fmt"
+	"github.com/spikebike/backups-done-right/bdrupload"
 	"log"
 	"os"
 	"path/filepath"
@@ -114,6 +115,48 @@ func SetSQLDeleted(db *sql.DB, now int64) {
 	defer stmt.Close()
 
 	stmt.Exec(now)
+}
+
+func GetDir(db *sql.DB, dirID int64) (string, error) {
+	var dirname string
+	stmt, _ := db.Prepare("select path from dirs where id=?")
+	err := stmt.QueryRow(dirID).Scan(&dirname)
+	return dirname, err
+}
+
+func SQLUpload(db *sql.DB, UpChan chan *bdrupload.Upchan_t) error {
+	var rowID int64
+	var dirID int64
+	var olddirID int64
+	var name string
+	var dir string
+
+	rows, err := db.Query("select name, id, dirID from files where do_upload = 1")
+	if err != nil {
+		fmt.Printf("GetSQLToUpload query failed: %s\n", err)
+	}
+	defer rows.Close()
+	olddirID = -1
+	for rows.Next() {
+		rows.Scan(&name, &rowID, &dirID)
+		if dirID != olddirID {
+			dir, err = GetDir(db, dirID)
+			olddirID = dirID
+		}
+		fullpath := filepath.Join(dir, name)
+		log.Printf("fullpath=%s\n", fullpath)
+
+		// send fullpath and rowID to channel
+		recptr := &bdrupload.Upchan_t{}
+		recptr.Rowid = rowID
+		recptr.Path = fullpath
+		if debug == true {
+			log.Printf("sending %s", fullpath)
+		}
+		UpChan <- recptr
+	}
+	close(UpChan)
+	return nil
 }
 
 func Init_db(dataBaseName string, resetDB bool, debug bool) (db *sql.DB, err error) {

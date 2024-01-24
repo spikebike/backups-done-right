@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/spf13/viper"
 	"github.com/spikebike/backups-done-right/bdrsql"
+	"github.com/spikebike/backups-done-right/bdrupload"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,10 +15,51 @@ import (
 )
 
 var (
-	newDB = flag.Bool("new-db", false, "true = creates a new database | false = use existing database")
+	newDB     = flag.Bool("new-db", false, "true = creates a new database | false = use existing database")
+	pool_flag = flag.Int("threads", 0, "overwrites threads in [Client] section in config.cfg")
+
+	upchan = make(chan *bdrupload.Upchan_t, 100)
+	done   = make(chan int64)
 
 	debug bool
+	pool  int
 )
+
+type ByteSize float64
+
+const (
+	_           = iota // ignore first value by assigning to blank identifier
+	KB ByteSize = 1 << (10 * iota)
+	MB
+	GB
+	TB
+	PB
+	EB
+	ZB
+	YB
+)
+
+func (b ByteSize) String() string {
+	switch {
+	case b >= YB:
+		return fmt.Sprintf("%.2fYB", b/YB)
+	case b >= ZB:
+		return fmt.Sprintf("%.2fZB", b/ZB)
+	case b >= EB:
+		return fmt.Sprintf("%.2fEB", b/EB)
+	case b >= PB:
+		return fmt.Sprintf("%.2fPB", b/PB)
+	case b >= TB:
+		return fmt.Sprintf("%.2fTB", b/TB)
+	case b >= GB:
+		return fmt.Sprintf("%.2fGB", b/GB)
+	case b >= MB:
+		return fmt.Sprintf("%.2fMB", b/MB)
+	case b >= KB:
+		return fmt.Sprintf("%.2fKB", b/KB)
+	}
+	return fmt.Sprintf("%.2fB", b)
+}
 
 func backupDir(db *sql.DB, dirList []string, excludeList []string, dataBaseName string) error {
 	var (
@@ -115,7 +157,11 @@ func checkPath(dirArray []string, excludeArray []string, dir string) bool {
 func main() {
 	var dirList, excludeList []string
 	var err error
-	fmt.Println("Hello, World!")
+	var bytes int64
+	var bytesDone int64
+
+	flag.Parse()
+
 	debug = true
 
 	viper.SetConfigName("config.json")
@@ -130,11 +176,28 @@ func main() {
 		fmt.Println("Reading values from the config file:", name)
 	}
 
+	// Define pool, flag take priority over config file
+	pool_config := viper.GetInt("client.threads")
+
+	if *pool_flag != 0 { // flag gets priority over config file
+		pool = *pool_flag
+	} else {
+		pool = int(pool_config)
+	}
+
 	err = viper.UnmarshalKey("client.dirList", &dirList)
 	if err != nil {
 		log.Fatalf("Unable to decode into struct %v", err)
 	}
 	dataBaseName := viper.GetString("client.dataBaseName")
+
+	queueBlobDir := viper.GetString("client.queue_blobs")
+	if err != nil {
+		log.Fatalf("ERROR: %s", err)
+	} else {
+		os.Mkdir(queueBlobDir+"/tmp", 0700)
+		os.Mkdir(queueBlobDir+"/blob", 0700)
+	}
 
 	err = viper.UnmarshalKey("client.excludeList", &excludeList)
 	if err != nil {
@@ -152,6 +215,32 @@ func main() {
 	if db == nil {
 		log.Printf("missing db")
 	}
-
+	t0 := time.Now()
 	err = backupDir(db, dirList, excludeList, dataBaseName)
+	t1 := time.Now()
+	duration := t1.Sub(t0)
+
+	if err != nil {
+		log.Printf("backupDir failed: %s", err)
+		os.Exit(1)
+	}
+
+	log.Printf("walking took: %v\n", duration)
+
+	tn0 := time.Now().UnixNano()
+	for i := 0; i < pool; i++ {
+		go bdrupload.Uploader(upchan, done, debug, queueBlobDir)
+	}
+	log.Printf("started %d uploaders\n", pool)
+	bdrsql.SQLUpload(db, upchan)
+
+	bytesDone = 0
+	bytes = 0
+	for i := 0; i < pool; i++ {
+		bytes = <-done
+		bytesDone += bytes
+	}
+	tn1 := time.Now().UnixNano()
+	seconds := float64(tn1-tn0) / 1000000000
+	log.Printf("%d threads %s %s/sec in %4.2f seconds\n", pool, ByteSize(float64(bytesDone)), ByteSize(float64(bytesDone)/seconds), seconds)
 }
