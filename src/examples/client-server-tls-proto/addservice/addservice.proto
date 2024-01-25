@@ -3,7 +3,6 @@ syntax = "proto3";
 
 option go_package = "github.com/spikebike/backups-done-right/src/examples/client-server-tls-proto/addservice";
 
-
 package addservice;
 
 message add_message {
