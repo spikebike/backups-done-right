@@ -1,7 +1,7 @@
 package main
 
 import (
-	"./addservice"
+	"github.com/spikebike/backups-done-right/src/examples/addservice"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
