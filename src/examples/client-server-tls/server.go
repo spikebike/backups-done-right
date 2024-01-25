@@ -28,20 +28,20 @@ func main() {
 	log.Println("client: handshake: ", state.HandshakeComplete)
 	log.Println("client: mutual: ", state.NegotiatedProtocolIsMutual)
 
-	if NegotiatedProtocolIsMutual(conn.ConnectionState()) {
-		log.Println("The protocol negotiated during the handshake was mutual TLS")
-	} else {
-		log.Println("The protocol negotiated during the handshake was not mutual TLS")
-	}
+	//	if NegotiatedProtocolIsMutual(conn.ConnectionState()) {
+	//		log.Println("The protocol negotiated during the handshake was mutual TLS")
+	//	} else {
+	//		log.Println("The protocol negotiated during the handshake was not mutual TLS")
+	//	}
 
 	log.Println("client: connected to: ", conn.RemoteAddr())
-	state := conn.ConnectionState()
+	state = conn.ConnectionState()
 	for _, v := range state.PeerCertificates {
 		fmt.Println("Client: Server public key is:")
 		fmt.Println(x509.MarshalPKIXPublicKey(v.PublicKey))
 	}
 	log.Println("client: handshake: ", state.HandshakeComplete)
-	mutualProtocolStatus := state.NegotiatedProtocolIsMutual
+	//	mutualProtocolStatus := state.NegotiatedProtocolIsMutual
 
 	message := "Hello\n"
 	n, err := io.WriteString(conn, message)

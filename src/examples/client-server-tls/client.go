@@ -26,7 +26,7 @@ func main() {
 		fmt.Println(x509.MarshalPKIXPublicKey(v.PublicKey))
 	}
 	log.Println("client: handshake: ", state.HandshakeComplete)
-	log.Println("client: mutual: ", state.NegotiatedProtocolIsMutual)
+	//log.Println("client: mutual: ", state.NegotiatedProtocolIsMutual)
 	message := "Hello\n"
 	n, err := io.WriteString(conn, message)
 	if err != nil {
