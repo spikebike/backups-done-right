@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"github.com/spikebike/backups-done-right/src/examples/addservice"
 	"github.com/spikebike/backups-done-right/src/examples/client-server-tls-proto/addservice"
 	"github.com/spikebike/backups-done-right/src/examples/client-server-tls-proto/tlscon"
 	"log"
