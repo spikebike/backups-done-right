@@ -1,0 +1,24 @@
+README
+
+This is a small example on how a client and server can communicate by sending
+protobufs over a TLS encrypted link.  The certs do not have to be 
+signed/verified.  This is a test case for P2P usage using TOFU[1], much 
+like ssh.  This allows peers to connect to anonymous other peers, but be able 
+to sell if it's the same peer when they reconnect.
+
+The server and client print the other peers public key when they connect.  The plan is to track
+reputation and behavior over time, based on the public key.
+
+To generate certs:
+	$ ./makecert.sh AnyInvalidOrValidEmail.com
+
+To regenerate the protobuf based code:
+	$ ./make-proto.sh 
+
+To run the server:
+	$ go run server/main.go
+
+To run the client:
+	$ go run client/main.go
+
+[1] https://en.wikipedia.org/wiki/Trust_on_first_use
