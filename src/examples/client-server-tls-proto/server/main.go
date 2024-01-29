@@ -9,7 +9,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/spikebike/backups-done-right/src/examples/client-server-tls/sum"
+   "github.com/spikebike/backups-done-right/src/examples/client-server-tls-proto/sum"
 	"google.golang.org/protobuf/proto"
 )
 
