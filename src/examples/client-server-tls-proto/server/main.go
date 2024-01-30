@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/tls"
+   "crypto/rand"
 	"encoding/binary"
+   "crypto/x509"
 	"fmt"
 	"io"
 	"log"
@@ -18,17 +20,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("server: loadkeys: %s", err)
 	}
-	config := tls.Config{Certificates: []tls.Certificate{cert}}
+
+   config := tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAnyClientCert}
+   config.Rand = rand.Reader
+
 
 	listener, err := tls.Listen("tcp", ":4040", &config)
 	if err != nil {
-		fmt.Printf("Failed to open port: %v", err)
+		log.Printf("Failed to open port: %v", err)
 	}
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Printf("Failed to accept connection: %v", err)
+			log.Printf("Failed to accept connection: %v", err)
 		}
 
 		go handleConnection(conn)
@@ -44,6 +49,16 @@ func handleConnection(conn net.Conn) {
 	}(conn)
 
 	var buf [4]byte
+	tlscon, ok := conn.(*tls.Conn)
+   if ok {
+
+
+	 state := tlscon.ConnectionState()
+    log.Println("Server: client public key is:")
+    for _, v := range state.PeerCertificates {
+         log.Print(x509.MarshalPKIXPublicKey(v.PublicKey))
+    }
+
 
 	_, err := conn.Read(buf[0:])
 	if err != nil {
@@ -75,4 +90,4 @@ func handleConnection(conn net.Conn) {
 	binary.LittleEndian.PutUint32(buf[0:], uint32(len(out)))
 	conn.Write(buf[0:])
 	conn.Write(out)
-}
+}}

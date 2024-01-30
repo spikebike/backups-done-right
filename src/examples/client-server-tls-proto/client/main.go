@@ -2,28 +2,35 @@ package main
 
 import (
 	"crypto/tls"
+   "crypto/x509"
 	"encoding/binary"
 	"fmt"
    "github.com/spikebike/backups-done-right/src/examples/client-server-tls-proto/sum"
 	"google.golang.org/protobuf/proto"
 	"io"
+	"log"
 )
 
 func main() {
 
-	config := &tls.Config{
-		InsecureSkipVerify: true, // uncomment this line for local testing without valid SSL certificates
-		ServerName: "servername",
-	}
+   cert, err := tls.LoadX509KeyPair("certs/client.pem", "certs/client.key")
+   if err != nil {
+      log.Fatalf("server: loadkeys: %s", err)
+   }
 
-	conn, err := tls.Dial("tcp", "localhost:4040", config)
+   config := tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true}
+	conn, err := tls.Dial("tcp", "localhost:4040", &config)
 	if err != nil {
 		fmt.Printf("client: dial: %s", err)
 	}
 
-	if err != nil {
-		fmt.Printf("Failed to connect to server: %v", err)
-	}
+   state := conn.ConnectionState()
+   for _, v := range state.PeerCertificates {
+      fmt.Println("Client: Server public key is:")
+      fmt.Println(x509.MarshalPKIXPublicKey(v.PublicKey))
+   }
+
+
 	defer conn.Close()
 
 	numbers := &sum.Numbers{
