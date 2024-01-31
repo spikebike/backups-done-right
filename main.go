@@ -200,7 +200,7 @@ func main() {
 	err = viper.UnmarshalKey("client.dirList", &dirList)
 	if err != nil {
 		log.Fatalf("Unable to decode into struct %v", err)
-	}
+	} 
 	dataBaseName := viper.GetString("client.dataBaseName")
 
 	queueBlobDir := viper.GetString("client.queue_blobs")
@@ -215,7 +215,7 @@ func main() {
 	}
 
 	log.Printf("The database name is: %s\n", dataBaseName)
-
+   *resetDB=true
 	db, err := bdrsql.Init_db(dataBaseName, *resetDB, debug)
 	if err != nil {
 		log.Printf("could not open %s, error: %s", dataBaseName, err)
