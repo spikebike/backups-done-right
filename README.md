@@ -32,17 +32,16 @@ This will:
 Next to implement:
 * Uploading blobs to server with protobufs (example protobuf code in examples/client-server-tls-proto
 
-Idea on perf, backing up 9GB of 256MB files:
-2024/01/30 21:52:04 1 threads 9.00GB 446.11MB/sec in 20.66 seconds
-2024/01/30 21:52:32 2 threads 9.00GB 841.90MB/sec in 10.95 seconds
-2024/01/30 21:52:55 4 threads 9.00GB 1.43GB/sec in 6.30 seconds
-2024/01/30 21:53:15 8 threads 9.00GB 2.79GB/sec in 3.23 seconds
-2024/01/30 21:53:33 12 threads 9.00GB 4.36GB/sec in 2.06 seconds
-2024/01/30 21:57:13 24 threads 9.00GB 2.61GB/sec in 3.45 seconds
+Idea on perf, backing up 9GB of 256MB files on a Ryzen 7900 (non-x):
+1 threads 9.00GB 446.11MB/sec in 20.66 seconds
+2 threads 9.00GB 857.20MB/sec in 10.75 seconds
+4 threads 9.00GB 1.62GB/sec in 5.56 seconds
+8 threads 9.00GB 2.85GB/sec in 3.16 seconds
+12 threads 9.00GB 4.42GB/sec in 2.04 seconds
+24 threads 9.00GB 5.71GB/sec in 1.58 seconds
 
-
-So in 2.09 seconds 9GB was read and 9GB checksummed and encrypted, and 9GB was written.
-
-
-
-
+So in with 24 threads in 1.58 seconds:
+* 36 files were checked in the database, not found, and queued for backup
+* 9GB of plaintext was read, likely mostly from a warm cache
+* Files were checksummed with sha256's and encrypted with AES256
+* 36 files (9GB) of encrypted blobs were written

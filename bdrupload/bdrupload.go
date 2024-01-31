@@ -42,12 +42,15 @@ func Uploader(upchan chan *Upchan_t, done chan int64, dbg bool, UpDir string) {
 	ciphertext := make([]byte, bufferSize)
 	//	key_text := "32o4908go293hohg98fh40ghaidlkjk1"
 	key_text := []byte{0x12, 0x9e, 0x12, 0xfd, 0x1f, 0x9e, 0x2b, 0x31, 0x12, 0x9e, 0x12, 0xfd, 0x1f, 0x9e, 0x2b, 0x31, 0x12, 0x9e, 0x12, 0xfd, 0x1f, 0x9e, 0x2b, 0x31, 0x12, 0x9e, 0x12, 0xfd, 0x1f, 0x9e, 0x2b, 0x31}
+   if len(key_text) == 32 {
+      fmt.Printf("key is 32 bytes long, so AES256 will be sued\n")
+   }
 	c, err := aes.NewCipher([]byte(key_text))
 	if err != nil {
 		fmt.Printf("Error: NewCipher(%d bytes) = %s", len(key_text), err)
 		os.Exit(-1)
 	}
-	for f := range upchan {
+	for f := range upchan { // list of files to upload
 		if debug == true {
 			fmt.Printf("Server: received rowID=%d path=%s\n", f.Rowid, f.Path)
 		}
