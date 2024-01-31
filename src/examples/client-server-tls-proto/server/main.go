@@ -63,11 +63,11 @@ func handleConnection(conn net.Conn) {
 			log.Print(x509.MarshalPKIXPublicKey(v.PublicKey))
 		}
 
-		n, err := conn.Read(buf[0:])
+		_, err = conn.Read(buf[0:])
 		if err != nil {
 			return
 		}
-		log.Print(n)
+
 		length := binary.LittleEndian.Uint32(buf[0:])
 		data := make([]byte, length)
 
