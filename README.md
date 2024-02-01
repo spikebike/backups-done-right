@@ -41,7 +41,6 @@ Idea on perf, backing up 9GB of 256MB files on a Ryzen 7900 (non-x):
 24 threads 9.00GB 5.71GB/sec in 1.58 seconds
 
 So in with 24 threads in 1.58 seconds:
-* 36 files were checked in the database, not found, and queued for backup
 * 9GB of plaintext was read, likely mostly from a warm cache
-* Files were checksummed with sha256's and encrypted with AES256
+* Files were checksummed with sha256 and encrypted with AES256
 * 36 files (9GB) of encrypted blobs were written
