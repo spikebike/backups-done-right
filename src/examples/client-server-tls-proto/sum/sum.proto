@@ -1,12 +1,29 @@
-syntax = "proto3";
+// server.go
+package main
 
-option go_package = "github.com/spikebike/protob/sum";
+    import (
+"net"
+    "log"
+    "google.golang.org/grpc"
+    pb "github.com/spikebike/protob/sum"
+    grpc "google.golang.org/grpc"
+    "context"
+    )
 
-message Numbers {
-  int32 a = 1;
-  int32 b = 2;
-}
+    type server struct{}
 
-message Sum {
-  int32 result = 1;
-}
+func (s *server) Echo(ctx context.Context, in *pb.ByteArrays) (*pb.ByteArrays, error) {
+return in, nil
+    }
+
+func main() {
+listener, err := net.Listen("tcp", ":50051")
+    if err != nil {
+log.Fatalf("Failed to listen: %v", err)
+    }
+s := grpc.NewServer()
+    pb.RegisterByteServiceServer(s, &server{})
+    if err := s.Serve(listener); err != nil {
+log.Fatalf("Failed to serve: %v", err)
+    }
+    }
