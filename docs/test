@@ -1,0 +1,17 @@
+
+rm ../cnf/client1.db ../upload/client1/*; go run ./cmd/client -v -config ../cnf/client1.yaml backup /home/bill/test
+go run ./cmd/client -v -config ../cnf/client1.yaml listclients
+go run ./cmd/client -v -config ../cnf/client1.yaml updateclient --max=10 1 trusted
+go run ./cmd/client -v -config ../cnf/client1.yaml backup /home/bill/test
+# start peers
+for i in 2 3 4; do go run ./cmd/client -v -config ../cnf/client1.yaml addpeer 127.0.0.1:808$i; done
+go run ./cmd/client -v -config ../cnf/client1.yaml listpeers
+go run ./cmd/client -v -config ../cnf/client1.yaml status
+
+We've made good progress tonight, compression, disaster recovery, reliable adding new peers an clients, backups of the server SQL, etc.  Please update the documentation, todos, and DESIGN.md.
+i
+2026/03/28 02:35:26 ChallengeWorker: ChallengePiece RPC to peer 1 failed: failed to read ChallengePiece results: api/schema.capnp:PeerNode.challengePiece: shard 5bd625143a721b9124a60bbe75d405e37f07104edcc32f93fc6fdd4c546dab71 not actively tracked for this peer
+2026/03/28 02:35:26 ChallengeWorker: Peer 1 Piece 0 result: unavailable
+kkk
+
+

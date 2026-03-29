@@ -1,0 +1,57 @@
+# Client Configuration (`client.yaml`)
+
+## top-level
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `mnemonic` | string | Mandatory. The 24-word recovery phrase for the client's identity. |
+
+## server
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `address` | string | Server address and port (e.g. `127.0.0.1:8081`) |
+| `expected_server_key` | string | Mandatory. The Hex public key of the server (get it via `server identity`). |
+
+## crypto
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `password` | string | — | Password used to derive the AEAD encryption key (XChaCha20-Poly1305) |
+| `block_size_bytes` | int | 4194304 | Chunk size in bytes for file splitting (default 4MB) |
+
+## pipeline
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `scan_threads` | int | 4 | Number of concurrent directory scanner workers |
+| `crypto_threads` | int | 4 | Number of concurrent encryption workers |
+| `batch_upload_size` | int | 10 | Number of 4MB chunks per upload batch (10 = ~40MB per RPC call) |
+
+## storage
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `sqlite_path` | string | `backup.db` | Path to the client's local SQLite database |
+| `spool_dir` | string | `spool` | Temp directory for in-progress encryption |
+| `upload_dir` | string | `upload` | Staging directory for encrypted chunks awaiting upload |
+
+## backup_directories
+Optional list of default directories to back up if none are specified on the command line.
+
+## Example
+```yaml
+mnemonic: "word1 word2 ... word24"
+
+server:
+  address: "127.0.0.1:8081"
+  expected_server_key: "4a2b...f3e1"
+
+crypto:
+  password: "my_encryption_password"
+
+pipeline:
+  scan_threads: 4
+  crypto_threads: 4
+  batch_upload_size: 10
+
+storage:
+  sqlite_path: "backup.db"
+  spool_dir: "spool"
+  upload_dir: "upload"
+```
