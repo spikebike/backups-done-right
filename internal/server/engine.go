@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+	"golang.org/x/time/rate"
 	"lukechampine.com/blake3"
 	"p2p-backup/internal/config"
 	"p2p-backup/internal/crypto"
@@ -41,9 +42,15 @@ type Engine struct {
 	WasteThreshold             float64
 	GCIntervalMinutes          int
 	SelfBackupIntervalMinutes  int
+	PeerEvictionHours          int
+	MaxStorageBytes            int64
 	UntrustedPeerUploadLimitMB int64
+	BasePieceBuffer            int
 	ChallengesPerPiece         int
 	AdminPublicKey             string
+	// Bandwidth Throttling
+	UploadLimiter   *rate.Limiter
+	DownloadLimiter *rate.Limiter
 	// Peer Management
 	LocalPeerNode   rpc.PeerNode
 	ActivePeers     map[int64]rpc.PeerNode
@@ -55,7 +62,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, masterKey []byte, adminPublicKey string) *Engine {
+func NewEngine(db *sql.DB, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -80,6 +87,26 @@ func NewEngine(db *sql.DB, blobStoreDir, queueDir string, dataShards, parityShar
 	if selfBackupIntervalMinutes <= 0 {
 		selfBackupIntervalMinutes = 1440 // 24 hours
 	}
+	if peerEvictionHours <= 0 {
+		peerEvictionHours = 24 // 24 hours default
+	}
+	if basePieceBuffer <= 0 {
+		basePieceBuffer = 4 // Default 4 pieces buffer
+	}
+
+	var maxBytes int64
+	if maxStorageGB > 0 {
+		maxBytes = int64(maxStorageGB) * 1024 * 1024 * 1024
+	}
+
+	var uploadLimiter, downloadLimiter *rate.Limiter
+	if maxUploadKBPS > 0 {
+		uploadLimiter = rate.NewLimiter(rate.Limit(maxUploadKBPS*1024), maxUploadKBPS*1024)
+	}
+	if maxDownloadKBPS > 0 {
+		downloadLimiter = rate.NewLimiter(rate.Limit(maxDownloadKBPS*1024), maxDownloadKBPS*1024)
+	}
+
 	return &Engine{
 		DB:                         db,
 		ChallengesPerPiece:         challengesPerPiece,
@@ -97,6 +124,11 @@ func NewEngine(db *sql.DB, blobStoreDir, queueDir string, dataShards, parityShar
 		WasteThreshold:             wasteThreshold,
 		GCIntervalMinutes:          gcIntervalMinutes,
 		SelfBackupIntervalMinutes:  selfBackupIntervalMinutes,
+		PeerEvictionHours:          peerEvictionHours,
+		MaxStorageBytes:            maxBytes,
+		BasePieceBuffer:            basePieceBuffer,
+		UploadLimiter:              uploadLimiter,
+		DownloadLimiter:            downloadLimiter,
 		UntrustedPeerUploadLimitMB: int64(untrustedLimitMB),
 		ActivePeers:                make(map[int64]rpc.PeerNode),
 		StartTime:                  time.Now(),
@@ -246,13 +278,13 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			var pieceHash string
 			_ = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = 0 AND peer_id = ? LIMIT 1", shardID, p.peerID).Scan(&pieceHash)
 			
-			peerStub := e.GetActivePeer(p.peerID)
-			if !peerStub.IsValid() {
+			client, err := e.GetOrDialPeer(ctx, p.peerID)
+			if err != nil {
 				continue
 			}
+			defer client.Close()
 			
-			wrapper := &CapnpPeerClient{clientStub: peerStub}
-			data, err := wrapper.DownloadPiece(ctx, hexToBytes(pieceHash))
+			data, err := client.DownloadPiece(ctx, hexToBytes(pieceHash))
 			if err != nil {
 				continue
 			}
@@ -284,13 +316,14 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			continue
 		}
 
-		peerStub := e.GetActivePeer(p.peerID)
-		if !peerStub.IsValid() {
+		client, err := e.GetOrDialPeer(ctx, p.peerID)
+		if err != nil {
+			log.Printf("EnsureShardLocal: failed to dial peer %d: %v", p.peerID, err)
 			continue
 		}
+		defer client.Close()
 		
-		wrapper := &CapnpPeerClient{clientStub: peerStub}
-		data, err := wrapper.DownloadPiece(ctx, hexToBytes(pieceHash))
+		data, err := client.DownloadPiece(ctx, hexToBytes(pieceHash))
 		if err != nil {
 			log.Printf("EnsureShardLocal: failed to download piece %d from peer %d: %v", p.index, p.peerID, err)
 			continue
@@ -362,6 +395,20 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Get the current total disk usage (local shards + peer shards)
+	var localTotal, peerTotal int64
+	_ = tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
+	_ = tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
+	
+	incomingSize := int64(0)
+	for _, b := range blobs {
+		incomingSize += int64(len(b.Data))
+	}
+
+	if e.MaxStorageBytes > 0 && (localTotal + peerTotal + incomingSize) > e.MaxStorageBytes {
+		return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes / (1024*1024*1024))
+	}
 
 	// Get the current open shard, or create one
 	var activeShardID int64
@@ -890,11 +937,11 @@ func (e *Engine) SyncPeers(peers []config.PeerConfig) error {
 func (e *Engine) OfferShards(ctx context.Context, pubKeyHex string, shards []rpc.PeerShardMeta) ([]uint32, error) {
 	var neededIndices []uint32
 
-	if pubKeyHex != "" && pubKeyHex != "insecure-local-client" {
+	if pubKeyHex != "" {
 		// 1. Auto-register peer if they are calling this API
 		_, err := e.DB.ExecContext(ctx, `
-			INSERT INTO peers (ip_address, public_key, status, max_storage_size)
-			VALUES ('unknown', ?, 'untrusted', 1)
+			INSERT INTO peers (ip_address, public_key, status)
+			VALUES ('unknown', ?, 'untrusted')
 			ON CONFLICT(public_key) DO UPDATE SET last_seen = CURRENT_TIMESTAMP
 		`, pubKeyHex)
 		if err != nil {
@@ -904,23 +951,36 @@ func (e *Engine) OfferShards(ctx context.Context, pubKeyHex string, shards []rpc
 		// 2. Quota check
 		var status string
 		var currentSize int64
-		var maxStorageGB int64
-		err = e.DB.QueryRowContext(ctx, "SELECT status, current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&status, &currentSize, &maxStorageGB)
+		var maxStorageBytes int64
+		var peerID int64
+		err = e.DB.QueryRowContext(ctx, "SELECT id, status, current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID, &status, &currentSize, &maxStorageBytes)
 		if err == nil && status == "untrusted" {
 			var incomingSize int64
 			for _, shard := range shards {
 				incomingSize += shard.Size
 			}
-			limitBytes := maxStorageGB * 1024 * 1024 * 1024
-			if maxStorageGB == 0 {
-				limitBytes = e.UntrustedPeerUploadLimitMB * 1024 * 1024
-			}
+
+			// Dynamic Reciprocity: Limit = (MyPiecesOnPeer + BasePieceBuffer) * PieceSize
+			var myPiecesOnPeer int
+			_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
+			
+			pieceSize := e.ShardSize / int64(e.DataShards)
+			limitBytes := (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
 
 			if currentSize+incomingSize > limitBytes {
-				return nil, fmt.Errorf("peer upload quota exceeded: %d bytes over limit", (currentSize+incomingSize)-limitBytes)
+				return nil, fmt.Errorf("peer upload quota exceeded: %d bytes over limit (stored %d pieces for us, allowed %d pieces total)", (currentSize+incomingSize)-limitBytes, myPiecesOnPeer, myPiecesOnPeer+e.BasePieceBuffer)
+			}
+		} else if err == nil && status == "trusted" && maxStorageBytes > 0 {
+			// Trusted peer with explicit quota
+			var incomingSize int64
+			for _, shard := range shards {
+				incomingSize += shard.Size
+			}
+			if currentSize+incomingSize > maxStorageBytes {
+				return nil, fmt.Errorf("trusted peer upload quota exceeded")
 			}
 		}
-	} else if pubKeyHex == "" {
+	} else {
 		return nil, fmt.Errorf("unidentified peer rejected")
 	}
 
@@ -952,21 +1012,39 @@ func (e *Engine) OfferShards(ctx context.Context, pubKeyHex string, shards []rpc
 
 // UploadShards receives the actual peer shard data and saves it to disk.
 func (e *Engine) UploadShards(ctx context.Context, pubKeyHex string, shards []rpc.LocalBlobData) error {
-	if pubKeyHex != "" && pubKeyHex != "insecure-local-client" {
+	if pubKeyHex != "" {
 		// Re-verify quota
-		var currentSize, maxStorageGB int64
-		err := e.DB.QueryRowContext(ctx, "SELECT current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&currentSize, &maxStorageGB)
+		var status string
+		var currentSize, maxStorageBytes int64
+		var peerID int64
+		err := e.DB.QueryRowContext(ctx, "SELECT id, status, current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID, &status, &currentSize, &maxStorageBytes)
 		if err == nil {
 			var incomingSize int64
 			for _, shard := range shards {
 				incomingSize += int64(len(shard.Data))
 			}
-			limitBytes := maxStorageGB * 1024 * 1024 * 1024
-			if maxStorageGB == 0 {
-				limitBytes = e.UntrustedPeerUploadLimitMB * 1024 * 1024
+
+			limitBytes := maxStorageBytes
+			if status == "untrusted" {
+				var myPiecesOnPeer int
+				_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
+				
+				pieceSize := e.ShardSize / int64(e.DataShards)
+				limitBytes = (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
 			}
-			if currentSize+incomingSize > limitBytes {
+
+			if limitBytes > 0 && currentSize+incomingSize > limitBytes {
 				return fmt.Errorf("peer upload quota exceeded")
+			}
+
+			// Global server limit check
+			if e.MaxStorageBytes > 0 {
+				var localTotal, peerTotal int64
+				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
+				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
+				if (localTotal + peerTotal + incomingSize) > e.MaxStorageBytes {
+					return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes / (1024*1024*1024))
+				}
 			}
 		}
 	}
@@ -1520,4 +1598,48 @@ func (e *Engine) RemoveActivePeer(peerID int64) {
 	e.ActivePeersMu.Lock()
 	defer e.ActivePeersMu.Unlock()
 	delete(e.ActivePeers, peerID)
+}
+
+// GetOrDialPeer returns an active RPC client for a peer, dialing them if necessary.
+func (e *Engine) GetOrDialPeer(ctx context.Context, peerID int64) (*CapnpPeerClient, error) {
+	stub := e.GetActivePeer(peerID)
+	if stub.IsValid() {
+		return NewPeerClientFromStub(stub.AddRef()), nil
+	}
+
+	// Lookup in DB
+	var address, pubKeyHex string
+	err := e.DB.QueryRowContext(ctx, "SELECT ip_address, public_key FROM peers WHERE id = ?", peerID).Scan(&address, &pubKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("peer %d not found in database: %w", peerID, err)
+	}
+
+	// Dial using libp2p
+	client, err := NewCapnpPeerClient(ctx, e, address, pubKeyHex, e.LocalPeerNode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial peer %d at %s: %w", peerID, address, err)
+	}
+	client.Permanent = true // We manage this in the background goroutine
+
+	// Register it so others can reuse this connection
+	e.RegisterActivePeer(peerID, client.clientStub.AddRef())
+
+	// Announce our own listener address so they can dial us back.
+	if e.ListenAddress != "" {
+		cbHandler := NewRPCHandler(e, pubKeyHex)
+		cbNode := rpc.PeerNode_ServerToClient(cbHandler)
+		if err := client.Announce(ctx, e.ListenAddress, cbNode); err != nil {
+			log.Printf("Warning: failed to auto-announce to peer %d: %v", peerID, err)
+		}
+		cbNode.Release()
+	}
+
+	// Setup cleanup when connection drops
+	go func(pid int64, c *CapnpPeerClient) {
+		<-c.rpcConn.Done()
+		e.RemoveActivePeer(pid)
+		c.ForceClose()
+	}(peerID, client)
+
+	return client, nil
 }

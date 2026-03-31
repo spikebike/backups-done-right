@@ -79,29 +79,15 @@ func (e *Engine) runChallengeCycle(ctx context.Context) {
 
 	hashBytes, _ := hex.DecodeString(ch.hashHex)
 
-	clientStub := e.GetActivePeer(ch.peerID)
-	var activeClient *CapnpPeerClient
-
-	if !clientStub.IsValid() {
-		client, err := NewCapnpPeerClient(ctx, e.Host, ch.peerAddr, ch.peerPubKeyHex, e.LocalPeerNode)
-		if err != nil {
-			log.Printf("ChallengeWorker: failed to connect to peer %d at %s: %v", ch.peerID, ch.peerAddr, err)
-			e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", ch.peerID, ch.shardID, ch.pieceIndex)
-			return
-		}
-		clientStub = client.clientStub
-		e.RegisterActivePeer(ch.peerID, clientStub)
-		activeClient = client
-
-		go func(pid int64, c *CapnpPeerClient) {
-			<-c.rpcConn.Done()
-			e.RemoveActivePeer(pid)
-			c.Close()
-		}(ch.peerID, activeClient)
+	client, err := e.GetOrDialPeer(ctx, ch.peerID)
+	if err != nil {
+		log.Printf("ChallengeWorker: failed to connect to peer %d at %s: %v", ch.peerID, ch.peerAddr, err)
+		e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", ch.peerID, ch.shardID, ch.pieceIndex)
+		return
 	}
+	defer client.Close()
 
-	wrapper := &CapnpPeerClient{clientStub: clientStub}
-	receivedData, err := wrapper.ChallengePiece(ctx, hashBytes, uint64(ch.offset))
+	receivedData, err := client.ChallengePiece(ctx, hashBytes, uint64(ch.offset))
 
 	status := "fail"
 	if err != nil {

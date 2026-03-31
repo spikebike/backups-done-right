@@ -8,28 +8,23 @@ This document tracks the critical features and architectural improvements requir
 - [x] **Challenge Regeneration**: Mechanism to generate fresh fingerprints for shards that have exhausted their initial pool. (Implemented via `replenishPool`).
 
 ## 2. Automatic Peer Discovery (DHT)
-- [ ] **Kademlia Integration**: Replace manual `addpeer` workflows with a DHT (e.g., `libp2p`) for automatic node discovery.
+- [x] **Kademlia Integration**: Replace manual `addpeer` workflows with a DHT (e.g., `libp2p`) for automatic node discovery. (Implemented via `DiscoveryWorker` using `bdr-v1.0`).
 - [x] **NAT Hole Punching**: Implement UPnP/PMP or STUN/TURN support to allow home users to trade data without manual port forwarding. (Implemented via Cap'n Proto Capability Passing during Announce).
 
 ## 3. Automated Swarm Healing
-- [ ] **Repair Worker**: A background process that monitors Reed-Solomon health.
+- [x] **Repair Worker**: A background process that monitors Reed-Solomon health. (Implemented via `RepairWorker`).
 - [x] **Shard Reconstruction**: If a shard drops below a safety threshold, the server must automatically recall pieces and reconstruct the shard. (Implemented via `EnsureShardLocal`).
-- [ ] **Swarm Re-distribution**: Automatically distribute newly reconstructed pieces to healthy peers to restore redundancy.
+- [x] **Swarm Re-distribution**: Automatically distribute newly reconstructed pieces to healthy peers to restore redundancy. (Implemented via `RepairWorker` and `OutboundWorker`).
 
 ## 4. Resource Management
-- [ ] **Bandwidth Throttling**: Add `max_upload_kbps` and `max_download_kbps` settings using a Token Bucket algorithm.
-- [ ] **CPU/IO Niceness**: Ensure background encryption and RS-encoding don't impact system responsiveness for desktop users.
+- [x] **Bandwidth Throttling**: Add `max_upload_kbps` and `max_download_kbps` settings using a Token Bucket algorithm. (Implemented via `ThrottledReadWriteCloser` and `x/time/rate`).
 - [ ] **Filesystem Watching**: Optional background service using `inotify`/`fsevents` for real-time backups instead of batch scans.
 
 ## 5. Automated Quota & Reputation
-- [ ] **Space-for-Space Scaling**: Implement an automated "fair exchange" algorithm where a peer's storage quota scales based on how much they are successfully storing for you.
+- [x] **Space-for-Space Scaling**: Implement an automated "fair exchange" algorithm where a peer's storage quota scales based on how much they are successfully storing for you.
 - [ ] **Automated Trust Escalation**: Move from manual `updatepeer` to automated status transitions based on rolling 30-day uptime and integrity metrics.
 
 ## 6. Portability & Distribution
 - [x] **Internal Certificate CA**: Move certificate generation from `makecert.sh` into the Go binary for one-click setup on Windows/macOS/Linux.
 - [ ] **Path Normalization**: Ensure SQLite file paths are stored in a platform-agnostic format to allow cross-OS restoration (e.g., backup on Linux, restore on Windows).
-- [ ] **Single-Binary Client**: Statically link all dependencies for easy installation.
 
-## 7. UX & Polish
-- [ ] **Progress Bars**: Add rich CLI progress indicators for large file scans and shard uploads.
-- [ ] **Dry Run Mode**: A command to see exactly what *would* be backed up and how much space it *would* take before actually doing it.

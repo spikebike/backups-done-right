@@ -62,7 +62,7 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		status TEXT NOT NULL DEFAULT 'untrusted',
 		first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
 		last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-		max_storage_size INTEGER NOT NULL DEFAULT 1,
+		max_storage_size INTEGER NOT NULL DEFAULT 0,
 		current_storage_size INTEGER NOT NULL DEFAULT 0,
 		outbound_storage_size INTEGER NOT NULL DEFAULT 0
 	);

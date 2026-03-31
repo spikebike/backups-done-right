@@ -63,13 +63,14 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 	rows.Close()
 
 	for _, s := range mirrored {
-		// For each mirrored shard, find peers who don't have it yet
+		// For each mirrored shard, find peers who don't have it yet.
+		// We exclude peers who already have an 'uploaded' or 'pending' record for Piece 0.
 		query := `
 			SELECT p.id, p.ip_address, p.public_key 
 			FROM peers p
 			LEFT JOIN outbound_pieces op ON p.id = op.peer_id AND op.shard_id = ? AND op.piece_index = 0
 			WHERE p.status != 'blocked'
-			  AND (op.shard_id IS NULL OR op.status != 'uploaded')
+			  AND (op.shard_id IS NULL OR (op.status != 'uploaded' AND op.status != 'pending'))
 		`
 		pRows, err := e.DB.QueryContext(ctx, query, s.id)
 		if err != nil {
@@ -172,19 +173,19 @@ func (e *Engine) uploadPiece(ctx context.Context, shardID int64, pieceIndex int,
 			FROM peers p
 			LEFT JOIN outbound_pieces op ON p.id = op.peer_id AND op.shard_id = ?
 		`
-		if isMirrored {
-			query += " AND op.piece_index = ? "
-		}
+	if isMirrored {
+		query += " AND op.piece_index = ? "
+	}
 
-		query += `
-			WHERE p.outbound_storage_size + ? <= 
-			  CASE WHEN p.status = 'untrusted' THEN ? 
-			  ELSE p.max_storage_size * 1024 * 1024 * 1024 END
-			  AND (op.shard_id IS NULL OR (op.status != 'uploaded' AND op.status != 'pending'))
-			  AND p.status != 'blocked'
-			ORDER BY p.last_seen DESC
-			LIMIT 1
-		`
+	query += `
+		WHERE p.outbound_storage_size + ? <= 
+		  CASE WHEN p.status = 'untrusted' THEN ? 
+		  ELSE p.max_storage_size * 1024 * 1024 * 1024 END
+		  AND (op.shard_id IS NULL OR (op.status != 'uploaded' AND op.status != 'pending'))
+		  AND p.status != 'blocked'
+		ORDER BY p.last_seen DESC
+		LIMIT 1
+	`
 		var peerID int64
 		var peerAddr string
 		var peerPubKeyHex string
@@ -224,35 +225,11 @@ func (e *Engine) uploadPiece(ctx context.Context, shardID int64, pieceIndex int,
 }
 
 func (e *Engine) performUpload(ctx context.Context, peerID int64, peerAddr string, peerPubKeyHex string, shardID int64, pieceIndex int, data []byte, hashHex string, isMirrored bool, parentShardHash string, sequence uint64, totalPieces int) error {
-	clientStub := e.GetActivePeer(peerID)
-	var activeClient *CapnpPeerClient
-
-	if !clientStub.IsValid() {
-		client, err := NewCapnpPeerClient(ctx, e.Host, peerAddr, peerPubKeyHex, e.LocalPeerNode)
-		if err != nil {
-			return fmt.Errorf("dial peer %s: %w", peerAddr, err)
-		}
-
-		clientStub = client.clientStub
-		e.RegisterActivePeer(peerID, clientStub)
-		activeClient = client
-
-		// Announce our own listener address so they can dial us back.
-		// This must be synchronous so that the connection is upgraded before we call OfferShards.
-		if e.ListenAddress != "" {
-			if err := client.Announce(ctx, e.ListenAddress, e.LocalPeerNode); err != nil {
-				log.Printf("Warning: failed to announce to peer %s: %v", peerAddr, err)
-			}
-		}
-
-		go func(pid int64, c *CapnpPeerClient) {
-			<-c.rpcConn.Done()
-			e.RemoveActivePeer(pid)
-			c.Close()
-		}(peerID, activeClient)
+	client, err := e.GetOrDialPeer(ctx, peerID)
+	if err != nil {
+		return err
 	}
-
-	wrapper := &CapnpPeerClient{clientStub: clientStub}
+	defer client.Close()
 
 	meta := []rpc.PeerShardMeta{
 		{
@@ -266,12 +243,9 @@ func (e *Engine) performUpload(ctx context.Context, peerID int64, peerAddr strin
 		},
 	}
 
-	needed, err := wrapper.OfferShards(ctx, meta)
+	needed, err := client.OfferShards(ctx, meta)
 	if err != nil {
 		e.RemoveActivePeer(peerID)
-		if activeClient != nil {
-			activeClient.Close()
-		}
 		return fmt.Errorf("offer shards (connection may have dropped): %w", err)
 	}
 
@@ -287,12 +261,9 @@ func (e *Engine) performUpload(ctx context.Context, peerID int64, peerAddr strin
 				TotalPieces:     totalPieces,
 			},
 		}
-		err = wrapper.UploadShards(ctx, uploadData)
+		err = client.UploadShards(ctx, uploadData)
 		if err != nil {
 			e.RemoveActivePeer(peerID)
-			if activeClient != nil {
-				activeClient.Close()
-			}
 			// Record failure
 			_, _ = e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", peerID, shardID, pieceIndex)
 			return fmt.Errorf("upload shards: %w", err)

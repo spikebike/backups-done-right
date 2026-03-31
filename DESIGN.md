@@ -22,7 +22,7 @@ The client uses a highly parallel, configurable pipeline to maximize hardware ut
    - On completion, atomically moves the file to `upload_dir` named by its `hash_encrypted`.
    - Records the chunk sequence in the local SQLite database.
    - Enqueues `UploadJob` to `uploadChan`.
-4. **Upload Thread**: Consumes `uploadChan`, batches chunks, and offers them to the Server. Uploads missing chunks using Cap'n Proto over mTLS.
+4. **Upload Thread**: Consumes `uploadChan`, batches chunks, and offers them to the Server. Uploads missing chunks using Cap'n Proto over secure libp2p streams.
 
 #### Local State (SQLite)
 Normalized schema acts as the File System Manifest. Client-side deduplication has been deliberately removed to reduce RAM usage and allow pure streaming.
@@ -34,7 +34,7 @@ Normalized schema acts as the File System Manifest. Client-side deduplication ha
 - `backup <dir1> <dir2> ...` — Run a backup of the specified directories.
 - `restore [-b backup_id] <file/dir> [destination_dir]` — Restore files from the newest (or specified) backup, using relative path mapping for clean destination placement.
 - `status` — Display server status, replication metrics, and uptime.
-- `addpeer <ip:port>` — Instruct the server to dial and register a new peer.
+- `addpeer <multiaddr>` — Instruct the server to dial and register a new peer (must include `/p2p/` ID).
 - `updatepeer <id> <trusted|untrusted|blocked>` — Change a peer's trust status.
 - `listpeers` — Display all known peers with their status, storage usage, and last-seen timestamp.
 
@@ -51,12 +51,16 @@ Runs locally or remotely. Never sees plaintext data or client encryption keys.
 - **Infinite Stream Packing**: Packs incoming 4MB chunks sequentially into massive shard files. Tracks exact offsets in `blob_locations`.
 - **Garbage Collection (GC)**: A background `GCWorker` periodically scans for "wasted" shards.
   - **Waste Threshold**: Shards are eligible for GC if the ratio of deleted bytes (from blobs with `ref_count=0` and expired `deleted_at`) exceeds `waste_threshold`.
-  - **Repacking**: Live blobs are extracted from wasted shards and re-ingested into the current open shard using the primary ingestion pipeline.
+  - **Rep repack**: Live blobs are extracted from wasted shards and re-ingested into the current open shard using the primary ingestion pipeline.
   - **Zero-Copy Swapping**: Old shard pieces are only released from peers after the new shard is fully distributed.
   - **Pure Swarm Recovery**: If `keep_local_copy` is false, the GC worker automatically downloads enough pieces from peers to reconstruct the shard for repacking.
+- **Swarm Healing (RepairWorker)**: A background worker monitors the health of the swarm.
+  - **Peer Eviction**: If a peer is offline for more than `peer_eviction_hours`, its hosted pieces are marked as `lost`.
+  - **Redundancy Restoration**: If a shard's healthy piece count drops below the threshold (N+K), the worker triggers a repair.
+  - **Transparent Reconstruction**: Uses `EnsureShardLocal` to pull remaining pieces from the swarm, reconstruct the full shard locally, and then re-encode and distribute the missing pieces to new peers.
 - **Erasure Coding**: Uses `klauspost/reedsolomon` (Streaming API). When a shard seals, it mathematically slices it into N data + K parity pieces (e.g., 10+4 or 2+1) in a background thread.
 - **Peer Encryption**: Derives a unique encryption key for each peer dynamically using HKDF (HMAC-based Key Derivation Function) combining the Server's Master Key and the Peer's Public Key.
-- **Swarm Distribution**: An Outbound Worker actively looks for peers under their storage quota who don't already have a piece for the given shard, and pushes the pieces to them over mTLS Cap'n Proto streams.
+- **Swarm Distribution**: An Outbound Worker actively looks for peers under their storage quota who don't already have a piece for the given shard, and pushes the pieces to them over secure libp2p streams.
 - **Storage Strategy**: Can act as a "Hybrid NAS" (`keep_local_copy: true`) retaining the shard for fast local restores, or a "Pure Swarm Node" (`keep_local_copy: false`) which deletes the local shard once fully replicated to the P2P network.
 
 #### Server SQLite Schema
@@ -80,17 +84,27 @@ The system uses 24-word recovery mnemonics to deterministically derive all crypt
 ### Dynamic Discovery
 Peers and Clients are managed dynamically via the server's SQLite database. 
 - **Client Authorization**: When a client connects, the server extracts its public key. If the key is not in the `clients` table, it is registered as `pending` with zero quota. An Admin must explicitly `updateclient` to grant access.
-- **Peer Discovery**: When a new peer connects, it is registered as `untrusted`. Reputation and storage swap limits are tracked per public key.
+- **DHT Peer Discovery**: Nodes can optionally enable Kademlia-based discovery (service tag: `bdr-v1.0`). A background `DiscoveryWorker` automatically finds and connects to other members of the BDR swarm, triggering secure handshakes and "lazy registration" without manual `addpeer` calls.
 
 ### Connection Model
-- **Strict mTLS**: Every connection (Client-Server and Peer-Peer) is protected by mutual TLS using Ed25519 certificates derived from mnemonics.
-- **Server Pinning**: Clients strictly enforce server identity by pinning the server's Public Key Hex (`expected_server_key`) in their configuration. If the server provides a certificate that doesn't match the pin, the client immediately disconnects.
-- **Zero-Knowledge Quotas**: Identity is verified by the TLS handshake before any RPC calls are processed.
+- **QUIC Transport**: Every connection (Client-Server and Peer-Peer) uses the libp2p QUIC transport (UDP), enabling native stream multiplexing and superior NAT traversal.
+- **Secure Identities**: Nodes identify themselves using Ed25519 public keys derived from mnemonics. libp2p handles the secure handshake (Noise/TLS 1.3).
+- **Public Key Pinning**: Clients strictly enforce server identity by pinning the server's Public Key Hex (`expected_server_key`) in their configuration. If the server's Peer ID doesn't match the derived key, the client disconnects.
+- **Lazy Registration**: Shard and client quotas are enforced by public key. Peers are automatically registered in the database upon their first valid RPC call.
 
 ### Bidirectional NAT Traversal (Capability Passing)
 Servers maintain persistent connection pools (`ActivePeers`). When Peer A dials Peer B, A calls the `Announce` RPC and passes a live Cap'n Proto capability (`callback :PeerNode`) pointing to its own local engine. Peer B saves this capability. Later, when B needs to send data to A, it uses this capability to push data *backwards* through the exact same TCP connection A originally opened, completely bypassing NATs and firewalls without port forwarding.
+### Automated UPnP Port Mapping
+Servers can optionally attempt to negotiate automatic port forwards with home routers using UPnP and NAT-PMP. This is controlled by the `enable_upnp` configuration flag. If successful, the server becomes directly reachable from the public internet.
+
+### Bandwidth Throttling (Resource Management)
+To ensure the backup system doesn't saturate the host's internet connection, the server implements global ingress and egress rate limiting.
+- **Token Bucket Algorithm**: Uses `golang.org/x/time/rate` to provide smooth, precise bandwidth control.
+- **Stream Wrapping**: Every libp2p network stream is wrapped in a `ThrottledReadWriteCloser`. This ensures that all P2P shard trades, metadata exchanges, and client interactions collectively respect the `max_upload_kbps` and `max_download_kbps` limits.
+- **Configurable Limits**: Throttling can be disabled by setting values to `-1` (default).
 
 ### Uniform Trade Units (256MB Padding)
+...
 To ensure a fair and consistent "space-for-space" trade economy, ALL P2P data exchanges are normalized to exactly 256MB pieces.
 - **Data Shards**: Standard files are ingested until the active shard hits the configured threshold, then erasure-coded into N pieces of exactly 256MB.
 - **Recovery Shards**: Special metadata backups (like the server's own SQLite database) are padded with cryptographic zeros to exactly 256MB before being mirrored to the swarm, obscuring the size of the metadata.
@@ -104,9 +118,12 @@ To ensure a fair and consistent "space-for-space" trade economy, ALL P2P data ex
 
 ### Passive Server Rescue
 If a server loses its local state, it can be recovered using only its 24-word mnemonic:
-1. **Re-incarnation**: User enters the mnemonic on a fresh install. The server derives its identity and starts its TLS listener.
+1. **Re-incarnation**: User enters the mnemonic on a fresh install. The server derives its identity and starts its libp2p host.
 2. **Passive Discovery**: The server waits for its peers to initiate their hourly heartbeat calls.
 3. **Reconstruction**: When a peer calls, the server recognizes the connection and calls `listSpecialPieces()`. It downloads the "Special" pieces, extracts the peer map, dials the rest of the swarm in parallel, and reconstructs its compressed database.
+
+### Automatic Redundancy Restoration
+If a node remains offline beyond `peer_eviction_hours`, the swarm's `RepairWorker` automatically reassigns its pieces to healthy nodes. If redundancy falls below the safety threshold, the server transparently reconstructs the missing data from the remaining pieces in the swarm and re-distributes new pieces to restore full redundancy.
 
 ## Proof of Storage (Reputation & Health)
 
@@ -171,6 +188,13 @@ admin_public_key: "6b3c...a2d4" # Authorized client for management
 
 network:
   listen_address: "0.0.0.0:8080"
+  enable_upnp: true
+  max_upload_kbps: 5120
+  max_download_kbps: 10240
+
+discovery:
+  enabled: true
+  mode: "server"  # or "client"
 
 storage:
   sqlite_path: "server_state.db"
@@ -180,14 +204,18 @@ storage:
   keep_deleted_minutes: 30
   waste_threshold: 0.5
   gc_interval_minutes: 720
+  peer_eviction_hours: 24
 ```
 
 ## Dependencies
+- **`github.com/libp2p/go-libp2p`**: Peer-to-peer networking, QUIC transport, and NAT traversal.
 - **`capnproto.org/go/capnp/v3`**: RPC and serialization.
 - **`lukechampine.com/blake3`**: Cryptographic hashing.
 - **`modernc.org/sqlite`**: Pure-Go SQLite driver (no CGo).
 - **`github.com/klauspost/reedsolomon`**: Erasure coding.
+- **`github.com/klauspost/compress/zstd`**: Fast compression.
 - **`golang.org/x/crypto`**: XChaCha20-Poly1305 AEAD encryption and HKDF key derivation.
+- **`github.com/tyler-smith/go-bip39`**: Mnemonic phrase support.
 
 ## Future Work
 - **DHT Discovery**: Kademlia-based automatic peer discovery.

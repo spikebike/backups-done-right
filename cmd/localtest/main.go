@@ -120,6 +120,11 @@ func main() {
 		0.5,      // Default 0.5 for wasteThreshold
 		720,      // Default 12 hours for gcIntervalMinutes
 		1440,     // Default 24 hours for selfBackupIntervalMinutes
+		24,       // Default 24 hours for peerEvictionHours
+		4,        // Default 4 pieces buffer for basePieceBuffer
+		-1,       // Default no global storage limit
+		-1,       // Default no upload limit
+		-1,       // Default no download limit
 		nil,      // No master key for localtest
 		"",       // No admin key for localtest
 	)

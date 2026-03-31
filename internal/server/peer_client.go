@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 
-	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	capnp "capnproto.org/go/capnp/v3"
@@ -42,6 +41,7 @@ type CapnpPeerClient struct {
 	stream     io.ReadWriteCloser
 	rpcConn    *capnprpc.Conn
 	clientStub rpc.PeerNode
+	Permanent  bool // If true, Close() only releases the stub, not the connection
 }
 
 func (c *CapnpPeerClient) GetStub() rpc.PeerNode {
@@ -49,10 +49,10 @@ func (c *CapnpPeerClient) GetStub() rpc.PeerNode {
 }
 
 func NewPeerClientFromStub(stub rpc.PeerNode) *CapnpPeerClient {
-	return &CapnpPeerClient{clientStub: stub}
+	return &CapnpPeerClient{clientStub: stub, Permanent: true}
 }
 
-func NewCapnpPeerClient(ctx context.Context, p2pHost host.Host, address string, expectedPeerPubKeyHex string, localNode rpc.PeerNode) (*CapnpPeerClient, error) {
+func NewCapnpPeerClient(ctx context.Context, e *Engine, address string, expectedPeerPubKeyHex string, localNode rpc.PeerNode) (*CapnpPeerClient, error) {
 	peerID, err := crypto.PeerIDFromPubKeyHex(expectedPeerPubKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid peer public key: %w", err)
@@ -76,23 +76,26 @@ func NewCapnpPeerClient(ctx context.Context, p2pHost host.Host, address string, 
 		Addrs: []multiaddr.Multiaddr{maddr},
 	}
 
-	if err := p2pHost.Connect(ctx, addrInfo); err != nil {
+	if err := e.Host.Connect(ctx, addrInfo); err != nil {
 		return nil, fmt.Errorf("failed to connect to peer: %w", err)
 	}
 
-	stream, err := p2pHost.NewStream(ctx, peerID, "/bdr/rpc/1.0.0")
+	stream, err := e.Host.NewStream(ctx, peerID, "/bdr/rpc/1.0.0")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open RPC stream: %w", err)
 	}
 
-	decoder := capnp.NewDecoder(stream)
+	// Apply bandwidth throttling
+	throttledStream := e.NewThrottledStream(ctx, stream)
+
+	decoder := capnp.NewDecoder(throttledStream)
 	decoder.MaxMessageSize = 512 * 1024 * 1024 // 512MB limit for large erasure chunks
-	encoder := capnp.NewEncoder(stream)
+	encoder := capnp.NewEncoder(throttledStream)
 
 	codec := &customCodec{
 		decoder: decoder,
 		encoder: encoder,
-		closer:  stream.Close,
+		closer:  throttledStream.Close,
 	}
 
 	var bootstrapClient capnp.Client
@@ -106,7 +109,7 @@ func NewCapnpPeerClient(ctx context.Context, p2pHost host.Host, address string, 
 	clientStub := rpc.PeerNode(rpcConn.Bootstrap(ctx))
 
 	return &CapnpPeerClient{
-		stream:     stream,
+		stream:     throttledStream,
 		rpcConn:    rpcConn,
 		clientStub: clientStub,
 	}, nil
@@ -313,13 +316,30 @@ func (c *CapnpPeerClient) Announce(ctx context.Context, listenAddr string, callb
 	return nil
 }
 
+// ForceClose closes the underlying connection regardless of the Permanent flag.
+func (c *CapnpPeerClient) ForceClose() error {
+	c.clientStub.Release()
+	if c.rpcConn != nil {
+		c.rpcConn.Close()
+	}
+	if c.stream != nil {
+		return c.stream.Close()
+	}
+	return nil
+}
+
 func (c *CapnpPeerClient) Close() error {
 	c.clientStub.Release()
-	if err := c.rpcConn.Close(); err != nil {
-		if c.stream != nil {
-			c.stream.Close()
+	if c.Permanent {
+		return nil // Lifecycle managed by pool or background goroutine
+	}
+	if c.rpcConn != nil {
+		if err := c.rpcConn.Close(); err != nil {
+			if c.stream != nil {
+				c.stream.Close()
+			}
+			return err
 		}
-		return err
 	}
 	if c.stream != nil {
 		return c.stream.Close()

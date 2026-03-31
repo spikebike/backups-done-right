@@ -235,15 +235,20 @@ func main() {
 		log.Fatalf("Failed to convert identity to libp2p key: %v", err)
 	}
 
-	p2pHost, err := libp2p.New(
+	p2pOpts := []libp2p.Option{
 		libp2p.ListenAddrStrings(quicAddr, tcpAddr),
 		libp2p.Identity(p2pPrivKey),
 		// NAT Traversal
-		libp2p.NATPortMap(), // Automatically attempt UPnP / NAT-PMP
-		libp2p.EnableRelay(), // Enable acting as a limited v2 relay for others (Circuit Relay v2)
+		libp2p.EnableRelay(),                                     // Enable acting as a limited v2 relay for others (Circuit Relay v2)
 		libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{}), // DCUtR: Automatically use relays to coordinate hole punches
-		libp2p.EnableHolePunching(), // Execute UDP hole punching
-	)
+		libp2p.EnableHolePunching(),                              // Execute UDP hole punching
+	}
+
+	if cfg.Network.EnableUPnP {
+		p2pOpts = append(p2pOpts, libp2p.NATPortMap())
+	}
+
+	p2pHost, err := libp2p.New(p2pOpts...)
 	if err != nil {
 		log.Fatalf("Failed to start libp2p host: %v", err)
 	}
@@ -252,6 +257,12 @@ func main() {
 	fmt.Printf("Peer ID: %s\n", p2pHost.ID().String())
 	for _, addr := range p2pHost.Addrs() {
 		fmt.Printf("  - %s/p2p/%s\n", addr.String(), p2pHost.ID().String())
+	}
+
+	// 2. Identity: Extract our own public key for the RPC handler
+	myPubKeyHex, err := crypto.PubKeyHexFromPeerID(p2pHost.ID())
+	if err != nil {
+		log.Fatalf("Failed to extract own public key: %v", err)
 	}
 
 	engine := server.NewEngine(
@@ -272,16 +283,22 @@ func main() {
 		wasteThreshold,
 		gcIntervalMinutes,
 		cfg.Storage.SelfBackupIntervalMinutes,
+		cfg.Storage.PeerEvictionHours,
+		cfg.Storage.BasePieceBuffer,
+		cfg.Storage.MaxStorageGB,
+		cfg.Network.MaxUploadKBPS,
+		cfg.Network.MaxDownloadKBPS,
 		masterKey,
 		cfg.AdminPublicKey,
 	)
 
 	if verbose {
-		log.Printf("Server engine initialized. Blob storage at: %s", cfg.Storage.BlobStoreDir)
+		log.Printf("Server engine initialized with identity: %s...", myPubKeyHex[:16])
+		log.Printf("Blob storage at: %s", cfg.Storage.BlobStoreDir)
 		log.Printf("GC Config: keep_deleted_minutes=%d, waste_threshold=%.2f, gc_interval_minutes=%d", keepDeletedMinutes, wasteThreshold, gcIntervalMinutes)
 	}
 
-	peerHandler := server.NewRPCHandler(engine, "") // Default fallback node
+	peerHandler := server.NewRPCHandler(engine, myPubKeyHex) 
 	peerServerClient := internalrpc.PeerNode_ServerToClient(peerHandler)
 	engine.LocalPeerNode = peerServerClient
 
@@ -291,9 +308,16 @@ func main() {
 	go engine.StartChallengeWorker(ctx)
 	go engine.StartGCWorker(ctx)
 	go engine.StartSelfBackupWorker(ctx)
+	go engine.StartRepairWorker(ctx)
+
+	if cfg.Discovery.Enabled {
+		go engine.StartDiscoveryWorker(ctx, cfg.Discovery.Mode)
+	}
 
 	p2pHost.SetStreamHandler("/bdr/rpc/1.0.0", func(s network.Stream) {
-		defer s.Close()
+		// Apply bandwidth throttling
+		throttledStream := engine.NewThrottledStream(context.Background(), s)
+		defer throttledStream.Close()
 		
 		peerID := s.Conn().RemotePeer()
 		peerAddr := s.Conn().RemoteMultiaddr().String()
@@ -328,14 +352,14 @@ func main() {
 		}
 
 		// Create a custom decoder to allow up to 512MB messages
-		decoder := capnp.NewDecoder(s)
+		decoder := capnp.NewDecoder(throttledStream)
 		decoder.MaxMessageSize = 512 * 1024 * 1024 // 512MB limit for large erasure chunks
-		encoder := capnp.NewEncoder(s)
+		encoder := capnp.NewEncoder(throttledStream)
 
 		codec := &customCodec{
 			decoder: decoder,
 			encoder: encoder,
-			closer:  s.Close,
+			closer:  throttledStream.Close,
 		}
 
 		rpcConn := capnprpc.NewConn(transport.New(codec), &capnprpc.Options{

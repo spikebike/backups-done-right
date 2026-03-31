@@ -50,6 +50,9 @@ type ServerConfig struct {
 	AdminPublicKey string   `yaml:"admin_public_key"` // Authorized client for management
 	Network        struct {
 		ListenAddress string `yaml:"listen_address"`
+		EnableUPnP    bool   `yaml:"enable_upnp"`
+		MaxUploadKBPS int    `yaml:"max_upload_kbps"`
+		MaxDownloadKBPS int  `yaml:"max_download_kbps"`
 	} `yaml:"network"`
 
 	ErasureCoding struct {
@@ -68,10 +71,18 @@ type ServerConfig struct {
 		KeepLocalCopy              bool    `yaml:"keep_local_copy"` // If false, deletes local 256MB shards after P2P sync
 		KeepDeletedMinutes         int     `yaml:"keep_deleted_minutes"` // Minutes to keep blobs after client deletes them
 		WasteThreshold             float64 `yaml:"waste_threshold"` // Percentage (0.0 to 1.0) of deleted bytes to trigger GC
+		MaxStorageGB               int     `yaml:"max_storage_gb"` // Maximum total disk space to use for all shards
 		GCIntervalMinutes          int     `yaml:"gc_interval_minutes"` // How often to run the GC worker
 		SelfBackupIntervalMinutes  int     `yaml:"self_backup_interval_minutes"` // How often to backup the server's own database
+		PeerEvictionHours          int     `yaml:"peer_eviction_hours"` // Hours before a peer is considered dead and its data migrated
 		UntrustedPeerUploadLimitMB int     `yaml:"untrusted_peer_upload_limit_mb"`
+		BasePieceBuffer            int     `yaml:"base_piece_buffer"`
 	} `yaml:"storage"`
+
+	Discovery struct {
+		Enabled bool   `yaml:"enabled"`
+		Mode    string `yaml:"mode"` // "client" or "server"
+	} `yaml:"discovery"`
 
 	AllowedClients []string     `yaml:"allowed_clients"`
 	Peers          []PeerConfig `yaml:"peers"`
