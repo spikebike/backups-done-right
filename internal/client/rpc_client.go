@@ -88,7 +88,7 @@ func NewMockRPCClient(engine interface {
 
 func (m *MockRPCClient) OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([]uint32, error) {
 	if m.engine != nil {
-		return m.engine.OfferBlobs(ctx, "mock-client", blobs)
+		return m.engine.OfferBlobs(ctx, "insecure-local-client", blobs)
 	}
 	// Mock: Server needs all blobs
 	needed := make([]uint32, len(blobs))
@@ -100,7 +100,7 @@ func (m *MockRPCClient) OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([
 
 func (m *MockRPCClient) UploadBlobs(ctx context.Context, blobs []rpc.LocalBlobData) error {
 	if m.engine != nil {
-		return m.engine.UploadBlobs(ctx, "mock-client", blobs)
+		return m.engine.UploadBlobs(ctx, "insecure-local-client", blobs)
 	}
 	return nil
 }
