@@ -50,6 +50,14 @@ The current integration test (`tests/integration_test.go`) is designed to verify
     *   Verifies that a "latest" restore attempt fails to find the file.
     *   Verifies that the file can still be successfully recovered by specifying the historical backup ID.
 
+8.  **Server-Side Garbage Collection Verification (`TestServerGC`)**:
+    *   Sets a tiny `ShardSize` to force shard sealing.
+    *   Backs up a file to create a sealed shard.
+    *   Simulates blob deletion by calling `DeleteBlobs` on the server.
+    *   Manually ages the `deleted_at` timestamp in the server database.
+    *   Manually triggers the Garbage Collection loop via `engine.TriggerGC()`.
+    *   Verifies that the wasted shard and its associated data are completely removed from both the database and the filesystem.
+
 ## Running the Tests
 
 To run the integration tests, use the standard Go test command from the root of the project:

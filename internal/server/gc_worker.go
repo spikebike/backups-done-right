@@ -34,6 +34,11 @@ func (e *Engine) StartGCWorker(ctx context.Context) {
 	}
 }
 
+// TriggerGC manually triggers a garbage collection cycle.
+func (e *Engine) TriggerGC(ctx context.Context) {
+	e.runGCLoop(ctx)
+}
+
 func (e *Engine) runGCLoop(ctx context.Context) {
 	if e.Verbose {
 		log.Println("GCWorker: Starting sweep...")
