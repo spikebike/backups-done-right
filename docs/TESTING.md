@@ -58,6 +58,16 @@ The current integration test (`tests/integration_test.go`) is designed to verify
     *   Manually triggers the Garbage Collection loop via `engine.TriggerGC()`.
     *   Verifies that the wasted shard and its associated data are completely removed from both the database and the filesystem.
 
+9.  **Reed-Solomon Erasure Coding Verification (`TestReedSolomonIntegration`)**:
+    *   Configures the server with `DataShards = 2` and `ParityShards = 1`.
+    *   Backs up a file to create a shard.
+    *   Manually triggers erasure coding to generate 3 pieces (2 data + 1 parity).
+    *   Intercepts the pieces and mocks 3 separate peers to store them.
+    *   Deletes the local shard file from the server.
+    *   Simulates a peer failure by removing one of the pieces (e.g., the parity piece).
+    *   Triggers reconstruction and verifies that the original shard is perfectly recovered from the 2 remaining pieces.
+    *   Verifies that the file can be successfully restored from the reconstructed shard.
+
 ## Running the Tests
 
 To run the integration tests, use the standard Go test command from the root of the project:

@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,9 @@ import (
 	"time"
 
 	"p2p-backup/internal/client"
+	"p2p-backup/internal/crypto"
 	"p2p-backup/internal/db"
+	"p2p-backup/internal/rpc"
 	"p2p-backup/internal/server"
 )
 
@@ -696,6 +699,167 @@ func TestServerGC(t *testing.T) {
 	}
 }
 
+// MockPeerHandler implements the PeerNode Cap'n Proto interface for testing.
+type MockPeerHandler struct {
+	Pieces map[string][]byte
+}
+
+func (h *MockPeerHandler) OfferShards(ctx context.Context, call rpc.PeerNode_offerShards) error     { return nil }
+func (h *MockPeerHandler) UploadShards(ctx context.Context, call rpc.PeerNode_uploadShards) error   { return nil }
+func (h *MockPeerHandler) ChallengePiece(ctx context.Context, call rpc.PeerNode_challengePiece) error {
+	return nil
+}
+func (h *MockPeerHandler) ReleasePiece(ctx context.Context, call rpc.PeerNode_releasePiece) error {
+	return nil
+}
+func (h *MockPeerHandler) DownloadPiece(ctx context.Context, call rpc.PeerNode_downloadPiece) error {
+	args := call.Args()
+	hashBytes, _ := args.ShardChecksum()
+	hashHex := hex.EncodeToString(hashBytes)
+
+	data, ok := h.Pieces[hashHex]
+	if !ok {
+		return fmt.Errorf("piece not found: %s", hashHex)
+	}
+
+	res, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+	return res.SetData(data)
+}
+func (h *MockPeerHandler) ListSpecialPieces(ctx context.Context, call rpc.PeerNode_listSpecialPieces) error {
+	return nil
+}
+func (h *MockPeerHandler) Announce(ctx context.Context, call rpc.PeerNode_announce) error { return nil }
+
+func TestReedSolomonIntegration(t *testing.T) {
+	// 1. Setup Isolated Temporary Directories
+	baseDir := t.TempDir()
+	sourceDir := filepath.Join(baseDir, "source")
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	clientSpoolDir := filepath.Join(baseDir, "spool")
+	clientUploadDir := filepath.Join(baseDir, "upload")
+
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+		os.MkdirAll(dir, 0755)
+	}
+
+	// 2. Setup Server with DataShards=2, ParityShards=1
+	serverDB, _ := server.InitDB(filepath.Join(baseDir, "server.db"))
+	defer serverDB.Close()
+
+	shardSize := int64(1 * 1024 * 1024) // 1MB shards for fast testing
+	engine := server.NewEngine(serverDB, serverBlobDir, serverQueueDir, 2, 1, shardSize, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	
+	rpcClient := client.NewMockRPCClient(engine)
+
+	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
+	defer clientDB.Close()
+	dbJobChan := make(chan db.DBJob, 100)
+	go db.StartDBWriter(clientDB, dbJobChan)
+	defer close(dbJobChan)
+
+	key := []byte("01234567890123456789012345678901")
+
+	// --- STEP 1: Backup a file to create a shard ---
+	file1Path := filepath.Join(sourceDir, "file1.txt")
+	content := make([]byte, 512*1024) // 512KB file
+	for i := range content {
+		content[i] = byte(i % 256)
+	}
+	os.WriteFile(file1Path, content, 0644)
+	
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+
+	// Force sealing and encoding of the shard
+	var shardID int64
+	serverDB.QueryRow("SELECT id FROM shards ORDER BY id ASC LIMIT 1").Scan(&shardID)
+	
+	// Seal it manually to trigger encoding
+	_, err := serverDB.Exec("UPDATE shards SET status = 'sealed', size = ?, total_pieces = 3 WHERE id = ?", shardSize, shardID)
+	if err != nil {
+		t.Fatalf("Failed to seal shard: %v", err)
+	}
+
+	t.Logf("Triggering erasure coding for shard %d...", shardID)
+	engine.TriggerEncodeShard(shardID)
+
+	// --- STEP 2: Intercept the pieces and mock peers ---
+	peerHandlers := []*MockPeerHandler{
+		{Pieces: make(map[string][]byte)},
+		{Pieces: make(map[string][]byte)},
+		{Pieces: make(map[string][]byte)},
+	}
+
+	for i := 0; i < 3; i++ {
+		piecePath := filepath.Join(serverQueueDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+		data, err := os.ReadFile(piecePath)
+		if err != nil {
+			t.Fatalf("Failed to read piece %d: %v", i, err)
+		}
+		
+		hash := hex.EncodeToString(crypto.Hash(data))
+		peerHandlers[i].Pieces[hash] = data
+
+		// Register peer in DB
+		res, _ := serverDB.Exec("INSERT INTO peers (public_key, ip_address, status) VALUES (?, ?, 'trusted')", fmt.Sprintf("peer-%d", i), "127.0.0.1")
+		peerID, _ := res.LastInsertId()
+
+		// Register active peer client
+		node := rpc.PeerNode_ServerToClient(peerHandlers[i])
+		engine.RegisterActivePeer(peerID, node)
+
+		// Link piece to peer in DB
+		_, err = serverDB.Exec("INSERT INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, ?, ?, 'uploaded')", shardID, i, peerID)
+		if err != nil {
+			t.Fatalf("Failed to link piece to peer: %v", err)
+		}
+		_, err = serverDB.Exec("INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, ?, ?)", shardID, i, peerID, hash, 0, []byte{0})
+		if err != nil {
+			t.Fatalf("Failed to add piece challenge: %v", err)
+		}
+	}
+
+	// --- STEP 3: Delete local shard and "break" one peer ---
+	shardPath := filepath.Join(serverBlobDir, fmt.Sprintf("shard_%d.dat", shardID))
+	os.Remove(shardPath)
+	if _, err := os.Stat(shardPath); !os.IsNotExist(err) {
+		t.Fatal("Failed to delete local shard file")
+	}
+
+	// Break Peer 2 (Piece 2 - Parity)
+	// We'll just remove it from the engine's active peers and the DB for this shard
+	serverDB.Exec("DELETE FROM outbound_pieces WHERE shard_id = ? AND piece_index = 2", shardID)
+
+	// --- STEP 4: Trigger Reconstruction ---
+	t.Log("Triggering reconstruction from remaining 2 pieces...")
+	err = engine.EnsureShardLocal(context.Background(), shardID)
+	if err != nil {
+		t.Fatalf("Reconstruction failed: %v", err)
+	}
+
+	// --- STEP 5: Verify results ---
+	if _, err := os.Stat(shardPath); os.IsNotExist(err) {
+		t.Fatal("Reconstructed shard file is still missing!")
+	}
+
+	// Verify content by restoring the file
+	restoredDir := filepath.Join(baseDir, "restored")
+	restorer := client.NewRestorer(clientDB, rpcClient, key, restoredDir, false)
+	err = restorer.RestoreFile(context.Background(), file1Path, 0, sourceDir)
+	if err != nil {
+		t.Fatalf("Restore after reconstruction failed: %v", err)
+	}
+
+	restoredData, _ := os.ReadFile(filepath.Join(restoredDir, "file1.txt"))
+	if string(restoredData) != string(content) {
+		t.Error("Restored data mismatch after RS reconstruction!")
+	} else {
+		t.Log("Success! Shard was perfectly reconstructed from 2 out of 3 pieces.")
+	}
+}
 
 // runBackupCycle is a helper that starts a full backup cycle and waits for it to complete.
 func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpcClient *client.MockRPCClient, backupDirs []string, key []byte, spoolDir, uploadDir string) int64 {

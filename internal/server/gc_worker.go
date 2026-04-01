@@ -39,6 +39,11 @@ func (e *Engine) TriggerGC(ctx context.Context) {
 	e.runGCLoop(ctx)
 }
 
+// TriggerEncodeShard manually triggers erasure coding for a specific shard.
+func (e *Engine) TriggerEncodeShard(shardID int64) {
+	e.encodeShard(shardID)
+}
+
 func (e *Engine) runGCLoop(ctx context.Context) {
 	if e.Verbose {
 		log.Println("GCWorker: Starting sweep...")
