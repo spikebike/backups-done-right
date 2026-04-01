@@ -677,7 +677,16 @@ func (e *Engine) GetBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlob
 
 // ListSpecialBlobs returns a list of all special blobs (e.g., encrypted SQLite DBs) for disaster recovery.
 func (e *Engine) ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error) {
-	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size FROM blobs WHERE special = 1")
+	query := `
+		SELECT b.hash, b.size, MAX(s.sequence)
+		FROM blobs b
+		JOIN blob_locations bl ON b.hash = bl.blob_hash
+		JOIN shards s ON bl.shard_id = s.id
+		WHERE b.special = 1
+		GROUP BY b.hash, b.size
+		ORDER BY MAX(s.sequence) DESC
+	`
+	rows, err := e.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query special blobs: %w", err)
 	}
@@ -686,7 +695,7 @@ func (e *Engine) ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error) {
 	var specialBlobs []rpc.BlobMeta
 	for rows.Next() {
 		var b rpc.BlobMeta
-		if err := rows.Scan(&b.Hash, &b.Size); err != nil {
+		if err := rows.Scan(&b.Hash, &b.Size, &b.SequenceNumber); err != nil {
 			return nil, fmt.Errorf("failed to scan special blob: %w", err)
 		}
 		b.Special = true

@@ -2,9 +2,10 @@ package rpc
 
 // BlobMeta represents metadata for a blob to be offered.
 type BlobMeta struct {
-	Hash    string
-	Size    int64
-	Special bool
+	Hash           string
+	Size           int64
+	Special        bool
+	SequenceNumber uint64
 }
 
 // LocalBlobData represents the actual encrypted bytes of a blob.

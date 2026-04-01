@@ -1153,6 +1153,116 @@ func TestReedSolomonIntegration(t *testing.T) {
 	}
 }
 
+func TestDisasterRecovery(t *testing.T) {
+	// 1. Setup Isolated Temporary Directories
+	baseDir := t.TempDir()
+	sourceDir := filepath.Join(baseDir, "source")
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	clientSpoolDir := filepath.Join(baseDir, "spool")
+	clientUploadDir := filepath.Join(baseDir, "upload")
+
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+		os.MkdirAll(dir, 0755)
+	}
+
+	// 2. Setup Server
+	serverDB, _ := server.InitDB(filepath.Join(baseDir, "server.db"))
+	defer serverDB.Close()
+	engine := server.NewEngine(serverDB, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	rpcClient := client.NewMockRPCClient(engine)
+
+	// 3. Setup Client and perform a backup
+	clientDBPath := filepath.Join(baseDir, "client.db")
+	clientDB, _ := db.InitClientDB(clientDBPath)
+	dbJobChan := make(chan db.DBJob, 100)
+	go db.StartDBWriter(clientDB, dbJobChan)
+
+	key := []byte("01234567890123456789012345678901")
+	file1Path := filepath.Join(sourceDir, "important.txt")
+	content := "Extremely important data that must not be lost"
+	os.WriteFile(file1Path, []byte(content), 0644)
+
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+
+	// --- 4. BACKUP THE CLIENT DATABASE ---
+	t.Log("Backing up client database as a Special Blob...")
+	close(dbJobChan) // Stop writer so we can read DB
+	clientDB.Close()
+
+	dbData, _ := os.ReadFile(clientDBPath)
+	ciphertext, _ := crypto.Encrypt(key, dbData)
+	dbHash := hex.EncodeToString(crypto.Hash(ciphertext))
+
+	err := rpcClient.UploadBlobs(context.Background(), []rpc.LocalBlobData{
+		{
+			Hash:      dbHash,
+			Data:      ciphertext,
+			IsSpecial: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to upload DB backup: %v", err)
+	}
+
+	// --- 5. SIMULATE TOTAL DATA LOSS ---
+	t.Log("Simulating local data loss (deleting client.db)...")
+	os.Remove(clientDBPath)
+	if _, err := os.Stat(clientDBPath); !os.IsNotExist(err) {
+		t.Fatal("Failed to delete client database")
+	}
+
+	// --- 6. DISASTER RECOVERY ---
+	t.Log("Starting disaster recovery...")
+	
+	// 6a. Ask server for special blobs
+	specials, err := rpcClient.ListSpecialBlobs(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to list special blobs: %v", err)
+	}
+	if len(specials) == 0 {
+		t.Fatal("Server returned 0 special blobs")
+	}
+
+	// 6b. Find newest (our engine returns them ordered by sequence DESC)
+	newest := specials[0]
+	t.Logf("Found %d special blobs, newest has hash %s... and sequence %d", len(specials), newest.Hash[:8], newest.SequenceNumber)
+
+	// 6c. Download the newest special blob
+	blobs, missing, err := rpcClient.DownloadBlobs(context.Background(), []string{newest.Hash})
+	if err != nil || len(missing) > 0 {
+		t.Fatalf("Failed to download DB backup: %v (missing: %v)", err, missing)
+	}
+
+	// 6d. Decrypt and restore the database
+	decryptedDB, err := crypto.Decrypt(key, blobs[0].Data)
+	if err != nil {
+		t.Fatalf("Failed to decrypt recovered database: %v", err)
+	}
+	os.WriteFile(clientDBPath, decryptedDB, 0644)
+
+	// --- 7. VERIFY RESTORATION USING RECOVERED DB ---
+	t.Log("Verifying file restoration using the recovered database...")
+	recoveredDB, _ := db.InitClientDB(clientDBPath)
+	defer recoveredDB.Close()
+
+	restoredDir := filepath.Join(baseDir, "restored")
+	restorer := client.NewRestorer(recoveredDB, rpcClient, key, restoredDir, false)
+	
+	// Try to restore the "important.txt" file using the recovered manifest
+	err = restorer.RestoreFile(context.Background(), file1Path, 0, sourceDir)
+	if err != nil {
+		t.Fatalf("Restore using recovered DB failed: %v", err)
+	}
+
+	restoredData, _ := os.ReadFile(filepath.Join(restoredDir, "important.txt"))
+	if string(restoredData) != content {
+		t.Errorf("Restored data mismatch! Expected '%s', got '%s'", content, string(restoredData))
+	} else {
+		t.Log("Success! Client database recovered and file successfully restored.")
+	}
+}
+
 // runBackupCycle is a helper that starts a full backup cycle and waits for it to complete.
 func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpcClient *client.MockRPCClient, backupDirs []string, key []byte, spoolDir, uploadDir string) int64 {
 	// Create backup record

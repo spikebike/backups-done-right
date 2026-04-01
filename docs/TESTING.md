@@ -68,6 +68,15 @@ The current integration test (`tests/integration_test.go`) is designed to verify
     *   Triggers reconstruction and verifies that the original shard is perfectly recovered from the 2 remaining pieces.
     *   Verifies that the file can be successfully restored from the reconstructed shard.
 
+10. **Disaster Recovery Verification (`TestDisasterRecovery`)**:
+    *   Performs a normal backup of a file.
+    *   Manually encrypts and uploads the client's local SQLite database as a **Special Blob**.
+    *   Simulates a catastrophic local failure by **deleting the client database**.
+    *   Uses `ListSpecialBlobs` to query the server for all metadata backups.
+    *   Identifies the **newest backup** based on the shard sequence number (timestamp).
+    *   Downloads, decrypts, and restores the database to the local machine.
+    *   Uses the recovered database to successfully restore the original file, proving that the user only needs their encryption key to recover their entire backup state from a fresh install.
+
 ## Running the Tests
 
 To run the integration tests, use the standard Go test command from the root of the project:
