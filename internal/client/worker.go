@@ -214,7 +214,7 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder) error {
 				
 				// Record in local_blobs
 				p.DBJobChan <- db.DBJob{
-					Query:      "INSERT INTO local_blobs (hash_plain, hash_encrypted, size) VALUES (?, ?, ?)",
+					Query:      "INSERT OR IGNORE INTO local_blobs (hash_plain, hash_encrypted, size) VALUES (?, ?, ?)",
 					Args:       []interface{}{plainHashHex, encHashHex, ciphertextSize},
 					ResultChan: make(chan db.DBResult, 1),
 				}

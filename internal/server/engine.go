@@ -446,6 +446,17 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 	anySpecial := false
 	for _, blob := range blobs {
 		if !isGC {
+			// Check if already ingested (race condition protection)
+			var exists int
+			err := tx.QueryRowContext(ctx, "SELECT 1 FROM blobs WHERE hash = ?", blob.Hash).Scan(&exists)
+			if err == nil {
+				// Blob already exists, skip ingestion but update metadata if needed
+				if e.Verbose {
+					log.Printf("IngestBlobs: skipping blob %s, already ingested", blob.Hash)
+				}
+				continue
+			}
+
 			calculatedHash := hex.EncodeToString(crypto.Hash(blob.Data))
 			if calculatedHash != blob.Hash {
 				log.Printf("WARNING: Checksum mismatch for blob! claimed=%s, actual=%s", blob.Hash, calculatedHash)
