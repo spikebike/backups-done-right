@@ -36,12 +36,10 @@ type CryptoPool struct {
 	UploadChan  chan<- UploadJob
 	Verbose     bool
 	wg          sync.WaitGroup
-	zstdEncoder *zstd.Encoder
 }
 
 // NewCryptoPool initializes a new CryptoPool.
 func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, spoolDir, uploadDir string, numWorkers int, uploadChan chan<- UploadJob, verbose bool) *CryptoPool {
-	encoder, _ := zstd.NewWriter(nil)
 	return &CryptoPool{
 		DB:          db,
 		DBJobChan:   dbJobChan,
@@ -51,7 +49,6 @@ func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, spoolDir, 
 		NumWorkers:  numWorkers,
 		UploadChan:  uploadChan,
 		Verbose:     verbose,
-		zstdEncoder: encoder,
 	}
 }
 
@@ -84,8 +81,11 @@ func (p *CryptoPool) Wait() {
 func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID int) {
 	defer wg.Done()
 	
+	zstdEncoder, _ := zstd.NewWriter(nil)
+	defer zstdEncoder.Close()
+
 	for job := range jobChan {
-		err := p.processFile(job)
+		err := p.processFile(job, zstdEncoder)
 		if err != nil {
 			log.Printf("[Worker %d] Error processing %s: %v", workerID, job.Path, err)
 		} else {
@@ -96,7 +96,7 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 	}
 }
 
-func (p *CryptoPool) processFile(job FileJob) error {
+func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder) error {
 	// 1. Read file stats (Lstat to avoid following symlinks)
 	info, err := os.Lstat(job.Path)
 	if err != nil {
@@ -168,16 +168,17 @@ func (p *CryptoPool) processFile(job FileJob) error {
 	}
 
 	// 4. Process in 4MB blocks
-	buf := make([]byte, 4*1024*1024) // 4MB blocks
+	chunkBuf := make([]byte, 4*1024*1024) // 4MB blocks
 	sequence := 0
 
 	for {
-		n, err := inFile.Read(buf)
+		n, err := inFile.Read(chunkBuf)
 		if n > 0 {
-			rawChunk := buf[:n]
+			rawChunk := make([]byte, n)
+			copy(rawChunk, chunkBuf[:n])
 			
 			// Compress with zstd
-			chunk := p.zstdEncoder.EncodeAll(rawChunk, nil)
+			chunk := zstdEncoder.EncodeAll(rawChunk, nil)
 			
 			// Hash plaintext chunk (now compressed)
 			plainHash := crypto.Hash(chunk)
@@ -225,8 +226,15 @@ func (p *CryptoPool) processFile(job FileJob) error {
 				}
 				
 				uploadPath := filepath.Join(p.UploadDir, encHashHex)
-				if renameErr := os.Rename(tmpPath, uploadPath); renameErr != nil {
-					return fmt.Errorf("spool rename error: %w", renameErr)
+				if _, err := os.Stat(uploadPath); os.IsNotExist(err) {
+					if renameErr := os.Rename(tmpPath, uploadPath); renameErr != nil {
+						// Double-check if it was created in the meantime
+						if _, err2 := os.Stat(uploadPath); os.IsNotExist(err2) {
+							return fmt.Errorf("spool rename error: %w", renameErr)
+						}
+					}
+				} else {
+					os.Remove(tmpPath) // Destination exists, remove the temporary file
 				}
 
 				// Queue for upload
