@@ -37,6 +37,19 @@ The current integration test (`tests/integration_test.go`) is designed to verify
     *   Asserts that the server database only contains **one** blob, proving that both Convergent Encryption and server-side deduplication are working.
     *   Restores both files and verifies they both contain the correct data from the shared blob.
 
+6.  **Incremental Backup Verification (`TestIncrementalBackup`)**:
+    *   Runs an initial backup of a file.
+    *   Runs a second backup with no changes and verifies that the crawler skips the file (no new `file_versions` record).
+    *   Modifies the file and runs a third backup, verifying that a new version is created.
+    *   Restores both the original and the modified version to ensure point-in-time recovery works.
+
+7.  **File Deletion Verification (`TestFileDeletion`)**:
+    *   Backs up a file.
+    *   Deletes the file from the source directory.
+    *   Runs a second backup and verifies that the file is marked as `deleted = 1` in the local manifest.
+    *   Verifies that a "latest" restore attempt fails to find the file.
+    *   Verifies that the file can still be successfully recovered by specifying the historical backup ID.
+
 ## Running the Tests
 
 To run the integration tests, use the standard Go test command from the root of the project:
