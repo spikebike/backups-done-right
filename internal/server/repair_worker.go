@@ -23,6 +23,11 @@ func (e *Engine) StartRepairWorker(ctx context.Context) {
 	}
 }
 
+// TriggerRepair manually triggers a swarm health check and repair cycle.
+func (e *Engine) TriggerRepair(ctx context.Context) {
+	e.runRepairCycle(ctx)
+}
+
 func (e *Engine) runRepairCycle(ctx context.Context) {
 	if e.Verbose {
 		log.Println("RepairWorker: Starting swarm health check...")

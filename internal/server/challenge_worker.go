@@ -29,6 +29,11 @@ func (e *Engine) StartChallengeWorker(ctx context.Context) {
 	}
 }
 
+// TriggerChallenge manually triggers a Proof-of-Storage challenge cycle.
+func (e *Engine) TriggerChallenge(ctx context.Context) {
+	e.runChallengeCycle(ctx)
+}
+
 // pendingChallenge holds one challenge to issue, collected before the cursor closes.
 type pendingChallenge struct {
 	challengeID   int64

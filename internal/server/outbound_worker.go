@@ -39,6 +39,11 @@ func (e *Engine) StartOutboundWorker(ctx context.Context) {
 	}
 }
 
+// TriggerOutbound manually triggers a scan of the outbound queue.
+func (e *Engine) TriggerOutbound(ctx context.Context) {
+	e.processQueue(ctx)
+}
+
 func (e *Engine) syncMirroredShards(ctx context.Context) {
 	// Find all mirrored shards
 	rows, err := e.DB.QueryContext(ctx, "SELECT id, hash, sequence, total_pieces FROM shards WHERE mirrored = 1")

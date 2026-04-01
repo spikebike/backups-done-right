@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -704,12 +705,61 @@ type MockPeerHandler struct {
 	Pieces map[string][]byte
 }
 
-func (h *MockPeerHandler) OfferShards(ctx context.Context, call rpc.PeerNode_offerShards) error     { return nil }
-func (h *MockPeerHandler) UploadShards(ctx context.Context, call rpc.PeerNode_uploadShards) error   { return nil }
-func (h *MockPeerHandler) ChallengePiece(ctx context.Context, call rpc.PeerNode_challengePiece) error {
+func (h *MockPeerHandler) OfferShards(ctx context.Context, call rpc.PeerNode_offerShards) error {
+	args := call.Args()
+	shards, _ := args.Shards()
+	res, _ := call.AllocResults()
+	needed, _ := res.NewNeededIndices(int32(shards.Len()))
+	for i := 0; i < shards.Len(); i++ {
+		needed.Set(i, uint32(i))
+	}
 	return nil
 }
+
+func (h *MockPeerHandler) UploadShards(ctx context.Context, call rpc.PeerNode_uploadShards) error {
+	args := call.Args()
+	shards, _ := args.Shards()
+	for i := 0; i < shards.Len(); i++ {
+		s := shards.At(i)
+		hashBytes, _ := s.Checksum()
+		dataBytes, _ := s.Data()
+		
+		// Make safe copies
+		hash := hex.EncodeToString(hashBytes)
+		data := make([]byte, len(dataBytes))
+		copy(data, dataBytes)
+		
+		h.Pieces[hash] = data
+	}
+	res, _ := call.AllocResults()
+	res.SetSuccess(true)
+	return nil
+}
+
+func (h *MockPeerHandler) ChallengePiece(ctx context.Context, call rpc.PeerNode_challengePiece) error {
+	args := call.Args()
+	hashBytes, _ := args.ShardChecksum()
+	hashHex := hex.EncodeToString(hashBytes)
+	offset := args.Offset()
+
+	data, ok := h.Pieces[hashHex]
+	if !ok {
+		return fmt.Errorf("piece not found: %s", hashHex)
+	}
+
+	if int(offset)+32 > len(data) {
+		return fmt.Errorf("offset %d + 32 exceeds data length %d", offset, len(data))
+	}
+
+	res, err := call.AllocResults()
+	if err != nil {
+		return err
+	}
+	return res.SetData(data[offset : offset+32])
+}
 func (h *MockPeerHandler) ReleasePiece(ctx context.Context, call rpc.PeerNode_releasePiece) error {
+	res, _ := call.AllocResults()
+	res.SetSuccess(true)
 	return nil
 }
 func (h *MockPeerHandler) DownloadPiece(ctx context.Context, call rpc.PeerNode_downloadPiece) error {
@@ -729,9 +779,251 @@ func (h *MockPeerHandler) DownloadPiece(ctx context.Context, call rpc.PeerNode_d
 	return res.SetData(data)
 }
 func (h *MockPeerHandler) ListSpecialPieces(ctx context.Context, call rpc.PeerNode_listSpecialPieces) error {
+	res, _ := call.AllocResults()
+	res.NewShards(0)
 	return nil
 }
-func (h *MockPeerHandler) Announce(ctx context.Context, call rpc.PeerNode_announce) error { return nil }
+func (h *MockPeerHandler) Announce(ctx context.Context, call rpc.PeerNode_announce) error {
+	res, _ := call.AllocResults()
+	res.SetSuccess(true)
+	return nil
+}
+
+func TestOutboundWorkerFlow(t *testing.T) {
+	// 1. Setup Isolated Temporary Directories
+	baseDir := t.TempDir()
+	sourceDir := filepath.Join(baseDir, "source")
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	clientSpoolDir := filepath.Join(baseDir, "spool")
+	clientUploadDir := filepath.Join(baseDir, "upload")
+
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+		os.MkdirAll(dir, 0755)
+	}
+
+	// 2. Setup Server & Mock Peer
+	serverDB, _ := server.InitDB(filepath.Join(baseDir, "server.db"))
+	defer serverDB.Close()
+
+	// Use tiny shards so they seal immediately
+	engine := server.NewEngine(serverDB, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	rpcClient := client.NewMockRPCClient(engine)
+
+	// Register two mock peers
+	mockHandler1 := &MockPeerHandler{Pieces: make(map[string][]byte)}
+	mockHandler2 := &MockPeerHandler{Pieces: make(map[string][]byte)}
+	
+	serverDB.Exec("INSERT INTO peers (public_key, ip_address, status, max_storage_size) VALUES (?, ?, 'trusted', 100)", "peer-1", "127.0.0.1")
+	serverDB.Exec("INSERT INTO peers (public_key, ip_address, status, max_storage_size) VALUES (?, ?, 'trusted', 100)", "peer-2", "127.0.0.2")
+	
+	var peerID1, peerID2 int64
+	serverDB.QueryRow("SELECT id FROM peers WHERE public_key = 'peer-1'").Scan(&peerID1)
+	serverDB.QueryRow("SELECT id FROM peers WHERE public_key = 'peer-2'").Scan(&peerID2)
+	
+	engine.RegisterActivePeer(peerID1, rpc.PeerNode_ServerToClient(mockHandler1))
+	engine.RegisterActivePeer(peerID2, rpc.PeerNode_ServerToClient(mockHandler2))
+
+	// 3. Backup a file to create a queued piece
+	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
+	defer clientDB.Close()
+	dbJobChan := make(chan db.DBJob, 100)
+	go db.StartDBWriter(clientDB, dbJobChan)
+	defer close(dbJobChan)
+
+	key := []byte("01234567890123456789012345678901")
+	os.WriteFile(filepath.Join(sourceDir, "file1.txt"), []byte("Chunk 1 data longer than 10 bytes"), 0644)
+	
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+
+	// Manually trigger encoding to put pieces in queue
+	var shardID int64
+	serverDB.QueryRow("SELECT id FROM shards LIMIT 1").Scan(&shardID)
+	engine.TriggerEncodeShard(shardID)
+
+	// Verify pieces are in the queue dir
+	entries, _ := os.ReadDir(serverQueueDir)
+	if len(entries) == 0 {
+		t.Fatal("Queue directory is empty, no pieces to upload")
+	}
+	t.Logf("Found %d pieces in queue before worker run", len(entries))
+
+	// --- 4. Trigger Outbound Worker ---
+	t.Log("Triggering OutboundWorker...")
+	engine.TriggerOutbound(context.Background())
+
+	// --- 5. Verify Results ---
+	// 5a. Queue directory should now be empty
+	entries, _ = os.ReadDir(serverQueueDir)
+	if len(entries) != 0 {
+		t.Errorf("Expected queue directory to be empty, but found %d files", len(entries))
+	}
+
+	// 5b. Peers should now have the pieces
+	totalPiecesReceived := len(mockHandler1.Pieces) + len(mockHandler2.Pieces)
+	if totalPiecesReceived < 2 {
+		t.Errorf("Mock peers received only %d pieces, expected 2", totalPiecesReceived)
+	} else {
+		t.Logf("Success! Mock peers received %d pieces from the worker.", totalPiecesReceived)
+	}
+
+	// 5c. Database should mark pieces as uploaded
+	var uploadedCount int
+	serverDB.QueryRow("SELECT COUNT(*) FROM outbound_pieces WHERE status = 'uploaded'").Scan(&uploadedCount)
+	if uploadedCount == 0 {
+		t.Error("Database does not show any uploaded pieces")
+	}
+	}
+
+	func TestChallengeWorkerFlow(t *testing.T) {
+	// 1. Setup
+	baseDir := t.TempDir()
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	os.MkdirAll(serverBlobDir, 0755)
+	os.MkdirAll(serverQueueDir, 0755)
+
+	serverDB, _ := server.InitDB(filepath.Join(baseDir, "server.db"))
+	defer serverDB.Close()
+
+	engine := server.NewEngine(serverDB, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine.ChallengesPerPiece = 1 // Simplified for test
+
+	// Register a mock peer
+	mockHandler := &MockPeerHandler{Pieces: make(map[string][]byte)}
+	serverDB.Exec("INSERT INTO peers (public_key, ip_address, status, max_storage_size) VALUES (?, ?, 'trusted', 100)", "peer-challenge-test", "127.0.0.1")
+	var peerID int64
+	serverDB.QueryRow("SELECT id FROM peers WHERE public_key = 'peer-challenge-test'").Scan(&peerID)
+	engine.RegisterActivePeer(peerID, rpc.PeerNode_ServerToClient(mockHandler))
+
+	// 2. Manually create an "uploaded" piece in DB and mock peer
+	shardID := int64(1)
+	pieceData := make([]byte, 1024)
+	for i := range pieceData {
+		pieceData[i] = byte(i % 256)
+	}
+	pieceHash := hex.EncodeToString(crypto.Hash(pieceData))
+	mockHandler.Pieces[pieceHash] = pieceData
+
+	serverDB.Exec("INSERT INTO shards (id, status, size) VALUES (?, 'sealed', 1024)", shardID, 1024)
+	serverDB.Exec("INSERT INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, 0, ?, 'uploaded')", shardID, peerID)
+
+	// Pre-seed a challenge
+	offset := int64(100)
+	expected := pieceData[offset : offset+32]
+	serverDB.Exec("INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, 0, ?, ?, ?, ?)", 
+		shardID, peerID, pieceHash, offset, expected)
+
+	// --- 3. Trigger Challenge Worker ---
+	t.Log("Triggering ChallengeWorker...")
+	engine.TriggerChallenge(context.Background())
+
+	// --- 4. Verify Results ---
+	var status string
+	err := serverDB.QueryRow("SELECT status FROM challenge_results WHERE peer_id = ? AND shard_id = ?", peerID, shardID).Scan(&status)
+	if err != nil {
+		t.Fatalf("No challenge result found in DB: %v", err)
+	}
+
+	if status != "pass" {
+		t.Errorf("Expected challenge status 'pass', got '%s'", status)
+	} else {
+		t.Log("Success! Challenge passed verification.")
+	}
+
+	// Verify challenge was consumed
+	var count int
+	serverDB.QueryRow("SELECT COUNT(*) FROM piece_challenges").Scan(&count)
+	if count != 0 {
+		t.Error("Challenge was not consumed (deleted) from piece_challenges table")
+	}
+	}
+
+	func TestRepairWorkerFlow(t *testing.T) {
+	// 1. Setup Isolated Temporary Directories
+	baseDir := t.TempDir()
+	sourceDir := filepath.Join(baseDir, "source")
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	clientSpoolDir := filepath.Join(baseDir, "spool")
+	clientUploadDir := filepath.Join(baseDir, "upload")
+
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+		os.MkdirAll(dir, 0755)
+	}
+
+	// 2. Setup Server with DataShards=2, ParityShards=1
+	serverDB, _ := server.InitDB(filepath.Join(baseDir, "server.db"))
+	defer serverDB.Close()
+
+	shardSize := int64(1 * 1024 * 1024)
+	engine := server.NewEngine(serverDB, serverBlobDir, serverQueueDir, 2, 1, shardSize, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	rpcClient := client.NewMockRPCClient(engine)
+
+	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
+	defer clientDB.Close()
+	dbJobChan := make(chan db.DBJob, 100)
+	go db.StartDBWriter(clientDB, dbJobChan)
+	defer close(dbJobChan)
+
+	key := []byte("01234567890123456789012345678901")
+
+	// --- STEP 1: Create a healthy shard with 3 pieces ---
+	os.WriteFile(filepath.Join(sourceDir, "file1.txt"), []byte("Redundancy test data"), 0644)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+
+	var shardID int64
+	serverDB.QueryRow("SELECT id FROM shards LIMIT 1").Scan(&shardID)
+	// Manually seal and encode
+	serverDB.Exec("UPDATE shards SET status = 'sealed', size = ?, total_pieces = 3 WHERE id = ?", shardSize, shardID)
+	engine.TriggerEncodeShard(shardID)
+
+	// Mock 3 peers and mark pieces as uploaded
+	for i := 0; i < 3; i++ {
+		serverDB.Exec("INSERT INTO peers (public_key, ip_address, status) VALUES (?, ?, 'trusted')", fmt.Sprintf("repair-peer-%d", i), "127.0.0.1")
+		var pid int64
+		serverDB.QueryRow("SELECT id FROM peers WHERE public_key = ?", fmt.Sprintf("repair-peer-%d", i)).Scan(&pid)
+		serverDB.Exec("INSERT INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, ?, ?, 'uploaded')", shardID, i, pid)
+	}
+
+	// Clean queue dir after initial "upload"
+	entries, _ := os.ReadDir(serverQueueDir)
+	for _, e := range entries {
+		os.Remove(filepath.Join(serverQueueDir, e.Name()))
+	}
+
+	// --- STEP 2: Simulate Failure (Mark one piece as lost) ---
+	t.Log("Simulating piece loss...")
+	serverDB.Exec("UPDATE outbound_pieces SET status = 'lost' WHERE piece_index = 2")
+
+	// Verify redundancy is now 2/3
+	var healthy int
+	serverDB.QueryRow("SELECT COUNT(*) FROM outbound_pieces WHERE shard_id = ? AND status = 'uploaded'", shardID).Scan(&healthy)
+	if healthy != 2 {
+		t.Fatalf("Expected 2 healthy pieces, got %d", healthy)
+	}
+
+	// --- STEP 3: Trigger Repair Worker ---
+	t.Log("Triggering RepairWorker...")
+	engine.TriggerRepair(context.Background())
+
+	// --- STEP 4: Verify Results ---
+	// Repair worker should have enqueued the missing piece back into serverQueueDir
+	entries, _ = os.ReadDir(serverQueueDir)
+	found := false
+	for _, e := range entries {
+		if strings.Contains(e.Name(), fmt.Sprintf("shard_%d_piece_2", shardID)) {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Error("RepairWorker failed to re-enqueue the lost piece (piece 2)")
+	} else {
+		t.Log("Success! RepairWorker detected loss and re-encoded the missing piece.")
+	}
+}
 
 func TestReedSolomonIntegration(t *testing.T) {
 	// 1. Setup Isolated Temporary Directories
