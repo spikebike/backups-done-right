@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"p2p-backup/internal/db"
 )
 
@@ -21,6 +22,7 @@ type Crawler struct {
 	DB              *sql.DB
 	DBJobChan       chan<- db.DBJob
 	BackupDirs      []string
+	Excludes        map[string][]string // rootDir -> patterns
 	JobChan         chan<- FileJob
 	CurrentBackupID int64
 	Verbose         bool
@@ -32,9 +34,30 @@ func NewCrawler(db *sql.DB, dbJobChan chan<- db.DBJob, backupDirs []string, jobC
 		DB:         db,
 		DBJobChan:  dbJobChan,
 		BackupDirs: backupDirs,
+		Excludes:   make(map[string][]string),
 		JobChan:    jobChan,
 		Verbose:    verbose,
 	}
+}
+
+// SetExcludes sets the exclusion patterns for a specific root directory.
+func (c *Crawler) SetExcludes(rootDir string, patterns []string) {
+	c.Excludes[rootDir] = patterns
+}
+
+// isExcluded checks if a path matches any exclusion patterns for its root.
+func (c *Crawler) isExcluded(path string) bool {
+	for root, patterns := range c.Excludes {
+		if strings.HasPrefix(path, root) {
+			for _, p := range patterns {
+				// Simple prefix or exact match for now
+				if path == p || strings.HasPrefix(path, p+string(os.PathSeparator)) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Start begins the crawling process across all configured directories.
@@ -47,6 +70,12 @@ func (c *Crawler) Start(backupID int64) {
 	log.Printf("Started backup job #%d", c.CurrentBackupID)
 
 	for _, dir := range c.BackupDirs {
+		if c.isExcluded(dir) {
+			if c.Verbose {
+				log.Printf("Skipping excluded root directory: %s", dir)
+			}
+			continue
+		}
 		log.Printf("Syncing directory: %s", dir)
 		c.syncDirectory(dir)
 	}
@@ -136,9 +165,17 @@ func (c *Crawler) syncDirectory(dirPath string) {
 
 	fsFiles := make(map[string]os.DirEntry)
 	for _, entry := range entries {
+		fullPath := filepath.Join(dirPath, entry.Name())
+		if c.isExcluded(fullPath) {
+			if c.Verbose {
+				log.Printf("Skipping excluded path: %s", fullPath)
+			}
+			continue
+		}
+
 		if entry.IsDir() {
 			// Recurse into subdirectory
-			c.syncDirectory(filepath.Join(dirPath, entry.Name()))
+			c.syncDirectory(fullPath)
 		} else {
 			fsFiles[entry.Name()] = entry
 		}

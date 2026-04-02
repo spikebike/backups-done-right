@@ -32,7 +32,12 @@
 | `upload_dir` | string | `upload` | Staging directory for encrypted chunks awaiting upload |
 
 ## backup_directories
-Optional list of default directories to back up if none are specified on the command line.
+A list of directories to back up by default if none are specified on the command line. Each entry supports an optional list of exclusion paths.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | string | Absolute path to the directory to back up |
+| `excludes` | []string | List of subdirectories or files to skip (exact match or prefix) |
 
 ## Example
 ```yaml
@@ -41,6 +46,13 @@ mnemonic: "word1 word2 ... word24"
 server:
   address: "127.0.0.1:8081"
   expected_server_key: "4a2b...f3e1"
+
+backup_directories:
+  - path: "/home/bill"
+    excludes:
+      - "/home/bill/.cache"
+      - "/home/bill/tmp"
+  - path: "/etc"
 
 crypto:
   password: "my_encryption_password"

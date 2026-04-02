@@ -28,3 +28,10 @@ This document tracks the critical features and architectural improvements requir
 - [x] **Internal Certificate CA**: Move certificate generation from `makecert.sh` into the Go binary for one-click setup on Windows/macOS/Linux.
 - [ ] **Path Normalization**: Ensure SQLite file paths are stored in a platform-agnostic format to allow cross-OS restoration (e.g., backup on Linux, restore on Windows).
 
+## 7. Cloud Storage Support
+- [ ] **S3-Compatible Backend (minio-go)**: Add support for S3 and Backblaze B2 as alternative block stores to the local filesystem.
+    - [ ] **Storage Interface**: Refactor `Engine` to use a `StorageBackend` interface rather than direct `os` filesystem calls.
+    - [ ] **Multipart Optimization**: Tune `minio-go` multipart uploads to handle the 256MB shard pieces efficiently without RAM spikes.
+    - [ ] **Cloud Configuration**: Add `s3_endpoint`, `bucket`, `access_key`, and `secret_key` to `server.yaml`.
+    - [ ] **Local Testing**: Document how to run a local MinIO container to test S3 logic without a cloud account.
+

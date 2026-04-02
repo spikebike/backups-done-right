@@ -7,6 +7,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type BackupSource struct {
+	Path     string   `yaml:"path"`
+	Excludes []string `yaml:"excludes"`
+}
+
 // ClientConfig represents the configuration for the trusted client node.
 type ClientConfig struct {
 	Mnemonic string `yaml:"mnemonic"` // 24-word recovery phrase
@@ -32,7 +37,7 @@ type ClientConfig struct {
 		UploadDir  string `yaml:"upload_dir"`
 	} `yaml:"storage"`
 
-	BackupDirectories []string `yaml:"backup_directories"`
+	BackupDirectories []BackupSource `yaml:"backup_directories"`
 }
 
 // PeerConfig represents a remote peer in the server configuration.

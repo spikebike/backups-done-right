@@ -155,15 +155,13 @@ func main() {
 		log.Fatalf("Unknown command: %s. Expected keygen, identity, status, backup, restore, history, prune, reset, addpeer, updatepeer, listpeers, addclient, updateclient, or listclients.", command)
 	}
 
-	var backupDirs []string
+	var backupSources []config.BackupSource
 	isBackupListCmd := false
 	if isBackupCmd {
 		if len(args) > 1 && (args[1] == "--list" || args[1] == "-list") {
 			isBackupListCmd = true
-		} else if len(args) < 2 {
-			log.Fatalf("Usage: client backup [--list] <dir1> [dir2] ...")
-		} else {
-			// Ensure all provided directories exist
+		} else if len(args) >= 2 {
+			// Explicit directories provided on CLI
 			for _, dir := range args[1:] {
 				absPath, err := filepath.Abs(dir)
 				if err != nil {
@@ -177,7 +175,36 @@ func main() {
 				if !info.IsDir() {
 					log.Fatalf("Path %s is not a directory", absPath)
 				}
-				backupDirs = append(backupDirs, absPath)
+				backupSources = append(backupSources, config.BackupSource{Path: absPath})
+			}
+		} else {
+			// Use configured directories
+			if len(cfg.BackupDirectories) == 0 {
+				log.Fatalf("Usage: client backup [--list] <dir1> [dir2] ... (or configure backup_directories in %s)", *configPath)
+			}
+			// Normalize paths from config
+			for _, src := range cfg.BackupDirectories {
+				absPath, err := filepath.Abs(src.Path)
+				if err != nil {
+					log.Printf("Warning: Failed to resolve absolute path for configured dir %s: %v", src.Path, err)
+					continue
+				}
+				
+				// Normalize excludes
+				var absExcludes []string
+				for _, ex := range src.Excludes {
+					exPath, err := filepath.Abs(ex)
+					if err == nil {
+						absExcludes = append(absExcludes, exPath)
+					} else {
+						absExcludes = append(absExcludes, ex) // Fallback to raw pattern
+					}
+				}
+				
+				backupSources = append(backupSources, config.BackupSource{
+					Path:     absPath,
+					Excludes: absExcludes,
+				})
 			}
 		}
 	}
@@ -187,7 +214,11 @@ func main() {
 		log.Printf("Fake upload: %v", *fakeUpload)
 		log.Printf("Database path: %s", actualDBPath)
 		if isBackupCmd && !isBackupListCmd {
-			log.Printf("Backup directories: %s", strings.Join(backupDirs, ", "))
+			var paths []string
+			for _, s := range backupSources {
+				paths = append(paths, s.Path)
+			}
+			log.Printf("Backup directories: %s", strings.Join(paths, ", "))
 		}
 	}
 
@@ -578,7 +609,16 @@ func main() {
 		backupID := res.ID
 
 		// Initialize pipeline components
-		crawler := client.NewCrawler(database, dbJobChan, backupDirs, jobChan, verbose)
+		var backupPaths []string
+		for _, s := range backupSources {
+			backupPaths = append(backupPaths, s.Path)
+		}
+		crawler := client.NewCrawler(database, dbJobChan, backupPaths, jobChan, verbose)
+		for _, s := range backupSources {
+			if len(s.Excludes) > 0 {
+				crawler.SetExcludes(s.Path, s.Excludes)
+			}
+		}
 		
 		spoolDir := cfg.Storage.SpoolDir
 		if spoolDir == "" {
