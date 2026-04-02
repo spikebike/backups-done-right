@@ -331,6 +331,7 @@ func (h *RPCHandler) ListPeers(ctx context.Context, call rpc.BackupServer_listPe
 		cp.SetChallengesPassed(p.ChallengesPassed)
 		cp.SetConnectionsOk(p.ConnectionsOk)
 		cp.SetIntegrityAttempts(p.IntegrityAttempts)
+		cp.SetContactInfo(p.ContactInfo)
 	}
 
 	return nil
@@ -617,8 +618,9 @@ func (h *RPCHandler) Announce(ctx context.Context, call rpc.PeerNode_announce) e
 	if err != nil {
 		return err
 	}
+	contact, _ := args.ContactInfo()
 
-	peerID, err := h.engine.AnnouncePeer(ctx, h.clientPubKey, addr)
+	peerID, err := h.engine.AnnouncePeer(ctx, h.clientPubKey, addr, contact)
 	if err == nil && peerID > 0 {
 		callback := args.Callback()
 		if callback.IsValid() {

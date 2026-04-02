@@ -51,6 +51,7 @@ type Engine struct {
 	BasePieceBuffer            int
 	ChallengesPerPiece         int
 	AdminPublicKey             string
+	ContactInfo                string
 	// Bandwidth Throttling
 	UploadLimiter   *rate.Limiter
 	DownloadLimiter *rate.Limiter
@@ -65,7 +66,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string) *Engine {
+func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -114,6 +115,7 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		DB:                         db,
 		SQLitePath:                 sqlitePath,
 		ChallengesPerPiece:         challengesPerPiece,
+		ContactInfo:                contactInfo,
 		BlobStoreDir:               blobStoreDir,
 		QueueDir:                   queueDir,
 		DataShards:                 dataShards,
@@ -1487,19 +1489,20 @@ func (e *Engine) GetPeerIDByPubKey(ctx context.Context, pubKeyHex string) (int64
 }
 
 // AnnouncePeer registers or updates a peer based on their self-reported listener address.
-func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress string) (int64, error) {
+func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress, contactInfo string) (int64, error) {
 	if pubKeyHex == "" || listenAddress == "" || pubKeyHex == "insecure-local-client" {
 		return 0, nil
 	}
 
 	// Dynamic registration or update
 	_, err := e.DB.ExecContext(ctx, `
-		INSERT INTO peers (ip_address, public_key, status)
-		VALUES (?, ?, 'untrusted')
+		INSERT INTO peers (ip_address, public_key, status, contact_info)
+		VALUES (?, ?, 'untrusted', ?)
 		ON CONFLICT(public_key) DO UPDATE SET 
 			ip_address=excluded.ip_address,
+			contact_info=excluded.contact_info,
 			last_seen=CURRENT_TIMESTAMP
-	`, listenAddress, pubKeyHex)
+	`, listenAddress, pubKeyHex, contactInfo)
 	
 	if err != nil {
 		return 0, fmt.Errorf("failed to announce peer: %w", err)
@@ -1694,6 +1697,7 @@ type PeerDBInfo struct {
 	MaxStorageSize      int64
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
+	ContactInfo         string
 	ChallengesMade      uint32
 	ChallengesPassed    uint32
 	ConnectionsOk       uint32
@@ -1703,7 +1707,7 @@ type PeerDBInfo struct {
 func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	// Query all peers from the registry.
 	// We include peers we dial out to AND peers that dial in to us.
-	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, COALESCE(first_seen, last_seen), last_seen, max_storage_size, current_storage_size, outbound_storage_size FROM peers ORDER BY last_seen DESC")
+	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, COALESCE(first_seen, last_seen), last_seen, max_storage_size, current_storage_size, outbound_storage_size, contact_info FROM peers ORDER BY last_seen DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -1712,7 +1716,7 @@ func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	var peers []PeerDBInfo
 	for rows.Next() {
 		var p PeerDBInfo
-		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize); err != nil {
+		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo); err != nil {
 			return nil, err
 		}
 		peers = append(peers, p)
@@ -1788,7 +1792,7 @@ func (e *Engine) GetOrDialPeer(ctx context.Context, peerID int64) (*CapnpPeerCli
 	if e.ListenAddress != "" {
 		cbHandler := NewRPCHandler(e, pubKeyHex)
 		cbNode := rpc.PeerNode_ServerToClient(cbHandler)
-		if err := client.Announce(ctx, e.ListenAddress, cbNode); err != nil {
+		if err := client.Announce(ctx, e.ListenAddress, e.ContactInfo, cbNode); err != nil {
 			log.Printf("Warning: failed to auto-announce to peer %d: %v", peerID, err)
 		}
 		cbNode.Release()

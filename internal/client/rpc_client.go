@@ -16,6 +16,7 @@ type PeerMeta struct {
 	StorageLimitGB      int
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
+	ContactInfo         string
 	FirstSeen           string
 	LastSeen            string
 	ChallengesMade      uint32
@@ -63,6 +64,7 @@ type MockRPCClient struct{
 		ListAllBlobs(ctx context.Context) ([]string, error)
 		AddPeer(ctx context.Context, address string) error
 		UpdatePeer(ctx context.Context, id int64, status string, maxStorageBytes int64) error
+		ListPeers(ctx context.Context) ([]server.PeerDBInfo, error)
 		ListClients(ctx context.Context) ([]server.ClientDBInfo, error)
 		AddClient(ctx context.Context, callerPubKey string, clientPubKey string, status string, maxStorageBytes uint64) error
 		UpdateClient(ctx context.Context, callerPubKey string, id uint64, status string, maxStorageBytes uint64) error
@@ -79,6 +81,7 @@ func NewMockRPCClient(engine interface {
 	ListAllBlobs(ctx context.Context) ([]string, error)
 	AddPeer(ctx context.Context, address string) error
 	UpdatePeer(ctx context.Context, id int64, status string, maxStorageBytes int64) error
+	ListPeers(ctx context.Context) ([]server.PeerDBInfo, error)
 	ListClients(ctx context.Context) ([]server.ClientDBInfo, error)
 	AddClient(ctx context.Context, callerPubKey string, clientPubKey string, status string, maxStorageBytes uint64) error
 	UpdateClient(ctx context.Context, callerPubKey string, id uint64, status string, maxStorageBytes uint64) error
@@ -155,6 +158,32 @@ func (m *MockRPCClient) UpdatePeer(ctx context.Context, id int64, status string,
 }
 
 func (m *MockRPCClient) ListPeers(ctx context.Context) ([]PeerMeta, error) {
+	if m.engine != nil {
+		dbPeers, err := m.engine.ListPeers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var peers []PeerMeta
+		for _, p := range dbPeers {
+			peers = append(peers, PeerMeta{
+				ID:                  p.ID,
+				IPAddress:           p.Address,
+				PublicKey:           p.PublicKey,
+				Status:              p.Status,
+				StorageLimitGB:      int(p.MaxStorageSize / (1024 * 1024 * 1024)),
+				CurrentStorageSize:  p.CurrentStorageSize,
+				OutboundStorageSize: p.OutboundStorageSize,
+				ContactInfo:         p.ContactInfo,
+				FirstSeen:           p.FirstSeen,
+				LastSeen:            p.LastSeen,
+				ChallengesMade:      p.ChallengesMade,
+				ChallengesPassed:    p.ChallengesPassed,
+				ConnectionsOk:       p.ConnectionsOk,
+				IntegrityAttempts:   p.IntegrityAttempts,
+			})
+		}
+		return peers, nil
+	}
 	return nil, nil
 }
 

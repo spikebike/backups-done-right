@@ -42,6 +42,7 @@ struct PeerInfo {
   challengesPassed @10 :UInt32;
   connectionsOk @11 :UInt32;
   integrityAttempts @12 :UInt32;
+  contactInfo @13 :Text;
 }
 
 struct ClientInfo {
@@ -135,5 +136,5 @@ interface PeerNode @0xfe39e0e15b88669f {
   listSpecialPieces @5 () -> (shards :List(PeerShardMetadata));
 
   # Peer Discovery: Tell a peer our own listen address so they can dial us back (or use the callback directly).
-  announce @6 (listenAddress :Text, callback :PeerNode) -> (success :Bool);
+  announce @6 (listenAddress :Text, contactInfo :Text, callback :PeerNode) -> (success :Bool);
 }

@@ -365,8 +365,8 @@ func main() {
 		}
 
 		fmt.Println("\n=== Active P2P Swarm Nodes ===")
-		fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-10s | %-7s | %-7s | %s\n", "ID", "IP Address", "Status", "Inbound MB", "Outbound MB", "Uptime", "Pass%", "Last Seen")
-		fmt.Println(strings.Repeat("-", 125))
+		fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-10s | %-7s | %-7s | %-20s | %s\n", "ID", "IP Address", "Status", "Inbound MB", "Outbound MB", "Uptime", "Pass%", "Contact", "Last Seen")
+		fmt.Println(strings.Repeat("-", 150))
 		for _, p := range peers {
 			var uptimePct, passPct float64
 			if p.ChallengesMade > 0 {
@@ -375,11 +375,11 @@ func main() {
 			if p.IntegrityAttempts > 0 {
 				passPct = float64(p.ChallengesPassed) / float64(p.IntegrityAttempts) * 100
 			}
-			fmt.Printf("%-3d | %-20s | %-10s | %10.2f | %10.2f | %5.1f%% | %5.1f%% | %s\n",
+			fmt.Printf("%-3d | %-20s | %-10s | %10.2f | %10.2f | %5.1f%% | %5.1f%% | %-20s | %s\n",
 				p.ID, p.IPAddress, p.Status, 
 				float64(p.CurrentStorageSize)/(1024*1024), 
 				float64(p.OutboundStorageSize)/(1024*1024),
-				uptimePct, passPct, p.LastSeen)
+				uptimePct, passPct, p.ContactInfo, p.LastSeen)
 		}
 		fmt.Println("==============================")
 		

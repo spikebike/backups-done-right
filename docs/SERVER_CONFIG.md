@@ -5,6 +5,7 @@
 |-----------|------|-------------|
 | `mnemonic` | string | Mandatory. The 24-word recovery phrase for the server's identity. |
 | `admin_public_key` | string | Optional. The Hex public key of the client authorized to manage the server. |
+| `contact_info` | string | Optional. Contact details for the server operator (email, social, etc.) |
 
 ## network
 | Parameter | Type | Description |

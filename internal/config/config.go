@@ -48,6 +48,7 @@ type PeerConfig struct {
 type ServerConfig struct {
 	Mnemonic       string   `yaml:"mnemonic"` // 24-word recovery phrase
 	AdminPublicKey string   `yaml:"admin_public_key"` // Authorized client for management
+	ContactInfo    string   `yaml:"contact_info"` // Optional contact info (email, social, etc.)
 	Network        struct {
 		ListenAddress string `yaml:"listen_address"`
 		EnableUPnP    bool   `yaml:"enable_upnp"`

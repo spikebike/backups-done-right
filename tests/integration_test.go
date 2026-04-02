@@ -67,7 +67,7 @@ func TestEndToEndBackup(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 	
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -115,7 +115,7 @@ func TestDeduplication(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -153,7 +153,7 @@ func TestLargeFile(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -194,7 +194,7 @@ func TestIncrementalBackup(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -235,7 +235,7 @@ func TestFileDeletion(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -275,7 +275,7 @@ func TestServerGC(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10, true, nil, "", 1024, false, false, 8, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10, true, nil, "", 1024, false, false, 8, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 	engine.KeepDeletedMinutes = 0
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -424,7 +424,7 @@ func TestOutboundWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	mh1 := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
 	mh2 := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -467,7 +467,7 @@ func TestChallengeWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	mh := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
 	serverDB.Exec("INSERT INTO peers (public_key, ip_address, status, max_storage_size) VALUES ('p1', '127.0.0.1', 'trusted', 1000)")
@@ -506,7 +506,7 @@ func TestRepairWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -550,7 +550,7 @@ func TestReedSolomonIntegration(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -607,7 +607,7 @@ func TestDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "")
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	dbJobChan := make(chan db.DBJob, 100)
@@ -652,7 +652,7 @@ func TestServerDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	masterKey := []byte("01234567890123456789012345678901")
-	engineA := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "")
+	engineA := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "")
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	dbJobChan := make(chan db.DBJob, 100)
@@ -693,7 +693,7 @@ func TestServerDisasterRecovery(t *testing.T) {
 
 	serverDB2, _ := server.InitDB(serverDBPath)
 	defer serverDB2.Close()
-	engineRec := server.NewEngine(serverDB2, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "")
+	engineRec := server.NewEngine(serverDB2, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "")
 
 	peer0 := rpc.PeerNode_ServerToClient(mockPeers[0])
 	err := engineRec.AttemptRescue(context.Background(), peer0)
@@ -713,3 +713,63 @@ func TestServerDisasterRecovery(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(baseDir, "restored", "f1.txt"))
 	if string(data) != "Some original user data" { t.Errorf("Data mismatch: %s", string(data)) }
 }
+
+func TestContactInfoPropagation(t *testing.T) {
+	baseDir := t.TempDir()
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	serverDBPath := filepath.Join(baseDir, "server.db")
+	os.MkdirAll(serverBlobDir, 0755)
+	os.MkdirAll(serverQueueDir, 0755)
+
+	serverDB, _ := server.InitDB(serverDBPath)
+	defer serverDB.Close()
+	
+	myContact := "operator@server-a.com"
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", myContact)
+
+	// 1. Verify Engine has contact info
+	if engine.ContactInfo != myContact {
+		t.Errorf("Engine did not store contact info: %s", engine.ContactInfo)
+	}
+
+	// 2. Simulate a peer announcing itself with contact info
+	peerContact := "@twitter_handle"
+	peerPubKey := "peer-pub-key-hex-string-32-chars-long"
+	peerAddr := "1.2.3.4:8081"
+	
+	peerID, err := engine.AnnouncePeer(context.Background(), peerPubKey, peerAddr, peerContact)
+	if err != nil {
+		t.Fatalf("AnnouncePeer failed: %v", err)
+	}
+
+	// 3. Verify it's in the DB
+	var dbContact string
+	err = serverDB.QueryRow("SELECT contact_info FROM peers WHERE id = ?", peerID).Scan(&dbContact)
+	if err != nil {
+		t.Fatalf("Failed to query peer contact info: %v", err)
+	}
+	if dbContact != peerContact {
+		t.Errorf("DB did not store peer contact info correctly. Got %s, want %s", dbContact, peerContact)
+	}
+
+	// 4. Verify ListPeers returns it
+	peers, err := engine.ListPeers(context.Background())
+	if err != nil {
+		t.Fatalf("ListPeers failed: %v", err)
+	}
+	found := false
+	for _, p := range peers {
+		if p.ID == peerID {
+			if p.ContactInfo != peerContact {
+				t.Errorf("ListPeers returned wrong contact info: %s", p.ContactInfo)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Peer not found in ListPeers")
+	}
+	t.Log("Success! Contact info propagated correctly through the engine and DB.")
+}
+

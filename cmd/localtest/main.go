@@ -104,6 +104,7 @@ func main() {
 	serverQueueDir := "server_queue"
 	engine := server.NewEngine(
 		serverDB,
+		serverDBPath,
 		serverBlobDir,
 		serverQueueDir,
 		10,
@@ -127,6 +128,7 @@ func main() {
 		-1,       // Default no download limit
 		nil,      // No master key for localtest
 		"",       // No admin key for localtest
+		"",       // No contact info for localtest
 	)
 	// ---------------------------
 

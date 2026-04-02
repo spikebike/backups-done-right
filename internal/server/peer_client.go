@@ -298,9 +298,10 @@ func (c *CapnpPeerClient) ListSpecialPieces(ctx context.Context) ([]rpc.PeerShar
 	return pieces, nil
 }
 
-func (c *CapnpPeerClient) Announce(ctx context.Context, listenAddr string, callback rpc.PeerNode) error {
+func (c *CapnpPeerClient) Announce(ctx context.Context, listenAddr, contactInfo string, callback rpc.PeerNode) error {
 	req, release := c.clientStub.Announce(ctx, func(p rpc.PeerNode_announce_Params) error {
 		p.SetListenAddress(listenAddr)
+		p.SetContactInfo(contactInfo)
 		p.SetCallback(callback)
 		return nil
 	})

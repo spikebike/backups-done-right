@@ -267,6 +267,7 @@ func main() {
 
 	engine := server.NewEngine(
 		db,
+		cfg.Storage.SQLitePath,
 		cfg.Storage.BlobStoreDir,
 		queueDir,
 		dataShards,
@@ -290,6 +291,7 @@ func main() {
 		cfg.Network.MaxDownloadKBPS,
 		masterKey,
 		cfg.AdminPublicKey,
+		cfg.ContactInfo,
 	)
 
 	if verbose {
