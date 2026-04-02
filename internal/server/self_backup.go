@@ -101,8 +101,8 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 	}
 
 	// 4. Construct Recovery Bundle
-	// Format: [4-byte JSON len][JSON][Compressed DB]
-	bundleLen := 4 + len(peerMapJSON) + len(compressedDB)
+	// Format: [4-byte JSON len][4-byte compressed DB len][JSON][Compressed DB]
+	bundleLen := 8 + len(peerMapJSON) + len(compressedDB)
 	
 	// Padding Logic: Ensure the final encrypted piece is a multiple of 256KB.
 	// overhead = 24 (nonce) + 16 (tag) = 40 bytes.
@@ -114,8 +114,9 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 
 	bundle := make([]byte, bundleLen+paddingLen)
 	binary.BigEndian.PutUint32(bundle[0:4], uint32(len(peerMapJSON)))
-	copy(bundle[4:], peerMapJSON)
-	copy(bundle[4+len(peerMapJSON):], compressedDB)
+	binary.BigEndian.PutUint32(bundle[4:8], uint32(len(compressedDB)))
+	copy(bundle[8:8+len(peerMapJSON)], peerMapJSON)
+	copy(bundle[8+len(peerMapJSON):8+len(peerMapJSON)+len(compressedDB)], compressedDB)
 
 	if paddingLen > 0 {
 		if _, err := crypto.ReadRand(bundle[bundleLen:]); err != nil {

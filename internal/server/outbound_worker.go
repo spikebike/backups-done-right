@@ -44,6 +44,11 @@ func (e *Engine) TriggerOutbound(ctx context.Context) {
 	e.processQueue(ctx)
 }
 
+// TriggerSyncMirrored manually triggers a sync of mirrored shards.
+func (e *Engine) TriggerSyncMirrored(ctx context.Context) {
+	e.syncMirroredShards(ctx)
+}
+
 func (e *Engine) syncMirroredShards(ctx context.Context) {
 	// Find all mirrored shards
 	rows, err := e.DB.QueryContext(ctx, "SELECT id, hash, sequence, total_pieces FROM shards WHERE mirrored = 1")

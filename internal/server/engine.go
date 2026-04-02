@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/reedsolomon"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -28,6 +30,7 @@ import (
 // Engine handles the core server logic for receiving and storing blobs.
 type Engine struct {
 	DB                         *sql.DB
+	SQLitePath                 string
 	BlobStoreDir               string
 	QueueDir                   string
 	DataShards                 int
@@ -62,7 +65,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string) *Engine {
+func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -109,6 +112,7 @@ func NewEngine(db *sql.DB, blobStoreDir, queueDir string, dataShards, parityShar
 
 	return &Engine{
 		DB:                         db,
+		SQLitePath:                 sqlitePath,
 		ChallengesPerPiece:         challengesPerPiece,
 		BlobStoreDir:               blobStoreDir,
 		QueueDir:                   queueDir,
@@ -137,6 +141,121 @@ func NewEngine(db *sql.DB, blobStoreDir, queueDir string, dataShards, parityShar
 		pendingBlobs:               make(map[string]rpc.BlobMeta),
 	}
 }
+
+// AttemptRescue attempts to recover the server database from a peer that has a mirrored copy of the special metadata shard.
+func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode) error {
+	if e.Verbose {
+		log.Println("RESCUE: Attempting to recover database from peer...")
+	}
+
+	// 1. Get special pieces from peer
+	req, release := peer.ListSpecialPieces(ctx, nil)
+	defer release()
+	res, err := req.Struct()
+	if err != nil {
+		return fmt.Errorf("list special pieces: %w", err)
+	}
+	shards, _ := res.Shards()
+	if shards.Len() == 0 {
+		return fmt.Errorf("no special pieces found on peer")
+	}
+
+	// 2. Identify the newest mirrored shard
+	var highestSeq uint64
+	var targetPiece rpc.PeerShardMetadata
+	for i := 0; i < shards.Len(); i++ {
+		s := shards.At(i)
+		if s.IsSpecial() && s.SequenceNumber() > highestSeq {
+			highestSeq = s.SequenceNumber()
+			targetPiece = s
+		}
+	}
+
+	if highestSeq == 0 {
+		return fmt.Errorf("no special mirrored shards found")
+	}
+
+	// 3. Download the piece (which is the full shard copy since it was mirrored)
+	hashBytes, _ := targetPiece.Checksum()
+	reqD, releaseD := peer.DownloadPiece(ctx, func(p rpc.PeerNode_downloadPiece_Params) error {
+		return p.SetShardChecksum(hashBytes)
+	})
+	defer releaseD()
+	resD, err := reqD.Struct()
+	if err != nil {
+		return fmt.Errorf("download piece: %w", err)
+	}
+	data, err := resD.Data()
+	if err != nil {
+		return fmt.Errorf("get data from rpc: %w", err)
+	}
+
+	if e.Verbose {
+		log.Printf("RESCUE: Downloaded %d bytes from peer", len(data))
+	}
+
+	// Trim trailing zeros added by shard padding
+	// AEAD tags are random, so they are extremely unlikely to end in many zeros.
+	actualData := data
+	for len(actualData) > 0 && actualData[len(actualData)-1] == 0 {
+		actualData = actualData[:len(actualData)-1]
+	}
+
+	if e.Verbose {
+		log.Printf("RESCUE: Trimmed data length: %d", len(actualData))
+	}
+
+	// 4. Decrypt Bundle
+	decryptedBundle, err := crypto.Decrypt(e.MasterKey, actualData)
+	if err != nil {
+		return fmt.Errorf("bundle decryption failed (wrong mnemonic or corruption): %w", err)
+	}
+
+	// 5. Unpack Bundle
+	if len(decryptedBundle) < 8 {
+		return fmt.Errorf("invalid bundle size")
+	}
+	jsonLen := binary.BigEndian.Uint32(decryptedBundle[0:4])
+	dbLen := binary.BigEndian.Uint32(decryptedBundle[4:8])
+	
+	if uint32(len(decryptedBundle)) < 8+jsonLen+dbLen {
+		return fmt.Errorf("bundle truncated (len=%d, expected %d)", len(decryptedBundle), 8+jsonLen+dbLen)
+	}
+	
+	// peerJSON := decryptedBundle[8 : 8+jsonLen]
+	compressedDB := decryptedBundle[8+jsonLen : 8+jsonLen+dbLen]
+
+	// 6. Decompress and Save DB
+	decoder, _ := zstd.NewReader(nil)
+	defer decoder.Close()
+	
+	dbData, err := decoder.DecodeAll(compressedDB, nil)
+	if err != nil {
+		return fmt.Errorf("decompression failed: %w", err)
+	}
+
+	// Close current DB handle before overwriting
+	if e.DB != nil {
+		e.DB.Close()
+	}
+
+	if err := os.WriteFile(e.SQLitePath, dbData, 0644); err != nil {
+		return fmt.Errorf("failed to write recovered database: %w", err)
+	}
+
+	// Re-open DB
+	newDB, err := InitDB(e.SQLitePath)
+	if err != nil {
+		return fmt.Errorf("failed to re-open database after recovery: %w", err)
+	}
+	e.DB = newDB
+
+	if e.Verbose {
+		log.Printf("RESCUE: SUCCESS! Recovered database to %s", e.SQLitePath)
+	}
+	return nil
+}
+
 
 // AuthorizeAndCheckQuota verifies that a client is trusted and has enough quota.
 func (e *Engine) AuthorizeAndCheckQuota(ctx context.Context, pubKeyHex string, incomingBytes int64) error {
@@ -444,6 +563,9 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 	defer stmtUpdateShard.Close()
 
 	anySpecial := false
+	// Track shards sealed during this ingest to trigger encoding after commit
+	var sealedShards []int64
+
 	for _, blob := range blobs {
 		if !isGC {
 			// Check if already ingested (race condition protection)
@@ -479,6 +601,22 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 		}
 		if meta.Special {
 			anySpecial = true
+			// If we are ingesting a special blob and the current shard is not empty, seal it first
+			if activeShardSize > 0 {
+				totalPieces := e.DataShards + e.ParityShards
+				if _, err := tx.ExecContext(ctx, "UPDATE shards SET size = ?, status = 'sealed', total_pieces = ? WHERE id = ?", activeShardSize, totalPieces, activeShardID); err != nil {
+					return fmt.Errorf("failed to seal previous shard for special blob: %w", err)
+				}
+				sealedShards = append(sealedShards, activeShardID)
+
+				// Open a new shard
+				res, err := tx.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
+				if err != nil {
+					return fmt.Errorf("failed to create new shard for special blob: %w", err)
+				}
+				activeShardID, _ = res.LastInsertId()
+				activeShardSize = 0
+			}
 		}
 
 		// Update DB blobs table
@@ -498,9 +636,7 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 				if _, err := tx.ExecContext(ctx, "UPDATE shards SET size = ?, status = 'sealed', total_pieces = ? WHERE id = ?", activeShardSize, totalPieces, activeShardID); err != nil {
 					return fmt.Errorf("failed to seal shard %d: %w", activeShardID, err)
 				}
-
-				// Launch background task to erasure code the sealed shard
-				go e.encodeShard(activeShardID)
+				sealedShards = append(sealedShards, activeShardID)
 
 				// Open a new shard
 				res, err := tx.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
@@ -561,7 +697,11 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// 7. Post-commit: Handle Special Seal
+	// 7. Post-commit: Handle Special Seal and Trigger Encoders
+	for _, sid := range sealedShards {
+		go e.encodeShard(sid)
+	}
+
 	if anySpecial {
 		isSystemMirrored := (clientPubKey == "system-self-backup")
 		if e.Verbose {
