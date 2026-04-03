@@ -18,6 +18,13 @@ import (
 	"p2p-backup/internal/db"
 )
 
+const (
+	// defaultBlockSize is the default 4MB chunk size for file splitting.
+	defaultBlockSize = 4 * 1024 * 1024
+	// cipherOverhead is the nonce (24 bytes) + Poly1305 tag (16 bytes).
+	cipherOverhead = crypto.NonceSizeX + 16
+)
+
 // UploadJob represents a blob that is ready to be uploaded.
 type UploadJob struct {
 	FileID    int64
@@ -25,6 +32,7 @@ type UploadJob struct {
 	Size      int64  // Blob size
 	Data      []byte // Encrypted data in memory
 	IsSpecial bool
+	Release   func() // Returns the Data buffer to the pool (nil if not pooled)
 }
 
 // CryptoPool manages a pool of workers that encrypt files and update the local database.
@@ -36,11 +44,29 @@ type CryptoPool struct {
 	UploadChan     chan<- UploadJob
 	Verbose        bool
 	wg             sync.WaitGroup
-	sessionUploads sync.Map // Track hashes already queued in this session
+	sessionUploads sync.Map   // Track hashes already queued in this session (plainHashHex -> encHashHex)
+	cipherBufs     chan []byte // Pre-allocated free-list of reusable ciphertext buffers
+	rawChunkPool   sync.Pool  // Reusable raw chunk read buffers
 }
 
 // NewCryptoPool initializes a new CryptoPool.
 func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, numWorkers int, uploadChan chan<- UploadJob, verbose bool) *CryptoPool {
+	// Pre-allocate cipher buffers: enough to fill the upload channel plus
+	// one per crypto worker so encryption never stalls waiting for a free buffer
+	// while the channel still has capacity.
+	poolSize := cap(uploadChan) + numWorkers
+	if poolSize <= 0 {
+		poolSize = 100
+	}
+	cipherBufs := make(chan []byte, poolSize)
+	for i := 0; i < poolSize; i++ {
+		cipherBufs <- make([]byte, 0, defaultBlockSize+cipherOverhead+1024)
+	}
+	if verbose {
+		log.Printf("Pre-allocated %d cipher buffers (%.0f MB)",
+			poolSize, float64(poolSize*(defaultBlockSize+cipherOverhead+1024))/(1024*1024))
+	}
+
 	return &CryptoPool{
 		DB:          db,
 		DBJobChan:   dbJobChan,
@@ -48,6 +74,12 @@ func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, numWorkers
 		NumWorkers:  numWorkers,
 		UploadChan:  uploadChan,
 		Verbose:     verbose,
+		cipherBufs:  cipherBufs,
+		rawChunkPool: sync.Pool{
+			New: func() any {
+				return make([]byte, defaultBlockSize)
+			},
+		},
 	}
 }
 
@@ -75,8 +107,11 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 	zstdEncoder, _ := zstd.NewWriter(nil)
 	defer zstdEncoder.Close()
 
+	// Worker-local compression buffer, reused across all chunks/files.
+	compressBuf := make([]byte, 0, defaultBlockSize)
+
 	for job := range jobChan {
-		err := p.processFile(job, zstdEncoder)
+		err := p.processFile(job, zstdEncoder, &compressBuf)
 		if err != nil {
 			log.Printf("[Worker %d] Error processing %s: %v", workerID, job.Path, err)
 		} else {
@@ -87,7 +122,7 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 	}
 }
 
-func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder) error {
+func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compressBuf *[]byte) error {
 	// 1. Read file stats (Lstat to avoid following symlinks)
 	info, err := os.Lstat(job.Path)
 	if err != nil {
@@ -159,17 +194,18 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder) error {
 	}
 
 	// 4. Process in 4MB blocks
-	chunkBuf := make([]byte, 4*1024*1024) // 4MB blocks
+	chunkBuf := p.rawChunkPool.Get().([]byte)
+	defer p.rawChunkPool.Put(chunkBuf)
 	sequence := 0
 
 	for {
 		n, err := inFile.Read(chunkBuf)
 		if n > 0 {
-			rawChunk := make([]byte, n)
-			copy(rawChunk, chunkBuf[:n])
+			rawChunk := chunkBuf[:n]
 			
-			// Compress with zstd
-			chunk := zstdEncoder.EncodeAll(rawChunk, nil)
+			// Compress with zstd (reuses worker-local buffer)
+			*compressBuf = zstdEncoder.EncodeAll(rawChunk, (*compressBuf)[:0])
+			chunk := *compressBuf
 			
 			// Hash plaintext chunk (now compressed)
 			plainHash := crypto.Hash(chunk)
@@ -177,81 +213,61 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder) error {
 			
 			fullPlainHasher.Write(rawChunk) // Full file hash uses raw data
 
-			// Check local deduplication
+			// Check session deduplication — fast in-memory cache to prevent concurrent processing of the same chunk
 			var encHashHex string
-			resChan := make(chan db.DBResult)
-			p.DBJobChan <- db.DBJob{
-				Query:      "SELECT hash_encrypted FROM local_blobs WHERE hash_plain = ?",
-				Args:       []interface{}{plainHashHex},
-				ResultChan: resChan,
-				Scan: func(row *sql.Row) error {
-					return row.Scan(&encHashHex)
-				},
-			}
-			res := <-resChan
-			
-			ciphertextSize := len(chunk) + crypto.NonceSizeX + 16 // Poly1305 tag is 16 bytes
+			ciphertextSize := len(chunk) + cipherOverhead
 
-			if res.Err == sql.ErrNoRows {
-				// 1. Check if another thread is already handling this hash in this session
-				if _, loaded := p.sessionUploads.LoadOrStore(plainHashHex, true); loaded {
-					// Another worker is already encrypting/uploading this.
-					// We still need to wait for it to appear in local_blobs? 
-					// Actually, we just need the encHashHex to link the file.
-					// For now, we'll let the Link Blob part handle it once it's in DB.
-					// But we need the encHashHex here. 
-					
-					// Simple approach: poll for a few ms until it appears in DB
-					start := time.Now()
-					for time.Since(start) < 2*time.Second {
-						resChanSub := make(chan db.DBResult)
-						p.DBJobChan <- db.DBJob{
-							Query:      "SELECT hash_encrypted FROM local_blobs WHERE hash_plain = ?",
-							Args:       []interface{}{plainHashHex},
-							ResultChan: resChanSub,
-							Scan: func(row *sql.Row) error {
-								return row.Scan(&encHashHex)
-							},
-						}
-						resSub := <-resChanSub
-						if resSub.Err == nil {
+			if _, loaded := p.sessionUploads.LoadOrStore(plainHashHex, ""); loaded {
+				// Another worker is processing this hash — wait for it to finish encrypting
+				start := time.Now()
+				for time.Since(start) < 5*time.Second { // Longer timeout shouldn't be needed, but safe
+					if val, ok := p.sessionUploads.Load(plainHashHex); ok {
+						if s := val.(string); s != "" {
+							encHashHex = s
 							break
 						}
-						time.Sleep(50 * time.Millisecond)
 					}
-					
-					if encHashHex == "" {
-						return fmt.Errorf("timeout waiting for concurrent worker to process hash %s", plainHashHex)
-					}
-				} else {
-					// Encrypt the chunk (uses Convergent Encryption with BLAKE3 hash of compressed chunk as nonce)
-					ciphertext, encErr := crypto.Encrypt(p.Key, chunk)
-					if encErr != nil {
-						return fmt.Errorf("encryption error: %w", encErr)
-					}
-
-					// Hash ciphertext chunk
-					encHash := crypto.Hash(ciphertext)
-					encHashHex = hex.EncodeToString(encHash)
-					
-					// Record in local_blobs
-					p.DBJobChan <- db.DBJob{
-						Query:      "INSERT OR IGNORE INTO local_blobs (hash_plain, hash_encrypted, size) VALUES (?, ?, ?)",
-						Args:       []interface{}{plainHashHex, encHashHex, ciphertextSize},
-						ResultChan: make(chan db.DBResult, 1),
-					}
-
-					// Queue for upload (In-Memory)
-					p.UploadChan <- UploadJob{
-						FileID:    fileID,
-						Hash:      encHashHex,
-						Size:      int64(ciphertextSize),
-						Data:      ciphertext,
-						IsSpecial: false,
-					}
+					time.Sleep(10 * time.Millisecond)
 				}
-			} else if res.Err != nil {
-				return fmt.Errorf("local dedup check error: %w", res.Err)
+				if encHashHex == "" {
+					return fmt.Errorf("timeout waiting for concurrent worker to process hash %s", plainHashHex)
+				}
+			} else {
+				// We own this hash for this session — encrypt it
+				cipherBuf := <-p.cipherBufs
+				ciphertext, encErr := crypto.EncryptTo(p.Key, chunk, cipherBuf)
+				if encErr != nil {
+					p.cipherBufs <- cipherBuf[:0]
+					p.sessionUploads.Delete(plainHashHex)
+					return fmt.Errorf("encryption error: %w", encErr)
+				}
+
+				// Hash ciphertext chunk
+				encHash := crypto.Hash(ciphertext)
+				encHashHex = hex.EncodeToString(encHash)
+				
+				// Update session cache with actual encHashHex so waiting workers can proceed
+				p.sessionUploads.Store(plainHashHex, encHashHex)
+
+				// Record in local_blobs DB (Asynchronous - non blocking)
+				p.DBJobChan <- db.DBJob{
+					Query:      "INSERT OR IGNORE INTO local_blobs (hash_plain, hash_encrypted, size) VALUES (?, ?, ?)",
+					Args:       []interface{}{plainHashHex, encHashHex, ciphertextSize},
+					ResultChan: make(chan db.DBResult, 1),
+				}
+
+				// Queue for upload (In-Memory) — uploader calls Release to return buffer
+				bufs := p.cipherBufs // capture for closure
+				p.UploadChan <- UploadJob{
+					FileID:    fileID,
+					Hash:      encHashHex,
+					Size:      int64(ciphertextSize),
+					Data:      ciphertext,
+					IsSpecial: false,
+					Release: func() {
+						bufs <- cipherBuf[:0]
+					},
+				}
 			}
 
 			// Link blob to file directly by hash (always done, whether new or deduplicated)

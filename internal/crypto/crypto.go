@@ -50,6 +50,35 @@ func Encrypt(key []byte, plaintext []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
+// EncryptTo is like Encrypt but writes into a caller-provided buffer to avoid
+// heap allocation. The dst slice is reset to length 0 but its backing array is
+// reused when capacity is sufficient. Returns the ciphertext slice (a sub-slice
+// of dst's backing array) and its length.
+func EncryptTo(key []byte, plaintext []byte, dst []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, err
+	}
+
+	hash := Hash(plaintext)
+	nonce := hash[:NonceSizeX]
+
+	// Total output: nonce (24) + plaintext + poly1305 tag (16)
+	needed := NonceSizeX + len(plaintext) + aead.Overhead()
+
+	// Reuse dst's backing array if it has enough capacity
+	if cap(dst) >= needed {
+		dst = dst[:NonceSizeX]
+	} else {
+		dst = make([]byte, NonceSizeX, needed)
+	}
+	copy(dst, nonce)
+
+	// Seal appends encrypted data + tag after the nonce
+	ciphertext := aead.Seal(dst, nonce, plaintext, nil)
+	return ciphertext, nil
+}
+
 // Decrypt extracts the nonce and decrypts the XChaCha20-Poly1305 ciphertext.
 func Decrypt(key []byte, ciphertext []byte) ([]byte, error) {
 	if len(ciphertext) < NonceSizeX {

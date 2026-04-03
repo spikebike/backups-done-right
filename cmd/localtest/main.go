@@ -118,6 +118,7 @@ func main() {
 		extraVerbose,
 		*serverChallengesPerPiece,
 		60*24*30, // Default 30 days for keepDeletedMinutes
+		60*24*30, // Default 30 days for keepMetadataMinutes
 		0.5,      // Default 0.5 for wasteThreshold
 		720,      // Default 12 hours for gcIntervalMinutes
 		1440,     // Default 24 hours for selfBackupIntervalMinutes
@@ -129,6 +130,7 @@ func main() {
 		nil,      // No master key for localtest
 		"",       // No admin key for localtest
 		"",       // No contact info for localtest
+		4,        // Default 4 concurrent streams
 	)
 	// ---------------------------
 
@@ -149,16 +151,7 @@ func main() {
 	crawler := client.NewCrawler(database, dbJobChan, backupDirs, jobChan, verbose)
 	
 	key := []byte("01234567890123456789012345678901")
-	spoolDir := cfg.Storage.SpoolDir
-	if spoolDir == "" {
-		spoolDir = filepath.Join(filepath.Dir(*dbPath), "spool")
-	}
-	uploadDir := cfg.Storage.UploadDir
-	if uploadDir == "" {
-		uploadDir = filepath.Join(filepath.Join(filepath.Dir(*dbPath), "upload"))
-	}
-	
-	cryptoPool := client.NewCryptoPool(database, dbJobChan, key, spoolDir, uploadDir, 4, uploadChan, verbose)
+	cryptoPool := client.NewCryptoPool(database, dbJobChan, key, 4, uploadChan, verbose)
 	
 	// Connect the client to the local server engine
 	rpcClient := client.NewMockRPCClient(engine)
@@ -180,7 +173,7 @@ func main() {
 	}
 	backupID := res.ID
 
-	uploader := client.NewUploader(database, uploadChan, rpcClient, uploadDir, batchSize, false, verbose, backupID)
+	uploader := client.NewUploader(database, uploadChan, rpcClient, 2, batchSize, false, verbose, backupID)
 
 	if verbose {
 		log.Println("Pipeline components initialized. Starting threads...")

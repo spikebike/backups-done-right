@@ -66,6 +66,7 @@ func (u *Uploader) worker(workerID int) {
 
 		if len(batch) >= u.BatchUploadSize {
 			u.processBatch(batch, workerID)
+			releaseBatch(batch)
 			batch = nil // Reset batch
 		}
 	}
@@ -73,6 +74,17 @@ func (u *Uploader) worker(workerID int) {
 	// Process remaining jobs in the final batch
 	if len(batch) > 0 {
 		u.processBatch(batch, workerID)
+		releaseBatch(batch)
+	}
+}
+
+// releaseBatch returns all pooled ciphertext buffers to the sync.Pool.
+func releaseBatch(batch []UploadJob) {
+	for i := range batch {
+		if batch[i].Release != nil {
+			batch[i].Release()
+			batch[i].Release = nil
+		}
 	}
 }
 
