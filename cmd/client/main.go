@@ -396,8 +396,8 @@ func main() {
 		}
 
 		fmt.Println("\n=== Active P2P Swarm Nodes ===")
-		fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-10s | %-7s | %-7s | %-20s | %s\n", "ID", "IP Address", "Status", "Inbound MB", "Outbound MB", "Uptime", "Pass%", "Contact", "Last Seen")
-		fmt.Println(strings.Repeat("-", 150))
+		fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-10s | %-7s | %-7s | %-7s | %-7s | %-20s | %s\n", "ID", "IP Address", "Status", "Inbound MB", "Outbound MB", "Total", "Curr", "Uptime", "Pass%", "Contact", "Last Seen")
+		fmt.Println(strings.Repeat("-", 170))
 		for _, p := range peers {
 			var uptimePct, passPct float64
 			if p.ChallengesMade > 0 {
@@ -406,10 +406,11 @@ func main() {
 			if p.IntegrityAttempts > 0 {
 				passPct = float64(p.ChallengesPassed) / float64(p.IntegrityAttempts) * 100
 			}
-			fmt.Printf("%-3d | %-20s | %-10s | %10.2f | %10.2f | %5.1f%% | %5.1f%% | %-20s | %s\n",
+			fmt.Printf("%-3d | %-20s | %-10s | %10.2f | %10.2f | %-7d | %-7d | %5.1f%% | %5.1f%% | %-20s | %s\n",
 				p.ID, p.IPAddress, p.Status, 
 				float64(p.CurrentStorageSize)/(1024*1024), 
 				float64(p.OutboundStorageSize)/(1024*1024),
+				p.TotalShards, p.CurrentShards,
 				uptimePct, passPct, p.ContactInfo, p.LastSeen)
 		}
 		fmt.Println("==============================")
@@ -702,9 +703,12 @@ func main() {
 }
 
 func uploadMetadata(ctx context.Context, filePaths []string, key []byte, rpcClient client.RPCClient, verbose bool) error {
+	var metaToOffer []rpc.BlobMeta
+	var blobsToUpload []rpc.LocalBlobData
+
 	for _, path := range filePaths {
 		if verbose {
-			log.Printf("Encrypting and uploading metadata: %s...", filepath.Base(path))
+			log.Printf("Encrypting metadata: %s...", filepath.Base(path))
 		}
 
 		data, err := os.ReadFile(path)
@@ -721,39 +725,47 @@ func uploadMetadata(ctx context.Context, filePaths []string, key []byte, rpcClie
 		encHash := crypto.Hash(ciphertext)
 		encHashHex := hex.EncodeToString(encHash)
 
-		meta := []rpc.BlobMeta{
-			{
-				Hash:    encHashHex,
-				Size:    int64(len(ciphertext)),
-				Special: true,
-			},
-		}
-
-		needed, err := rpcClient.OfferBlobs(ctx, meta)
-		if err != nil {
-			return fmt.Errorf("offer %s: %w", path, err)
-		}
-
-		if len(needed) > 0 {
-			uploadData := []rpc.LocalBlobData{
-				{
-					Hash: encHashHex,
-					Data: ciphertext,
-				},
-			}
-			err = rpcClient.UploadBlobs(ctx, uploadData)
-			if err != nil {
-				return fmt.Errorf("upload %s: %w", path, err)
-			}
-			if verbose {
-				log.Printf("Metadata %s uploaded successfully.", filepath.Base(path))
-			}
-		} else {
-			if verbose {
-				log.Printf("Server already has the latest %s (deduplicated).", filepath.Base(path))
-			}
-		}
+		metaToOffer = append(metaToOffer, rpc.BlobMeta{
+			Hash:    encHashHex,
+			Size:    int64(len(ciphertext)),
+			Special: true,
+		})
+		
+		blobsToUpload = append(blobsToUpload, rpc.LocalBlobData{
+			Hash:      encHashHex,
+			Data:      ciphertext,
+			IsSpecial: true,
+		})
 	}
+
+	if len(metaToOffer) == 0 {
+		return nil
+	}
+
+	// 1. Offer all metadata blobs
+	needed, err := rpcClient.OfferBlobs(ctx, metaToOffer)
+	if err != nil {
+		return fmt.Errorf("offer metadata: %w", err)
+	}
+
+	// 2. Filter blobs to only those the server needs
+	if len(needed) > 0 {
+		var finalUpload []rpc.LocalBlobData
+		for _, idx := range needed {
+			finalUpload = append(finalUpload, blobsToUpload[idx])
+		}
+
+		err = rpcClient.UploadBlobs(ctx, finalUpload)
+		if err != nil {
+			return fmt.Errorf("upload metadata: %w", err)
+		}
+		if verbose {
+			log.Printf("Successfully uploaded %d metadata files.", len(finalUpload))
+		}
+	} else if verbose {
+		log.Println("Metadata already up to date on server.")
+	}
+
 	return nil
 }
 

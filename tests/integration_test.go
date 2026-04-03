@@ -278,11 +278,13 @@ func TestServerGC(t *testing.T) {
 	go db.StartDBWriter(clientDB, dbJobChan)
 	defer close(dbJobChan)
 
-	rpcClient := client.NewMockRPCClient(engine)
 	h := hex.EncodeToString(crypto.Hash([]byte("some data")))
-	rpcClient.UploadBlobs(context.Background(), []rpc.LocalBlobData{
+	ingestErr := engine.IngestBlobs(context.Background(), "system-self-backup", []rpc.LocalBlobData{
 	    {Hash: h, Data: []byte("some data"), IsSpecial: true},
-	})
+	}, false)
+	if ingestErr != nil {
+		t.Fatalf("IngestBlobs failed: %v", ingestErr)
+	}
 	var blobHash string
 	serverDB.QueryRow("SELECT hash FROM blobs LIMIT 1").Scan(&blobHash)
 	engine.DeleteBlobs(context.Background(), []string{blobHash})

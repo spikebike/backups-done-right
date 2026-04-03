@@ -65,7 +65,9 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		max_storage_size INTEGER NOT NULL DEFAULT 0,
 		current_storage_size INTEGER NOT NULL DEFAULT 0,
 		outbound_storage_size INTEGER NOT NULL DEFAULT 0,
-		contact_info TEXT NOT NULL DEFAULT ''
+		contact_info TEXT NOT NULL DEFAULT '',
+		total_shards INTEGER NOT NULL DEFAULT 0,
+		current_shards INTEGER NOT NULL DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS clients (
@@ -146,6 +148,8 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN first_seen DATETIME DEFAULT CURRENT_TIMESTAMP")
 	_, _ = db.Exec("ALTER TABLE piece_challenges ADD COLUMN piece_hash TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN contact_info TEXT NOT NULL DEFAULT ''")
+	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN total_shards INTEGER NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN current_shards INTEGER NOT NULL DEFAULT 0")
 
 	log.Println("Server database initialized successfully")
 	return db, nil

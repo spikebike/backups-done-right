@@ -296,6 +296,8 @@ func (c *CapnpRPCClient) ListPeers(ctx context.Context) ([]PeerMeta, error) {
 			CurrentStorageSize:  int64(cp.CurrentStorageSize()),
 			OutboundStorageSize: int64(cp.OutboundStorageSize()),
 			ContactInfo:         contact,
+			TotalShards:         cp.TotalShards(),
+			CurrentShards:       cp.CurrentShards(),
 			FirstSeen:           firstSeen,
 			LastSeen:            lastSeen,
 			ChallengesMade:      cp.ChallengesMade(),

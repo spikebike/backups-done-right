@@ -332,6 +332,8 @@ func (h *RPCHandler) ListPeers(ctx context.Context, call rpc.BackupServer_listPe
 		cp.SetConnectionsOk(p.ConnectionsOk)
 		cp.SetIntegrityAttempts(p.IntegrityAttempts)
 		cp.SetContactInfo(p.ContactInfo)
+		cp.SetTotalShards(p.TotalShards)
+		cp.SetCurrentShards(p.CurrentShards)
 	}
 
 	return nil

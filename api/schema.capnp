@@ -43,6 +43,8 @@ struct PeerInfo {
   connectionsOk @11 :UInt32;
   integrityAttempts @12 :UInt32;
   contactInfo @13 :Text;
+  totalShards @14 :UInt64;
+  currentShards @15 :UInt64;
 }
 
 struct ClientInfo {

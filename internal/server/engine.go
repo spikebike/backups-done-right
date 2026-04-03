@@ -574,6 +574,10 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 	// Track shards sealed during this ingest to trigger encoding after commit
 	var sealedShards []int64
 
+	// 1. Detect if this batch contains any Special blobs
+	batchMetas := make([]rpc.BlobMeta, 0, len(blobs))
+	var ingestBlobs []rpc.LocalBlobData
+
 	for _, blob := range blobs {
 		if !isGC {
 			// Check if already ingested (race condition protection)
@@ -590,6 +594,7 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 			calculatedHash := hex.EncodeToString(crypto.Hash(blob.Data))
 			if calculatedHash != blob.Hash {
 				log.Printf("WARNING: Checksum mismatch for blob! claimed=%s, actual=%s", blob.Hash, calculatedHash)
+				continue
 			} else if e.Verbose {
 				log.Printf("Successfully verified checksum for blob %s", blob.Hash)
 			}
@@ -598,7 +603,6 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 		// Retrieve metadata from pendingBlobs
 		meta, ok := e.pendingBlobs[blob.Hash]
 		if !ok {
-			// Try to find existing metadata if this is a GC or if pendingBlobs was cleared
 			var special bool
 			err := tx.QueryRowContext(ctx, "SELECT special FROM blobs WHERE hash = ?", blob.Hash).Scan(&special)
 			if err == nil {
@@ -607,25 +611,35 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 				meta = rpc.BlobMeta{Hash: blob.Hash, Size: int64(len(blob.Data)), Special: blob.IsSpecial}
 			}
 		}
+		
+		batchMetas = append(batchMetas, meta)
+		ingestBlobs = append(ingestBlobs, blob)
 		if meta.Special {
 			anySpecial = true
-			// If we are ingesting a special blob and the current shard is not empty, seal it first
-			if activeShardSize > 0 {
-				totalPieces := e.DataShards + e.ParityShards
-				if _, err := tx.ExecContext(ctx, "UPDATE shards SET size = ?, status = 'sealed', total_pieces = ? WHERE id = ?", activeShardSize, totalPieces, activeShardID); err != nil {
-					return fmt.Errorf("failed to seal previous shard for special blob: %w", err)
-				}
-				sealedShards = append(sealedShards, activeShardID)
-
-				// Open a new shard
-				res, err := tx.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
-				if err != nil {
-					return fmt.Errorf("failed to create new shard for special blob: %w", err)
-				}
-				activeShardID, _ = res.LastInsertId()
-				activeShardSize = 0
-			}
 		}
+	}
+
+	isSystemMirrored := (clientPubKey == "system-self-backup")
+
+	// 2. If this is a SYSTEM special batch (Rescue Bundle), isolate it by sealing the current shard
+	if isSystemMirrored && anySpecial && activeShardSize > 0 {
+		totalPieces := e.DataShards + e.ParityShards
+		if _, err := tx.ExecContext(ctx, "UPDATE shards SET size = ?, status = 'sealed', total_pieces = ? WHERE id = ?", activeShardSize, totalPieces, activeShardID); err != nil {
+			return fmt.Errorf("failed to seal previous shard for system rescue: %w", err)
+		}
+		sealedShards = append(sealedShards, activeShardID)
+
+		// Open a new shard for the system rescue bundle
+		res, err := tx.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
+		if err != nil {
+			return fmt.Errorf("failed to create new shard for system rescue: %w", err)
+		}
+		activeShardID, _ = res.LastInsertId()
+		activeShardSize = 0
+	}
+
+	for i, blob := range ingestBlobs {
+		meta := batchMetas[i]
 
 		// Update DB blobs table
 		_, err = stmtInsertBlob.ExecContext(ctx, blob.Hash, len(blob.Data), meta.Special)
@@ -701,50 +715,37 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 		}
 	}
 
+	// 3. If this was a SYSTEM special batch, seal it immediately for mirroring
+	if isSystemMirrored && anySpecial {
+		if e.Verbose {
+			log.Printf("IngestBlobs: Sealing system rescue shard %d (mirrored=true).", activeShardID)
+		}
+		
+		// For mirrored shards, we always use 1 piece (the full shard)
+		totalPieces := 1
+
+		// Update status to sealed and set mirrored flag
+		if _, err := tx.ExecContext(ctx, "UPDATE shards SET status = 'sealed', mirrored = 1, total_pieces = ?, size = ? WHERE id = ?", totalPieces, activeShardSize, activeShardID); err != nil {
+			return fmt.Errorf("failed to force seal system rescue shard %d: %w", activeShardID, err)
+		}
+		sealedShards = append(sealedShards, activeShardID)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// 7. Post-commit: Handle Special Seal and Trigger Encoders
+	// 7. Post-commit: Trigger Encoders
 	for _, sid := range sealedShards {
 		e.wg.Add(1)
 		go e.encodeShard(sid)
 	}
 
-	if anySpecial {
-		isSystemMirrored := (clientPubKey == "system-self-backup")
-		if e.Verbose {
-			log.Printf("IngestBlobs: Shard %d contains Special blobs (mirrored=%v). Sealing immediately.", activeShardID, isSystemMirrored)
-		}
-		
-		totalPieces := e.DataShards + e.ParityShards
-		if isSystemMirrored {
-			// For mirrored shards, pieceIndex 0 is the full blob.
-			// However, if the blob was so large it spanned multiple shards, 
-			// we treat each as pieceIndex 0 of its own shard?
-			// NO: In our new design, one large DB = one large shard with N data pieces.
-			
-			// Actually, IngestBlobs splits large blobs across MULTIPLE shards automatically.
-			// So each shard is a piece of the DB. 
-			// We'll treat each such shard as a single piece (Piece 0) for mirroring.
-			totalPieces = 1 
-		}
-
-		// Update status to sealed and set mirrored flag
-		_, err = e.DB.Exec("UPDATE shards SET status = 'sealed', mirrored = ?, total_pieces = ? WHERE id = ?", isSystemMirrored, totalPieces, activeShardID)
-		if err == nil {
-			e.wg.Add(1)
-			go e.encodeShard(activeShardID)
-		} else {
-			log.Printf("Warning: failed to force seal special shard %d: %v", activeShardID, err)
-		}
-	}
-
 	// Update client storage usage
 	if !isGC && clientPubKey != "" && clientPubKey != "insecure-local-client" {
 		var totalUploaded int64
-		for _, b := range blobs {
-			totalUploaded += int64(len(b.Data))
+		for i := range ingestBlobs {
+			totalUploaded += int64(len(ingestBlobs[i].Data))
 		}
 		_, _ = e.DB.ExecContext(ctx, "UPDATE clients SET current_storage_size = current_storage_size + ? WHERE public_key = ?", totalUploaded, clientPubKey)
 	}
@@ -1248,7 +1249,7 @@ func (e *Engine) UploadShards(ctx context.Context, pubKeyHex string, shards []rp
 
 		rowsAffected, _ := res.RowsAffected()
 		if rowsAffected > 0 && pubKeyHex != "" && pubKeyHex != "insecure-local-client" {
-			_, err = tx.ExecContext(ctx, "UPDATE peers SET current_storage_size = current_storage_size + ? WHERE public_key = ?", int64(len(shard.Data)), pubKeyHex)
+			_, err = tx.ExecContext(ctx, "UPDATE peers SET current_storage_size = current_storage_size + ?, total_shards = total_shards + 1, current_shards = current_shards + 1 WHERE public_key = ?", int64(len(shard.Data)), pubKeyHex)
 			if err != nil {
 				return fmt.Errorf("failed to update peer storage size: %w", err)
 			}
@@ -1652,7 +1653,7 @@ func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex s
 
 	// Update peer quota
 	if pubKeyHex != "" && pubKeyHex != "insecure-local-client" {
-		_, err = tx.ExecContext(ctx, "UPDATE peers SET current_storage_size = MAX(0, current_storage_size - ?) WHERE public_key = ?", size, pubKeyHex)
+		_, err = tx.ExecContext(ctx, "UPDATE peers SET current_storage_size = MAX(0, current_storage_size - ?), current_shards = MAX(0, current_shards - 1) WHERE public_key = ?", size, pubKeyHex)
 		if err != nil {
 			return fmt.Errorf("failed to update peer quota: %w", err)
 		}
@@ -1707,6 +1708,8 @@ type PeerDBInfo struct {
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
 	ContactInfo         string
+	TotalShards         uint64
+	CurrentShards       uint64
 	ChallengesMade      uint32
 	ChallengesPassed    uint32
 	ConnectionsOk       uint32
@@ -1716,7 +1719,7 @@ type PeerDBInfo struct {
 func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	// Query all peers from the registry.
 	// We include peers we dial out to AND peers that dial in to us.
-	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, COALESCE(first_seen, last_seen), last_seen, max_storage_size, current_storage_size, outbound_storage_size, contact_info FROM peers ORDER BY last_seen DESC")
+	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, COALESCE(first_seen, last_seen), last_seen, max_storage_size, current_storage_size, outbound_storage_size, contact_info, total_shards, current_shards FROM peers ORDER BY last_seen DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -1725,7 +1728,7 @@ func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	var peers []PeerDBInfo
 	for rows.Next() {
 		var p PeerDBInfo
-		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo); err != nil {
+		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo, &p.TotalShards, &p.CurrentShards); err != nil {
 			return nil, err
 		}
 		peers = append(peers, p)

@@ -9,6 +9,8 @@ This document tracks the critical features and architectural improvements requir
 
 ## 2. Automatic Peer Discovery (DHT)
 - [x] **Kademlia Integration**: Replace manual `addpeer` workflows with a DHT (e.g., `libp2p`) for automatic node discovery. (Implemented via `DiscoveryWorker` using `bdr-v1.0`).
+- [ ] **Custom DHT Protocol**: Switch from the global IPFS DHT to a private DHT protocol (e.g. `/bdr/kad/1.0.0`) to isolate the network and enable accurate population estimation.
+- [ ] **Swarm Population Tracking**: Implement `dht.NetworkSize()` to provide a real-time estimate of the total number of active BDR nodes in the `status` command.
 - [x] **NAT Hole Punching**: Implement UPnP/PMP or STUN/TURN support to allow home users to trade data without manual port forwarding. (Implemented via Cap'n Proto Capability Passing during Announce).
 
 ## 3. Automated Swarm Healing

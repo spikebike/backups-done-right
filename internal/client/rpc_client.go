@@ -17,6 +17,8 @@ type PeerMeta struct {
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
 	ContactInfo         string
+	TotalShards         uint64
+	CurrentShards       uint64
 	FirstSeen           string
 	LastSeen            string
 	ChallengesMade      uint32
@@ -174,6 +176,8 @@ func (m *MockRPCClient) ListPeers(ctx context.Context) ([]PeerMeta, error) {
 				CurrentStorageSize:  p.CurrentStorageSize,
 				OutboundStorageSize: p.OutboundStorageSize,
 				ContactInfo:         p.ContactInfo,
+				TotalShards:         p.TotalShards,
+				CurrentShards:       p.CurrentShards,
 				FirstSeen:           p.FirstSeen,
 				LastSeen:            p.LastSeen,
 				ChallengesMade:      p.ChallengesMade,
