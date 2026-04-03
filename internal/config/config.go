@@ -26,9 +26,11 @@ type ClientConfig struct {
 	} `yaml:"crypto"`
 
 	Pipeline struct {
-		ScanThreads     int `yaml:"scan_threads"`
-		CryptoThreads   int `yaml:"crypto_threads"`
-		BatchUploadSize int `yaml:"batch_upload_size"`
+		ScanThreads      int `yaml:"scan_threads"`
+		CryptoThreads    int `yaml:"crypto_threads"`
+		UploadThreads    int `yaml:"upload_threads"`
+		MaxPipelineMemMB int `yaml:"max_pipeline_mem_mb"`
+		BatchUploadSize  int `yaml:"batch_upload_size"`
 	} `yaml:"pipeline"`
 
 	Storage struct {

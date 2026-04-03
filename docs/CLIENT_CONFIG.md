@@ -22,14 +22,16 @@
 |-----------|------|---------|-------------|
 | `scan_threads` | int | 4 | Number of concurrent directory scanner workers |
 | `crypto_threads` | int | 4 | Number of concurrent encryption workers |
+| `upload_threads` | int | 2 | Number of concurrent uploader workers (Pseudo-Streaming) |
+| `max_pipeline_mem_mb` | int | 400 | Max RAM to use for the upload queue (in MB). |
 | `batch_upload_size` | int | 10 | Number of 4MB chunks per upload batch (10 = ~40MB per RPC call) |
 
 ## storage
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `sqlite_path` | string | `backup.db` | Path to the client's local SQLite database |
-| `spool_dir` | string | `spool` | Temp directory for in-progress encryption |
-| `upload_dir` | string | `upload` | Staging directory for encrypted chunks awaiting upload |
+| `spool_dir` | string | `spool` | **Legacy.** Previously used for temp encryption. No longer used. |
+| `upload_dir` | string | `upload` | **Legacy.** Previously used for upload staging. No longer used. |
 
 ## backup_directories
 A list of directories to back up by default if none are specified on the command line. Each entry supports an optional list of exclusion paths.

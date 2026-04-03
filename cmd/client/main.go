@@ -590,7 +590,19 @@ func main() {
 		jobChan := make(chan client.FileJob, 1000)
 		
 		// 2. CryptoPool -> Uploader (Encrypted files ready for upload)
-		uploadChan := make(chan client.UploadJob, 1000)
+		maxMemMB := cfg.Pipeline.MaxPipelineMemMB
+		if maxMemMB <= 0 {
+			maxMemMB = 400 // Default to 400MB
+		}
+		blockSize := cfg.Crypto.BlockSizeBytes
+		if blockSize <= 0 {
+			blockSize = 4 * 1024 * 1024 // Default 4MB
+		}
+		uploadQueueSize := (maxMemMB * 1024 * 1024) / blockSize
+		if uploadQueueSize <= 0 {
+			uploadQueueSize = 1
+		}
+		uploadChan := make(chan client.UploadJob, uploadQueueSize)
 		
 		// 3. DBWriter channel
 		dbJobChan := make(chan db.DBJob, 1000)
@@ -620,23 +632,23 @@ func main() {
 			}
 		}
 		
-		spoolDir := cfg.Storage.SpoolDir
-		if spoolDir == "" {
-			spoolDir = filepath.Join(filepath.Dir(*dbPath), "spool")
+		cryptoThreads := cfg.Pipeline.CryptoThreads
+		if cryptoThreads <= 0 {
+			cryptoThreads = 4
 		}
-		uploadDir := cfg.Storage.UploadDir
-		if uploadDir == "" {
-			uploadDir = filepath.Join(filepath.Dir(*dbPath), "upload")
-		}
-		
-		cryptoPool := client.NewCryptoPool(database, dbJobChan, key, spoolDir, uploadDir, 4, uploadChan, verbose) // Using 4 workers
+		cryptoPool := client.NewCryptoPool(database, dbJobChan, key, cryptoThreads, uploadChan, verbose)
 
 		batchSize := cfg.Pipeline.BatchUploadSize
 		if batchSize <= 0 {
 			batchSize = 100 // Default
 		}
 		
-		uploader := client.NewUploader(database, uploadChan, rpcClient, uploadDir, batchSize, *fakeUpload, verbose, backupID)
+		uploaderThreads := cfg.Pipeline.UploadThreads
+		if uploaderThreads <= 0 {
+			uploaderThreads = 2
+		}
+		
+		uploader := client.NewUploader(database, uploadChan, rpcClient, uploaderThreads, batchSize, *fakeUpload, verbose, backupID)
 
 		if verbose {
 			log.Println("Pipeline components initialized. Starting threads...")

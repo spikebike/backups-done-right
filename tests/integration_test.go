@@ -18,7 +18,7 @@ import (
 	"p2p-backup/internal/server"
 )
 
-func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpcClient client.RPCClient, backupDirs []string, key []byte, spoolDir, uploadDir string) int64 {
+func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpcClient client.RPCClient, backupDirs []string, key []byte) int64 {
 	resChan := make(chan db.DBResult)
 	dbJobChan <- db.DBJob{
 		Query:      "INSERT INTO backups (start_time, status) VALUES (CURRENT_TIMESTAMP, 'running')",
@@ -27,11 +27,11 @@ func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpc
 	backupID := (<-resChan).ID
 
 	jobChan := make(chan client.FileJob, 1000)
-	uploadChan := make(chan client.UploadJob, 1000)
+	uploadChan := make(chan client.UploadJob, 100)
 
 	crawler := client.NewCrawler(clientDB, dbJobChan, backupDirs, jobChan, false)
-	cryptoPool := client.NewCryptoPool(clientDB, dbJobChan, key, spoolDir, uploadDir, 2, uploadChan, false)
-	uploader := client.NewUploader(clientDB, uploadChan, rpcClient, uploadDir, 10, false, false, backupID)
+	cryptoPool := client.NewCryptoPool(clientDB, dbJobChan, key, 2, uploadChan, false)
+	uploader := client.NewUploader(clientDB, uploadChan, rpcClient, 2, 10, false, false, backupID)
 
 	uploader.Start()
 	cryptoPool.Start(jobChan)
@@ -56,11 +56,9 @@ func TestEndToEndBackup(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -80,7 +78,7 @@ func TestEndToEndBackup(t *testing.T) {
 	os.WriteFile(filepath.Join(sourceDir, "file1.txt"), []byte("Hello, World!"), 0644)
 
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	var blobCount int
 	serverDB.QueryRow("SELECT COUNT(*) FROM blobs").Scan(&blobCount)
@@ -106,11 +104,9 @@ func TestDeduplication(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -131,7 +127,7 @@ func TestDeduplication(t *testing.T) {
 	os.WriteFile(filepath.Join(sourceDir, "f2.txt"), content, 0644)
 
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	var blobCount int
 	serverDB.QueryRow("SELECT COUNT(*) FROM blobs").Scan(&blobCount)
@@ -145,11 +141,9 @@ func TestLargeFile(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -173,7 +167,7 @@ func TestLargeFile(t *testing.T) {
 	os.WriteFile(filepath.Join(sourceDir, "large.bin"), largeContent, 0644)
 
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	var blobCount int
 	serverDB.QueryRow("SELECT COUNT(*) FROM blobs").Scan(&blobCount)
@@ -187,11 +181,9 @@ func TestIncrementalBackup(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -211,11 +203,11 @@ func TestIncrementalBackup(t *testing.T) {
 	os.WriteFile(f1, []byte("V1"), 0644)
 
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	time.Sleep(1100 * time.Millisecond)
 	os.WriteFile(f1, []byte("V2"), 0644)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	var vCount int
 	clientDB.QueryRow("SELECT COUNT(*) FROM file_versions").Scan(&vCount)
@@ -229,11 +221,9 @@ func TestFileDeletion(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -253,10 +243,10 @@ func TestFileDeletion(t *testing.T) {
 	os.WriteFile(f1, []byte("Content"), 0644)
 
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	os.Remove(f1)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	var deleted int
 	clientDB.QueryRow("SELECT deleted FROM files WHERE filename = 'f1.txt'").Scan(&deleted)
@@ -270,11 +260,9 @@ func TestServerGC(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -423,11 +411,9 @@ func TestOutboundWorkerFlow(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -455,7 +441,7 @@ func TestOutboundWorkerFlow(t *testing.T) {
 	key := []byte("01234567890123456789012345678901")
 	os.WriteFile(filepath.Join(sourceDir, "f1.txt"), []byte("Chunk 1 data longer than 10 bytes"), 0644)
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	// Wait for background encoding to finish
 	engine.Wait()
@@ -507,11 +493,9 @@ func TestRepairWorkerFlow(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -529,7 +513,7 @@ func TestRepairWorkerFlow(t *testing.T) {
 	key := []byte("01234567890123456789012345678901")
 	os.WriteFile(filepath.Join(sourceDir, "f1.txt"), []byte("Repair data"), 0644)
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	var sid int64
 	serverDB.QueryRow("SELECT id FROM shards LIMIT 1").Scan(&sid)
@@ -552,11 +536,9 @@ func TestReedSolomonIntegration(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -575,7 +557,7 @@ func TestReedSolomonIntegration(t *testing.T) {
 	content := make([]byte, 512*1024)
 	os.WriteFile(filepath.Join(sourceDir, "f1.txt"), content, 0644)
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	var sid int64
 	serverDB.QueryRow("SELECT id FROM shards LIMIT 1").Scan(&sid)
@@ -610,11 +592,9 @@ func TestDisasterRecovery(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -630,7 +610,7 @@ func TestDisasterRecovery(t *testing.T) {
 	key := []byte("01234567890123456789012345678901")
 	os.WriteFile(filepath.Join(sourceDir, "important.txt"), []byte("Important"), 0644)
 	rpcClient := client.NewMockRPCClient(engine)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key)
 
 	close(dbJobChan)
 	clientDB.Close()
@@ -656,11 +636,9 @@ func TestServerDisasterRecovery(t *testing.T) {
 	sourceDir := filepath.Join(baseDir, "source")
 	serverBlobDir := filepath.Join(baseDir, "server_blobs")
 	serverQueueDir := filepath.Join(baseDir, "server_queue")
-	clientSpoolDir := filepath.Join(baseDir, "spool")
-	clientUploadDir := filepath.Join(baseDir, "upload")
 	serverDBPath := filepath.Join(baseDir, "server.db")
 
-	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir, clientSpoolDir, clientUploadDir} {
+	for _, dir := range []string{sourceDir, serverBlobDir, serverQueueDir} {
 		os.MkdirAll(dir, 0755)
 	}
 
@@ -678,7 +656,7 @@ func TestServerDisasterRecovery(t *testing.T) {
 	clientKey := []byte("client-key-32-bytes-long-padded0")
 	os.WriteFile(filepath.Join(sourceDir, "f1.txt"), []byte("Some original user data"), 0644)
 	rpcClientA := client.NewMockRPCClient(engineA)
-	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClientA, []string{sourceDir}, clientKey, clientSpoolDir, clientUploadDir)
+	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClientA, []string{sourceDir}, clientKey)
 
 	mockPeers := []*MockPeerHandler{
 		{Pieces: make(map[string]MockPiece)},

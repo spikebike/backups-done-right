@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"lukechampine.com/blake3"
@@ -22,6 +23,7 @@ type UploadJob struct {
 	FileID    int64
 	Hash      string // Blob hash
 	Size      int64  // Blob size
+	Data      []byte // Encrypted data in memory
 	IsSpecial bool
 }
 
@@ -30,8 +32,6 @@ type CryptoPool struct {
 	DB             *sql.DB
 	DBJobChan      chan<- db.DBJob
 	Key            []byte
-	SpoolDir       string
-	UploadDir      string
 	NumWorkers     int
 	UploadChan     chan<- UploadJob
 	Verbose        bool
@@ -40,13 +40,11 @@ type CryptoPool struct {
 }
 
 // NewCryptoPool initializes a new CryptoPool.
-func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, spoolDir, uploadDir string, numWorkers int, uploadChan chan<- UploadJob, verbose bool) *CryptoPool {
+func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, numWorkers int, uploadChan chan<- UploadJob, verbose bool) *CryptoPool {
 	return &CryptoPool{
 		DB:          db,
 		DBJobChan:   dbJobChan,
 		Key:         key,
-		SpoolDir:    spoolDir,
-		UploadDir:   uploadDir,
 		NumWorkers:  numWorkers,
 		UploadChan:  uploadChan,
 		Verbose:     verbose,
@@ -55,14 +53,6 @@ func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, spoolDir, 
 
 // Start launches the worker goroutines.
 func (p *CryptoPool) Start(jobChan <-chan FileJob) {
-	// Ensure the directories exist
-	if err := os.MkdirAll(p.SpoolDir, 0700); err != nil {
-		log.Fatalf("Failed to create spool directory: %v", err)
-	}
-	if err := os.MkdirAll(p.UploadDir, 0700); err != nil {
-		log.Fatalf("Failed to create upload directory: %v", err)
-	}
-
 	// Launch workers
 	for i := 0; i < p.NumWorkers; i++ {
 		p.wg.Add(1)
@@ -251,29 +241,12 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder) error {
 						ResultChan: make(chan db.DBResult, 1),
 					}
 
-					// Write to spool and then upload
-					tmpPath := filepath.Join(p.SpoolDir, "enc-"+encHashHex)
-					if writeErr := os.WriteFile(tmpPath, ciphertext, 0600); writeErr != nil {
-						return fmt.Errorf("spool write error: %w", writeErr)
-					}
-					
-					uploadPath := filepath.Join(p.UploadDir, encHashHex)
-					if _, err := os.Stat(uploadPath); os.IsNotExist(err) {
-						if renameErr := os.Rename(tmpPath, uploadPath); renameErr != nil {
-							// Double-check if it was created in the meantime
-							if _, err2 := os.Stat(uploadPath); os.IsNotExist(err2) {
-								return fmt.Errorf("spool rename error: %w", renameErr)
-							}
-						}
-					} else {
-						os.Remove(tmpPath) // Destination exists, remove the temporary file
-					}
-
-					// Queue for upload
+					// Queue for upload (In-Memory)
 					p.UploadChan <- UploadJob{
 						FileID:    fileID,
 						Hash:      encHashHex,
 						Size:      int64(ciphertextSize),
+						Data:      ciphertext,
 						IsSpecial: false,
 					}
 				}

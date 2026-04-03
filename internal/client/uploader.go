@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -17,7 +15,7 @@ type Uploader struct {
 	DB              *sql.DB
 	UploadChan      <-chan UploadJob
 	RPCClient       RPCClient
-	UploadDir       string
+	NumWorkers      int
 	BatchUploadSize int
 	FakeUpload      bool
 	Verbose         bool
@@ -26,15 +24,18 @@ type Uploader struct {
 }
 
 // NewUploader creates a new Uploader instance.
-func NewUploader(db *sql.DB, uploadChan <-chan UploadJob, rpcClient RPCClient, uploadDir string, batchSize int, fakeUpload, verbose bool, currentBackupID int64) *Uploader {
+func NewUploader(db *sql.DB, uploadChan <-chan UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64) *Uploader {
 	if batchSize <= 0 {
-		batchSize = 100 // Default batch size
+		batchSize = 10 // Default batch size
+	}
+	if numWorkers <= 0 {
+		numWorkers = 1
 	}
 	return &Uploader{
 		DB:              db,
 		UploadChan:      uploadChan,
 		RPCClient:       rpcClient,
-		UploadDir:       uploadDir,
+		NumWorkers:      numWorkers,
 		BatchUploadSize: batchSize,
 		FakeUpload:      fakeUpload,
 		Verbose:         verbose,
@@ -45,35 +46,39 @@ func NewUploader(db *sql.DB, uploadChan <-chan UploadJob, rpcClient RPCClient, u
 // Start begins listening for upload jobs.
 func (u *Uploader) Start() {
 	if u.Verbose {
-		log.Println("Uploader thread 1 of 1 launched")
+		log.Printf("Launching %d uploader threads", u.NumWorkers)
 	}
 
-	u.wg.Add(1)
-
-	go func() {
-		defer u.wg.Done()
-
-		var batch []UploadJob
-
-		for job := range u.UploadChan {
-			batch = append(batch, job)
-
-			if len(batch) >= u.BatchUploadSize {
-				u.processBatch(batch)
-				batch = nil // Reset batch
-			}
-		}
-
-		// Process remaining jobs in the final batch
-		if len(batch) > 0 {
-			u.processBatch(batch)
-		}
-	}()
+	for i := 0; i < u.NumWorkers; i++ {
+		u.wg.Add(1)
+		workerID := i + 1
+		go u.worker(workerID)
+	}
 }
 
-func (u *Uploader) processBatch(batch []UploadJob) {
+func (u *Uploader) worker(workerID int) {
+	defer u.wg.Done()
+
+	var batch []UploadJob
+
+	for job := range u.UploadChan {
+		batch = append(batch, job)
+
+		if len(batch) >= u.BatchUploadSize {
+			u.processBatch(batch, workerID)
+			batch = nil // Reset batch
+		}
+	}
+
+	// Process remaining jobs in the final batch
+	if len(batch) > 0 {
+		u.processBatch(batch, workerID)
+	}
+}
+
+func (u *Uploader) processBatch(batch []UploadJob, workerID int) {
 	if u.Verbose {
-		log.Printf("Uploader processing batch of %d jobs", len(batch))
+		log.Printf("[Uploader %d] Processing batch of %d jobs", workerID, len(batch))
 	}
 
 	var blobsToOffer []rpc.BlobMeta
@@ -101,7 +106,7 @@ func (u *Uploader) processBatch(batch []UploadJob) {
 
 	if u.FakeUpload {
 		if u.Verbose {
-			log.Printf("Fake upload: Pretending to offer %d blobs", len(blobsToOffer))
+			log.Printf("[Uploader %d] Fake upload: Pretending to offer %d blobs", workerID, len(blobsToOffer))
 		}
 		// In fake upload, pretend server needs all of them
 		neededIndices = make([]uint32, len(blobsToOffer))
@@ -111,13 +116,13 @@ func (u *Uploader) processBatch(batch []UploadJob) {
 	} else {
 		neededIndices, err = u.RPCClient.OfferBlobs(ctx, blobsToOffer)
 		if err != nil {
-			log.Printf("Failed to offer blobs to server: %v", err)
+			log.Printf("[Uploader %d] Failed to offer blobs to server: %v", workerID, err)
 			return // Cannot proceed with this batch
 		}
 	}
 
 	if u.Verbose {
-		log.Printf("Server requested %d out of %d offered blobs", len(neededIndices), len(blobsToOffer))
+		log.Printf("[Uploader %d] Server requested %d out of %d offered blobs", workerID, len(neededIndices), len(blobsToOffer))
 	}
 
 	// 3. Upload Needed Blobs
@@ -126,28 +131,20 @@ func (u *Uploader) processBatch(batch []UploadJob) {
 		for _, idx := range neededIndices {
 			job := batch[idx]
 
-			blobPath := filepath.Join(u.UploadDir, job.Hash)
-			
-			data, err := os.ReadFile(blobPath)
-			if err != nil {
-				log.Printf("Failed to read blob %s for upload: %v", job.Hash, err)
-				continue
-			}
-
 			blobsToUpload = append(blobsToUpload, rpc.LocalBlobData{
 				Hash: job.Hash,
-				Data: data,
+				Data: job.Data,
 			})
 		}
 
 		if u.FakeUpload {
 			if u.Verbose {
-				log.Printf("Fake upload: Pretending to upload %d blobs", len(blobsToUpload))
+				log.Printf("[Uploader %d] Fake upload: Pretending to upload %d blobs", workerID, len(blobsToUpload))
 			}
 		} else {
 			err = u.RPCClient.UploadBlobs(ctx, blobsToUpload)
 			if err != nil {
-				log.Printf("Failed to upload blobs to server: %v", err)
+				log.Printf("[Uploader %d] Failed to upload blobs to server: %v", workerID, err)
 				return // Upload failed
 			}
 		}
@@ -155,22 +152,14 @@ func (u *Uploader) processBatch(batch []UploadJob) {
 		// Update database with upload count
 		_, err := u.DB.Exec("UPDATE backups SET uploaded_files = uploaded_files + ? WHERE id = ?", len(blobsToUpload), u.CurrentBackupID)
 		if err != nil {
-			log.Printf("Failed to update uploaded_files count: %v", err)
-		}
-
-		// Clean up uploaded blobs from the upload directory
-		for _, blob := range blobsToUpload {
-			blobPath := filepath.Join(u.UploadDir, blob.Hash)
-			if err := os.Remove(blobPath); err != nil && !os.IsNotExist(err) {
-				log.Printf("Failed to remove uploaded blob %s: %v", blobPath, err)
-			}
+			log.Printf("[Uploader %d] Failed to update uploaded_files count: %v", workerID, err)
 		}
 	}
 
 	// Update database with offered count
 	_, err = u.DB.Exec("UPDATE backups SET offered_files = offered_files + ? WHERE id = ?", len(blobsToOffer), u.CurrentBackupID)
 	if err != nil {
-		log.Printf("Failed to update offered_files count: %v", err)
+		log.Printf("[Uploader %d] Failed to update offered_files count: %v", workerID, err)
 	}
 }
 
@@ -178,6 +167,6 @@ func (u *Uploader) processBatch(batch []UploadJob) {
 func (u *Uploader) Wait() {
 	u.wg.Wait()
 	if u.Verbose {
-		log.Println("Uploader thread finished")
+		log.Println("All uploader threads finished")
 	}
 }
