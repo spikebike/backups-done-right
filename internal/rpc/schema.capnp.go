@@ -4008,23 +4008,23 @@ func (c PeerNode) OfferShards(ctx context.Context, params func(PeerNode_offerSha
 
 }
 
-func (c PeerNode) UploadShards(ctx context.Context, params func(PeerNode_uploadShards_Params) error) (PeerNode_uploadShards_Results_Future, capnp.ReleaseFunc) {
+func (c PeerNode) PrepareUpload(ctx context.Context, params func(PeerNode_prepareUpload_Params) error) (PeerNode_prepareUpload_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xfe39e0e15b88669f,
 			MethodID:      1,
 			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "uploadShards",
+			MethodName:    "prepareUpload",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(PeerNode_uploadShards_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(PeerNode_prepareUpload_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return PeerNode_uploadShards_Results_Future{Future: ans.Future()}, release
+	return PeerNode_prepareUpload_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -4068,32 +4068,12 @@ func (c PeerNode) ReleasePiece(ctx context.Context, params func(PeerNode_release
 
 }
 
-func (c PeerNode) DownloadPiece(ctx context.Context, params func(PeerNode_downloadPiece_Params) error) (PeerNode_downloadPiece_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xfe39e0e15b88669f,
-			MethodID:      4,
-			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "downloadPiece",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(PeerNode_downloadPiece_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return PeerNode_downloadPiece_Results_Future{Future: ans.Future()}, release
-
-}
-
 func (c PeerNode) ListSpecialPieces(ctx context.Context, params func(PeerNode_listSpecialPieces_Params) error) (PeerNode_listSpecialPieces_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xfe39e0e15b88669f,
-			MethodID:      5,
+			MethodID:      4,
 			InterfaceName: "api/schema.capnp:PeerNode",
 			MethodName:    "listSpecialPieces",
 		},
@@ -4113,7 +4093,7 @@ func (c PeerNode) Announce(ctx context.Context, params func(PeerNode_announce_Pa
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xfe39e0e15b88669f,
-			MethodID:      6,
+			MethodID:      5,
 			InterfaceName: "api/schema.capnp:PeerNode",
 			MethodName:    "announce",
 		},
@@ -4203,13 +4183,11 @@ func (c PeerNode) GetFlowLimiter() fc.FlowLimiter {
 type PeerNode_Server interface {
 	OfferShards(context.Context, PeerNode_offerShards) error
 
-	UploadShards(context.Context, PeerNode_uploadShards) error
+	PrepareUpload(context.Context, PeerNode_prepareUpload) error
 
 	ChallengePiece(context.Context, PeerNode_challengePiece) error
 
 	ReleasePiece(context.Context, PeerNode_releasePiece) error
-
-	DownloadPiece(context.Context, PeerNode_downloadPiece) error
 
 	ListSpecialPieces(context.Context, PeerNode_listSpecialPieces) error
 
@@ -4232,7 +4210,7 @@ func PeerNode_ServerToClient(s PeerNode_Server) PeerNode {
 // This can be used to create a more complicated Server.
 func PeerNode_Methods(methods []server.Method, s PeerNode_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 7)
+		methods = make([]server.Method, 0, 6)
 	}
 
 	methods = append(methods, server.Method{
@@ -4252,10 +4230,10 @@ func PeerNode_Methods(methods []server.Method, s PeerNode_Server) []server.Metho
 			InterfaceID:   0xfe39e0e15b88669f,
 			MethodID:      1,
 			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "uploadShards",
+			MethodName:    "prepareUpload",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.UploadShards(ctx, PeerNode_uploadShards{call})
+			return s.PrepareUpload(ctx, PeerNode_prepareUpload{call})
 		},
 	})
 
@@ -4288,18 +4266,6 @@ func PeerNode_Methods(methods []server.Method, s PeerNode_Server) []server.Metho
 			InterfaceID:   0xfe39e0e15b88669f,
 			MethodID:      4,
 			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "downloadPiece",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.DownloadPiece(ctx, PeerNode_downloadPiece{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xfe39e0e15b88669f,
-			MethodID:      5,
-			InterfaceName: "api/schema.capnp:PeerNode",
 			MethodName:    "listSpecialPieces",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -4310,7 +4276,7 @@ func PeerNode_Methods(methods []server.Method, s PeerNode_Server) []server.Metho
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xfe39e0e15b88669f,
-			MethodID:      6,
+			MethodID:      5,
 			InterfaceName: "api/schema.capnp:PeerNode",
 			MethodName:    "announce",
 		},
@@ -4339,21 +4305,21 @@ func (c PeerNode_offerShards) AllocResults() (PeerNode_offerShards_Results, erro
 	return PeerNode_offerShards_Results(r), err
 }
 
-// PeerNode_uploadShards holds the state for a server call to PeerNode.uploadShards.
+// PeerNode_prepareUpload holds the state for a server call to PeerNode.prepareUpload.
 // See server.Call for documentation.
-type PeerNode_uploadShards struct {
+type PeerNode_prepareUpload struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c PeerNode_uploadShards) Args() PeerNode_uploadShards_Params {
-	return PeerNode_uploadShards_Params(c.Call.Args())
+func (c PeerNode_prepareUpload) Args() PeerNode_prepareUpload_Params {
+	return PeerNode_prepareUpload_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c PeerNode_uploadShards) AllocResults() (PeerNode_uploadShards_Results, error) {
+func (c PeerNode_prepareUpload) AllocResults() (PeerNode_prepareUpload_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return PeerNode_uploadShards_Results(r), err
+	return PeerNode_prepareUpload_Results(r), err
 }
 
 // PeerNode_challengePiece holds the state for a server call to PeerNode.challengePiece.
@@ -4388,23 +4354,6 @@ func (c PeerNode_releasePiece) Args() PeerNode_releasePiece_Params {
 func (c PeerNode_releasePiece) AllocResults() (PeerNode_releasePiece_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
 	return PeerNode_releasePiece_Results(r), err
-}
-
-// PeerNode_downloadPiece holds the state for a server call to PeerNode.downloadPiece.
-// See server.Call for documentation.
-type PeerNode_downloadPiece struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c PeerNode_downloadPiece) Args() PeerNode_downloadPiece_Params {
-	return PeerNode_downloadPiece_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c PeerNode_downloadPiece) AllocResults() (PeerNode_downloadPiece_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_downloadPiece_Results(r), err
 }
 
 // PeerNode_listSpecialPieces holds the state for a server call to PeerNode.listSpecialPieces.
@@ -4626,182 +4575,182 @@ func (f PeerNode_offerShards_Results_Future) Struct() (PeerNode_offerShards_Resu
 	return PeerNode_offerShards_Results(p.Struct()), err
 }
 
-type PeerNode_uploadShards_Params capnp.Struct
+type PeerNode_prepareUpload_Params capnp.Struct
 
-// PeerNode_uploadShards_Params_TypeID is the unique identifier for the type PeerNode_uploadShards_Params.
-const PeerNode_uploadShards_Params_TypeID = 0xdb63c9b71128ac4b
+// PeerNode_prepareUpload_Params_TypeID is the unique identifier for the type PeerNode_prepareUpload_Params.
+const PeerNode_prepareUpload_Params_TypeID = 0xdb63c9b71128ac4b
 
-func NewPeerNode_uploadShards_Params(s *capnp.Segment) (PeerNode_uploadShards_Params, error) {
+func NewPeerNode_prepareUpload_Params(s *capnp.Segment) (PeerNode_prepareUpload_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_uploadShards_Params(st), err
+	return PeerNode_prepareUpload_Params(st), err
 }
 
-func NewRootPeerNode_uploadShards_Params(s *capnp.Segment) (PeerNode_uploadShards_Params, error) {
+func NewRootPeerNode_prepareUpload_Params(s *capnp.Segment) (PeerNode_prepareUpload_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_uploadShards_Params(st), err
+	return PeerNode_prepareUpload_Params(st), err
 }
 
-func ReadRootPeerNode_uploadShards_Params(msg *capnp.Message) (PeerNode_uploadShards_Params, error) {
+func ReadRootPeerNode_prepareUpload_Params(msg *capnp.Message) (PeerNode_prepareUpload_Params, error) {
 	root, err := msg.Root()
-	return PeerNode_uploadShards_Params(root.Struct()), err
+	return PeerNode_prepareUpload_Params(root.Struct()), err
 }
 
-func (s PeerNode_uploadShards_Params) String() string {
+func (s PeerNode_prepareUpload_Params) String() string {
 	str, _ := text.Marshal(0xdb63c9b71128ac4b, capnp.Struct(s))
 	return str
 }
 
-func (s PeerNode_uploadShards_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s PeerNode_prepareUpload_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (PeerNode_uploadShards_Params) DecodeFromPtr(p capnp.Ptr) PeerNode_uploadShards_Params {
-	return PeerNode_uploadShards_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (PeerNode_prepareUpload_Params) DecodeFromPtr(p capnp.Ptr) PeerNode_prepareUpload_Params {
+	return PeerNode_prepareUpload_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s PeerNode_uploadShards_Params) ToPtr() capnp.Ptr {
+func (s PeerNode_prepareUpload_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s PeerNode_uploadShards_Params) IsValid() bool {
+func (s PeerNode_prepareUpload_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s PeerNode_uploadShards_Params) Message() *capnp.Message {
+func (s PeerNode_prepareUpload_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s PeerNode_uploadShards_Params) Segment() *capnp.Segment {
+func (s PeerNode_prepareUpload_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_uploadShards_Params) Shards() (PeerShardData_List, error) {
+func (s PeerNode_prepareUpload_Params) Shards() (PeerShardMetadata_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return PeerShardData_List(p.List()), err
+	return PeerShardMetadata_List(p.List()), err
 }
 
-func (s PeerNode_uploadShards_Params) HasShards() bool {
+func (s PeerNode_prepareUpload_Params) HasShards() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_uploadShards_Params) SetShards(v PeerShardData_List) error {
+func (s PeerNode_prepareUpload_Params) SetShards(v PeerShardMetadata_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewShards sets the shards field to a newly
-// allocated PeerShardData_List, preferring placement in s's segment.
-func (s PeerNode_uploadShards_Params) NewShards(n int32) (PeerShardData_List, error) {
-	l, err := NewPeerShardData_List(capnp.Struct(s).Segment(), n)
+// allocated PeerShardMetadata_List, preferring placement in s's segment.
+func (s PeerNode_prepareUpload_Params) NewShards(n int32) (PeerShardMetadata_List, error) {
+	l, err := NewPeerShardMetadata_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return PeerShardData_List{}, err
+		return PeerShardMetadata_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// PeerNode_uploadShards_Params_List is a list of PeerNode_uploadShards_Params.
-type PeerNode_uploadShards_Params_List = capnp.StructList[PeerNode_uploadShards_Params]
+// PeerNode_prepareUpload_Params_List is a list of PeerNode_prepareUpload_Params.
+type PeerNode_prepareUpload_Params_List = capnp.StructList[PeerNode_prepareUpload_Params]
 
-// NewPeerNode_uploadShards_Params creates a new list of PeerNode_uploadShards_Params.
-func NewPeerNode_uploadShards_Params_List(s *capnp.Segment, sz int32) (PeerNode_uploadShards_Params_List, error) {
+// NewPeerNode_prepareUpload_Params creates a new list of PeerNode_prepareUpload_Params.
+func NewPeerNode_prepareUpload_Params_List(s *capnp.Segment, sz int32) (PeerNode_prepareUpload_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[PeerNode_uploadShards_Params](l), err
+	return capnp.StructList[PeerNode_prepareUpload_Params](l), err
 }
 
-// PeerNode_uploadShards_Params_Future is a wrapper for a PeerNode_uploadShards_Params promised by a client call.
-type PeerNode_uploadShards_Params_Future struct{ *capnp.Future }
+// PeerNode_prepareUpload_Params_Future is a wrapper for a PeerNode_prepareUpload_Params promised by a client call.
+type PeerNode_prepareUpload_Params_Future struct{ *capnp.Future }
 
-func (f PeerNode_uploadShards_Params_Future) Struct() (PeerNode_uploadShards_Params, error) {
+func (f PeerNode_prepareUpload_Params_Future) Struct() (PeerNode_prepareUpload_Params, error) {
 	p, err := f.Future.Ptr()
-	return PeerNode_uploadShards_Params(p.Struct()), err
+	return PeerNode_prepareUpload_Params(p.Struct()), err
 }
 
-type PeerNode_uploadShards_Results capnp.Struct
+type PeerNode_prepareUpload_Results capnp.Struct
 
-// PeerNode_uploadShards_Results_TypeID is the unique identifier for the type PeerNode_uploadShards_Results.
-const PeerNode_uploadShards_Results_TypeID = 0xbcfe4b56811fa84f
+// PeerNode_prepareUpload_Results_TypeID is the unique identifier for the type PeerNode_prepareUpload_Results.
+const PeerNode_prepareUpload_Results_TypeID = 0xbcfe4b56811fa84f
 
-func NewPeerNode_uploadShards_Results(s *capnp.Segment) (PeerNode_uploadShards_Results, error) {
+func NewPeerNode_prepareUpload_Results(s *capnp.Segment) (PeerNode_prepareUpload_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return PeerNode_uploadShards_Results(st), err
+	return PeerNode_prepareUpload_Results(st), err
 }
 
-func NewRootPeerNode_uploadShards_Results(s *capnp.Segment) (PeerNode_uploadShards_Results, error) {
+func NewRootPeerNode_prepareUpload_Results(s *capnp.Segment) (PeerNode_prepareUpload_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return PeerNode_uploadShards_Results(st), err
+	return PeerNode_prepareUpload_Results(st), err
 }
 
-func ReadRootPeerNode_uploadShards_Results(msg *capnp.Message) (PeerNode_uploadShards_Results, error) {
+func ReadRootPeerNode_prepareUpload_Results(msg *capnp.Message) (PeerNode_prepareUpload_Results, error) {
 	root, err := msg.Root()
-	return PeerNode_uploadShards_Results(root.Struct()), err
+	return PeerNode_prepareUpload_Results(root.Struct()), err
 }
 
-func (s PeerNode_uploadShards_Results) String() string {
+func (s PeerNode_prepareUpload_Results) String() string {
 	str, _ := text.Marshal(0xbcfe4b56811fa84f, capnp.Struct(s))
 	return str
 }
 
-func (s PeerNode_uploadShards_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s PeerNode_prepareUpload_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (PeerNode_uploadShards_Results) DecodeFromPtr(p capnp.Ptr) PeerNode_uploadShards_Results {
-	return PeerNode_uploadShards_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (PeerNode_prepareUpload_Results) DecodeFromPtr(p capnp.Ptr) PeerNode_prepareUpload_Results {
+	return PeerNode_prepareUpload_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s PeerNode_uploadShards_Results) ToPtr() capnp.Ptr {
+func (s PeerNode_prepareUpload_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s PeerNode_uploadShards_Results) IsValid() bool {
+func (s PeerNode_prepareUpload_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s PeerNode_uploadShards_Results) Message() *capnp.Message {
+func (s PeerNode_prepareUpload_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s PeerNode_uploadShards_Results) Segment() *capnp.Segment {
+func (s PeerNode_prepareUpload_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_uploadShards_Results) Success() bool {
+func (s PeerNode_prepareUpload_Results) Success() bool {
 	return capnp.Struct(s).Bit(0)
 }
 
-func (s PeerNode_uploadShards_Results) SetSuccess(v bool) {
+func (s PeerNode_prepareUpload_Results) SetSuccess(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
-func (s PeerNode_uploadShards_Results) Error() (string, error) {
+func (s PeerNode_prepareUpload_Results) Error() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.Text(), err
 }
 
-func (s PeerNode_uploadShards_Results) HasError() bool {
+func (s PeerNode_prepareUpload_Results) HasError() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_uploadShards_Results) ErrorBytes() ([]byte, error) {
+func (s PeerNode_prepareUpload_Results) ErrorBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.TextBytes(), err
 }
 
-func (s PeerNode_uploadShards_Results) SetError(v string) error {
+func (s PeerNode_prepareUpload_Results) SetError(v string) error {
 	return capnp.Struct(s).SetText(0, v)
 }
 
-// PeerNode_uploadShards_Results_List is a list of PeerNode_uploadShards_Results.
-type PeerNode_uploadShards_Results_List = capnp.StructList[PeerNode_uploadShards_Results]
+// PeerNode_prepareUpload_Results_List is a list of PeerNode_prepareUpload_Results.
+type PeerNode_prepareUpload_Results_List = capnp.StructList[PeerNode_prepareUpload_Results]
 
-// NewPeerNode_uploadShards_Results creates a new list of PeerNode_uploadShards_Results.
-func NewPeerNode_uploadShards_Results_List(s *capnp.Segment, sz int32) (PeerNode_uploadShards_Results_List, error) {
+// NewPeerNode_prepareUpload_Results creates a new list of PeerNode_prepareUpload_Results.
+func NewPeerNode_prepareUpload_Results_List(s *capnp.Segment, sz int32) (PeerNode_prepareUpload_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[PeerNode_uploadShards_Results](l), err
+	return capnp.StructList[PeerNode_prepareUpload_Results](l), err
 }
 
-// PeerNode_uploadShards_Results_Future is a wrapper for a PeerNode_uploadShards_Results promised by a client call.
-type PeerNode_uploadShards_Results_Future struct{ *capnp.Future }
+// PeerNode_prepareUpload_Results_Future is a wrapper for a PeerNode_prepareUpload_Results promised by a client call.
+type PeerNode_prepareUpload_Results_Future struct{ *capnp.Future }
 
-func (f PeerNode_uploadShards_Results_Future) Struct() (PeerNode_uploadShards_Results, error) {
+func (f PeerNode_prepareUpload_Results_Future) Struct() (PeerNode_prepareUpload_Results, error) {
 	p, err := f.Future.Ptr()
-	return PeerNode_uploadShards_Results(p.Struct()), err
+	return PeerNode_prepareUpload_Results(p.Struct()), err
 }
 
 type PeerNode_challengePiece_Params capnp.Struct
@@ -5133,164 +5082,10 @@ func (f PeerNode_releasePiece_Results_Future) Struct() (PeerNode_releasePiece_Re
 	return PeerNode_releasePiece_Results(p.Struct()), err
 }
 
-type PeerNode_downloadPiece_Params capnp.Struct
-
-// PeerNode_downloadPiece_Params_TypeID is the unique identifier for the type PeerNode_downloadPiece_Params.
-const PeerNode_downloadPiece_Params_TypeID = 0xb84185b603d81424
-
-func NewPeerNode_downloadPiece_Params(s *capnp.Segment) (PeerNode_downloadPiece_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_downloadPiece_Params(st), err
-}
-
-func NewRootPeerNode_downloadPiece_Params(s *capnp.Segment) (PeerNode_downloadPiece_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_downloadPiece_Params(st), err
-}
-
-func ReadRootPeerNode_downloadPiece_Params(msg *capnp.Message) (PeerNode_downloadPiece_Params, error) {
-	root, err := msg.Root()
-	return PeerNode_downloadPiece_Params(root.Struct()), err
-}
-
-func (s PeerNode_downloadPiece_Params) String() string {
-	str, _ := text.Marshal(0xb84185b603d81424, capnp.Struct(s))
-	return str
-}
-
-func (s PeerNode_downloadPiece_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (PeerNode_downloadPiece_Params) DecodeFromPtr(p capnp.Ptr) PeerNode_downloadPiece_Params {
-	return PeerNode_downloadPiece_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s PeerNode_downloadPiece_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s PeerNode_downloadPiece_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s PeerNode_downloadPiece_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s PeerNode_downloadPiece_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s PeerNode_downloadPiece_Params) ShardChecksum() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s PeerNode_downloadPiece_Params) HasShardChecksum() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s PeerNode_downloadPiece_Params) SetShardChecksum(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-// PeerNode_downloadPiece_Params_List is a list of PeerNode_downloadPiece_Params.
-type PeerNode_downloadPiece_Params_List = capnp.StructList[PeerNode_downloadPiece_Params]
-
-// NewPeerNode_downloadPiece_Params creates a new list of PeerNode_downloadPiece_Params.
-func NewPeerNode_downloadPiece_Params_List(s *capnp.Segment, sz int32) (PeerNode_downloadPiece_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[PeerNode_downloadPiece_Params](l), err
-}
-
-// PeerNode_downloadPiece_Params_Future is a wrapper for a PeerNode_downloadPiece_Params promised by a client call.
-type PeerNode_downloadPiece_Params_Future struct{ *capnp.Future }
-
-func (f PeerNode_downloadPiece_Params_Future) Struct() (PeerNode_downloadPiece_Params, error) {
-	p, err := f.Future.Ptr()
-	return PeerNode_downloadPiece_Params(p.Struct()), err
-}
-
-type PeerNode_downloadPiece_Results capnp.Struct
-
-// PeerNode_downloadPiece_Results_TypeID is the unique identifier for the type PeerNode_downloadPiece_Results.
-const PeerNode_downloadPiece_Results_TypeID = 0xdd55290ddfaf7157
-
-func NewPeerNode_downloadPiece_Results(s *capnp.Segment) (PeerNode_downloadPiece_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_downloadPiece_Results(st), err
-}
-
-func NewRootPeerNode_downloadPiece_Results(s *capnp.Segment) (PeerNode_downloadPiece_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_downloadPiece_Results(st), err
-}
-
-func ReadRootPeerNode_downloadPiece_Results(msg *capnp.Message) (PeerNode_downloadPiece_Results, error) {
-	root, err := msg.Root()
-	return PeerNode_downloadPiece_Results(root.Struct()), err
-}
-
-func (s PeerNode_downloadPiece_Results) String() string {
-	str, _ := text.Marshal(0xdd55290ddfaf7157, capnp.Struct(s))
-	return str
-}
-
-func (s PeerNode_downloadPiece_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (PeerNode_downloadPiece_Results) DecodeFromPtr(p capnp.Ptr) PeerNode_downloadPiece_Results {
-	return PeerNode_downloadPiece_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s PeerNode_downloadPiece_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s PeerNode_downloadPiece_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s PeerNode_downloadPiece_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s PeerNode_downloadPiece_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s PeerNode_downloadPiece_Results) Data() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s PeerNode_downloadPiece_Results) HasData() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s PeerNode_downloadPiece_Results) SetData(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-// PeerNode_downloadPiece_Results_List is a list of PeerNode_downloadPiece_Results.
-type PeerNode_downloadPiece_Results_List = capnp.StructList[PeerNode_downloadPiece_Results]
-
-// NewPeerNode_downloadPiece_Results creates a new list of PeerNode_downloadPiece_Results.
-func NewPeerNode_downloadPiece_Results_List(s *capnp.Segment, sz int32) (PeerNode_downloadPiece_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[PeerNode_downloadPiece_Results](l), err
-}
-
-// PeerNode_downloadPiece_Results_Future is a wrapper for a PeerNode_downloadPiece_Results promised by a client call.
-type PeerNode_downloadPiece_Results_Future struct{ *capnp.Future }
-
-func (f PeerNode_downloadPiece_Results_Future) Struct() (PeerNode_downloadPiece_Results, error) {
-	p, err := f.Future.Ptr()
-	return PeerNode_downloadPiece_Results(p.Struct()), err
-}
-
 type PeerNode_listSpecialPieces_Params capnp.Struct
 
 // PeerNode_listSpecialPieces_Params_TypeID is the unique identifier for the type PeerNode_listSpecialPieces_Params.
-const PeerNode_listSpecialPieces_Params_TypeID = 0x970a3bec59172c39
+const PeerNode_listSpecialPieces_Params_TypeID = 0xb84185b603d81424
 
 func NewPeerNode_listSpecialPieces_Params(s *capnp.Segment) (PeerNode_listSpecialPieces_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -5308,7 +5103,7 @@ func ReadRootPeerNode_listSpecialPieces_Params(msg *capnp.Message) (PeerNode_lis
 }
 
 func (s PeerNode_listSpecialPieces_Params) String() string {
-	str, _ := text.Marshal(0x970a3bec59172c39, capnp.Struct(s))
+	str, _ := text.Marshal(0xb84185b603d81424, capnp.Struct(s))
 	return str
 }
 
@@ -5355,7 +5150,7 @@ func (f PeerNode_listSpecialPieces_Params_Future) Struct() (PeerNode_listSpecial
 type PeerNode_listSpecialPieces_Results capnp.Struct
 
 // PeerNode_listSpecialPieces_Results_TypeID is the unique identifier for the type PeerNode_listSpecialPieces_Results.
-const PeerNode_listSpecialPieces_Results_TypeID = 0x9ad120426882106f
+const PeerNode_listSpecialPieces_Results_TypeID = 0xdd55290ddfaf7157
 
 func NewPeerNode_listSpecialPieces_Results(s *capnp.Segment) (PeerNode_listSpecialPieces_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -5373,7 +5168,7 @@ func ReadRootPeerNode_listSpecialPieces_Results(msg *capnp.Message) (PeerNode_li
 }
 
 func (s PeerNode_listSpecialPieces_Results) String() string {
-	str, _ := text.Marshal(0x9ad120426882106f, capnp.Struct(s))
+	str, _ := text.Marshal(0xdd55290ddfaf7157, capnp.Struct(s))
 	return str
 }
 
@@ -5443,7 +5238,7 @@ func (f PeerNode_listSpecialPieces_Results_Future) Struct() (PeerNode_listSpecia
 type PeerNode_announce_Params capnp.Struct
 
 // PeerNode_announce_Params_TypeID is the unique identifier for the type PeerNode_announce_Params.
-const PeerNode_announce_Params_TypeID = 0xfcf6fefc4e228591
+const PeerNode_announce_Params_TypeID = 0x970a3bec59172c39
 
 func NewPeerNode_announce_Params(s *capnp.Segment) (PeerNode_announce_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 3})
@@ -5461,7 +5256,7 @@ func ReadRootPeerNode_announce_Params(msg *capnp.Message) (PeerNode_announce_Par
 }
 
 func (s PeerNode_announce_Params) String() string {
-	str, _ := text.Marshal(0xfcf6fefc4e228591, capnp.Struct(s))
+	str, _ := text.Marshal(0x970a3bec59172c39, capnp.Struct(s))
 	return str
 }
 
@@ -5564,7 +5359,7 @@ func (p PeerNode_announce_Params_Future) Callback() PeerNode {
 type PeerNode_announce_Results capnp.Struct
 
 // PeerNode_announce_Results_TypeID is the unique identifier for the type PeerNode_announce_Results.
-const PeerNode_announce_Results_TypeID = 0xcb16383952c09279
+const PeerNode_announce_Results_TypeID = 0x9ad120426882106f
 
 func NewPeerNode_announce_Results(s *capnp.Segment) (PeerNode_announce_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 0})
@@ -5582,7 +5377,7 @@ func ReadRootPeerNode_announce_Results(msg *capnp.Message) (PeerNode_announce_Re
 }
 
 func (s PeerNode_announce_Results) String() string {
-	str, _ := text.Marshal(0xcb16383952c09279, capnp.Struct(s))
+	str, _ := text.Marshal(0x9ad120426882106f, capnp.Struct(s))
 	return str
 }
 
@@ -5633,220 +5428,214 @@ func (f PeerNode_announce_Results_Future) Struct() (PeerNode_announce_Results, e
 	return PeerNode_announce_Results(p.Struct()), err
 }
 
-const schema_df5e7a9b8c1d2e3f = "x\xda\xc4Z}tT\xd5v\xdf\xfb\xdeI&\x93d" +
-	"\x92\xdcw\x87\x8f\x00\xc9<l\xec\x02\x16\xf8\x84\xc7[" +
-	"\x05\xdebM\x08\xd0\x1a \x90\x9b\x11)\xb4\xb4\xeff" +
-	"\xe6\x84\x0cLf\x86\xb9w\xd4\xe4\x95Gc\x9b\xfa`" +
-	"\xd9Ge\xd1\xbe'\x95*\"]~@\x11\x15\x04\x0b" +
-	"\xab@E\x89\xca\xaaPai\x95%\xd8\xda\xca\x12\x97" +
-	"BE\xb4E\xe6\xad}\xee\x9c{\xef\x84\xc9\x87\x1f\xe0" +
-	"\x7f3\xfb\xecs\xce>\xfb\xeb\xfc\xf6>\xf7\xf67J" +
-	"\xeb=\x93\xfd\xa1\x1f\x80\xa4\xbdYT\x9c\x1d\xde\xfb7" +
-	"M\xb7\xfcYQ7h\xb5\x88\x00E\xe8\x05\xf8q\x91" +
-	"o#\x02\xaa\xc3|\xf7\x00f\x7f\x99\xfa\xd7\xbb\xbe\x9c" +
-	"s\xa9\x07\x94Z\x04\xf0\xd0\xf8j\x1a\xf7d\x7ft~" +
-	"\xee\xe1\xd8\xf3\xe7\xd7\xb9Ft_\x17\x8dl?\xb5\xe9" +
-	"\xe1\x85\x0bS\xebAQ0\x1b\xba\xad\xe6\x81\xbf\xef\xfa" +
-	"\x93\xf7\xa0H\xf2\x02\xa8M\xbe\x93\xeaR\x1f\xfdZ\xcc" +
-	"\xd7\x7f\xc1;\xa7\xf3\xae\xd4s\x1b\xadU,\x01\xf6\xf8" +
-	"\xd6\x93\x00G}!\xc0l\xdb+\xffx\xe5\xcb\x86m" +
-	"\x7f\xe7f\xf8\xd2\xb7\x92\x18\x8aJ\x89a\xfa\xc4\x11K" +
-	"/\xfc\xb4\xf4\xd7\xa0\x8c\x12r\xdcZ\xba\x99\xe4HV" +
-	"\xdd\xd7\xde\xf0\xc3\x13\x9b\xad\x11k\xea\xb0\xd2\xc7h\xea" +
-	"\xad|\xaa\xfe\xefS\x1e|\xf5\xda\x91\x87ASPv" +
-	"I*s\xf9J\xdfW\xf5R\x9a\xb3\xbct\x09\x02f" +
-	"/n\xff\xd5\xb4\xd8\x03k\xb6\x10\xb7\xc7\xe1\xe6;\x1e" +
-	",\x1b\x85\xea\xf12\xfa\xd9[\xc6\xb9\x8f\xff\xce\xd6\xf4" +
-	"\xbfD\xe6n%n\xc9\xb56I\xa1\xce\xf4_R\x1b" +
-	"\xfd\xf4k\xae\x7f\x17`\xf6\x9e/*\xca\xfe\xe3\x80\xf2" +
-	"\xb8[\xd2s~~\xc8\x8f\xfd$\xe9\xfd\xff{w\xc5" +
-	"\xa5\x8b\x8b\xb7\xbb\x19j*\xb8\x9a&U\x84\x00\xaf\xdd" +
-	"\xbd<<{\xc4\xce\xed\xae\xe1\xa6\x8a4\x0d/\xa5\xe1" +
-	"l\xd9\x9f~tn\xc2\xcf~\xff)2\xb4$8\xd6" +
-	"T\xdcG\x1c\xeb*H\x84s3+\xaa\x8e\x0c\xefy" +
-	"Z\xb8\x82\xc4\x15Y\xd9E\x1c\x93+\x89\xe3\xa7[?" +
-	"\x08\xfe\xd3\xd4_\xecp[\xe2D%\x97\xe1\\%m" +
-	"\xf2\xf2\xf1\x17\xeb\xfe\xb2{\xea.\x97G(U\xeb\xc9" +
-	"\x12u\x81\xb7\xe4\xbd=\xb3\xf6\xb9\xc5\xc7*\xbe\xb6\xbf" +
-	"\x8a\xa6vx\x8e\xcc\xffx\xb7g?h\xa3\x1cG\x9c" +
-	"\\\xc5\xe5\x9bYE\x8e\xb2\xa1v\xd3\xa3\x7f\xd5\xb3\xff" +
-	"\xc5<W\xddR\xb5\x998vr\x8eEO\x04\xbb\xef" +
-	"\x9a\x7f\xed@\xde\x1a>\x85\xef2L!\x8eU\xdbf" +
-	"=\x1b\xde\xb2\xec\xa0\xfb\x04\xab\x95\x17\x89\xa1[\x09\x01" +
-	"^\xf9\xbd\x1dO-\x9d\xf0\xe9AM\xc1\x12\x97\xc9\x8a" +
-	"\xc9P{\x94\x93\xeaa\x85\xdbZ\xb9_\x06\xcc\xfe\xc3" +
-	"/\x16uM\xdf\xf4\xe3Cy\x02m\x1f\xc6\x95\xbe{" +
-	"\x18mw\xf6\xb5W\xd6=VVt$\x8f\xc3?\x9c" +
-	"\x1f\xaaz8q\xcc{\xff/\xd6}>\xa7\xe6HN" +
-	" \xae\xf3\xccp\xee\xa1=\x9caCb\xe7\xd8+\xe3" +
-	"\xb6\x1duK\x8c#\xf8\x0a\xfe\x11\xa4\xb8\xdaiw\x84" +
-	"V\x97\xff\xfc\xe5>Ni-5s\xc4(T\x9bF" +
-	"\xd0\xcf\xc6\x11\x1b\xc8+;7\x1ej\x99>m\xf8k" +
-	"9\x1dq\x1b\x9d\x1f\xb9\x8c\xd6\xbb<\x92\xd6;=\xea" +
-	"\xc2\x99\x05O\xdfy\xc2e\xc3a\xd5<\xaa\x7fsu" +
-	"\xe5\xde\x8b\xffS|\x1a\x14\xc5\x15+\x80*V_R" +
-	"\xfd\xd5\\\xd9\xd5\x7f \xabsG{\x01\xb2\xff\x96y" +
-	"y\xe9\x0f^\xed:\xed\x16|\xd2h.\xf8\xf4\xd1\xb4" +
-	"\xd1\x84\xe2\xd3\xbd\xcd\xd9\x7f~;\xcfZ\xb1\xd1\xdcZ" +
-	"\x99\xd1t\xf6\xf9;\xc6)/\xf4F\xdeq;\xcd\x89" +
-	"\xd1\\\xbfg\xf8\x12_\x14\xff<Z}\xf5\xcf\xdfq" +
-	"\xef\xe1\x1fc\xa9w\x0c1|\xb4k\xd1\xd4\xea\xcb\x97" +
-	"\xdeu3L\x1f\xc3\xb3[#gX\xb2z\xd7{\xfe" +
-	"\xf1\x8b\xcf\xb8\xb7\xe8\xb4V\xe8\xe1\x0c\xb3Wv\x1f}" +
-	"d\xdfsy\x0c\xdb\xc7X6\xe6\x0c\x13\x86\x07+\xa4" +
-	"%\xdd\xff\xed\xde\xe2\x831<(.s\x86\xee\xa6\x9f" +
-	"D\xbb\x7f\xed\xff\xd0\xcd0\xbe\x86\xbb\xed\xf4\x1ab\xa8" +
-	"\xfa]\xfd'\xd5W>\xbb\x90\x17\x9a\x1d5\\\xca5" +
-	"5\x14x\xf7?\xb0w\xca\x0b\x93\xc7\x7f\xe2^\xa2\xba" +
-	"\x96/1\xbe\x96\x96\xf84\xbc\xe4\xc8\x7f\xbe{\xec\x13" +
-	"\x97\xd1\x96\xd7>KF\xdb\xbdw\xdb\xa1\xd0\xfeO\xaf" +
-	"\xe4\xb9`S-\x97oy-i\xd9\x1f;\xef\xff\xd5" +
-	"\xeb\xa7\xfe?\x8fc\x7f-\xdf\xbe\x97s<\xd8s\xcb" +
-	"\xc2\xab\xd7>\xbf\x9a\xd3\x81\xcc\x13C\xb0\x85'\x86 " +
-	"\xc9w\xa8\xf5\xc3y\x1b\x1e\xbf\xf7\xab\x82i\xf4T\xf0" +
-	"\xff\xd4sA\x9as&\xc8]\xf0\x91\xb6_\xfe\xd1\xb9" +
-	"\xb3\xd3\xaf]\xe7Gk\xc6\x9eT\xd7\x8d%\xce\x9e\xb1" +
-	"\xaf\xa0z\xf0\x16/L\xcc\xea\xa9\xd8\x8f\x8cH;+" +
-	"\xea\xd0o\x8b\xe8\xa9DjF\x83\x1eY\x95I\x85Y" +
-	"\xfan\x96\xbe-\x93\x8a'\xf5hC<\xd9j\xd4\xb5" +
-	"0#\x137\xd1\xd0Jd\x0f\x80\x07\x01\x94\xf1\x0d\x00" +
-	"Z\x9d\x8c\xda\xed\x12\"\x06\xe8\x80\xca\xa4)\x00\xda8" +
-	"\x19\xb5\xa9\x12\xae52\x91\x083\x0cD\x90\x10\x01\x83" +
-	",\x9dN\xa6\xb1\x1c$,\xa7\xfba\xe0\xcd\xe31\xc3" +
-	"\x9c\x15\x8f[\xbb7\xebi\xbd\x03\x0d{\x8e\xa7\xf0\x9c" +
-	"\x15\xcc\x0c\x9b\xba\x991\xeaB|\x863Ar&\xc4" +
-	"\x93\xadst\x13\xf5fD\xf7a\xe69\x82+\xe24" +
-	"\x93'\x00h\x13e\xd4\xa6I\x98\x8d\xb4\xb3\xc8*#" +
-	"\xd3\x01\x00\xe8\x07\x09\xfd\x80\x95Q\xdd\xd4\xc5\x9f\xc1\x0e" +
-	"\x14eqf2\xd7y\x0c\x00\xcdc\x0b\xe0o\x01\xd0" +
-	"\xcae\xd4\xc6\xb9\xf7B\x03+\x00\x9be\xe4\xbbT\xb8" +
-	"v\xe9G\x05z4\xda\xccX\xba\xaeY\xaf\xa4-\xdc" +
-	"\x1b\x90\xb9Jd\xd4\x02\x12\xae\xd5\xa3\xd14\x99\xa6\x7f" +
-	"c\xd0*\x0b\x93Q\xc6\x0d\x11N\xb1HL\x8f7\xc7" +
-	"X\x84Y\xd2\xcb.\xe5\x0ei\x129\x907n\xe6I" +
-	"4#'Q\x9d\x84!\xa3]OG\xed\xd3V9\xb9" +
-	"\x170\xef\xdc\x8e%g\xc7c,a6z\x13mI" +
-	"\xb2\xe5H{\xdd\x87F\x01h\x9bd\xd4\x1eu\x1cs" +
-	"\x0b\xa9\xf7a\x19\xb5'$T$\x0cP6P\xb6\x93" +
-	"\x00\x8f\xca\xa8\xed\x90P\x91\xa5\x00\xca\x00\xca\x93\xe4\x09" +
-	"O\xc8\xa8=/\xa1\xe2\xc1\x00z\x00\x94\xdd]\x00\xda" +
-	"32j\x07$T\x8a\xa4\x00\x16\x01(\xfb7\x03h" +
-	"\x07d\xd4\x8eI(\xc7\xa2\xe8\x03\x09}\x80\xd9T\xa6" +
-	"5\x1e\x8b\xccg\x80\x9dB\xc1!\x83\xfb\xa5\xad\xef\xb8" +
-	"n\x98a\xc6\x12\xe4L\x82\xd6\xa1\xdf\x1b6\x93i\x1d" +
-	"B+X8\xd6\xc5\xec\xf5\"\x99t\x9a%\xcc0\xd2" +
-	"(\x8d\xc9\xaeA\xa1\x17\xd9\xd6\xcb\x82dD\x8f[\xee" +
-	"@\xd1 g\x8c>\xeaI\x03h\xbf\x91Q{\x9c\\" +
-	"]\xb2\xf4\xb3\xb5\xd5\xa5\x0aI\xb6\xf4\xf3\xe4\xb3\x00\xda" +
-	"\x0e\x19\xb5}\xa4\x1f\x8f\xa5\x9f='\x9dS+\x9e\"" +
-	"K?G\xd7\x03h\xc7d\xd4\xde$\xfd\xc8\x96~N" +
-	"\xd0\x9ao\xc8\xa8\xbd+a6\x932c\x1d,\xcc " +
-	"\x18I&\xa2\x86-\xbf\x994\xf5x\xb8]\x07/\x99" +
-	"\xbf\x04$,!`\x9a\x89\xc7;[X\x0a\xe3\xb1\x88" +
-	"n\xb2h8h\xb9\x87\x18O\xe9i3\xa6\xc7\xe3\x12" +
-	"1\x09\x1ebA\x87\xa7=i\x98,\xda\xcc\x90\xa5\xf9" +
-	"\x90\x01`\x8f\xad\xce\xb0\x0c\x8b6t\x82\xd7d\xc6u" +
-	"\xba\xcc\xcf\x16M\xcc\x0c\xea\x14\xe9\xa4\xc6r[\x8ds" +
-	"\xc9O\xe6\xc8\xa85;^\xd6D\x09\xe3\x0e\x19\xb5;" +
-	"I\x8b\xf5\x96\x165\x0a\xbc\x052j\x7f\xd8O\x161" +
-	"\\\xc6^kXQ#\x92f\x81x\xb7\x83,\xd9\xd6" +
-	"&\x8eV(\xde\xbfIt\x15\x08\xe5H\xbb\x1e\x8f\xb3" +
-	"\xc4\x0a\xc6\x039w\x11\xf4\xc9]\x13\x9c\xd4R8'" +
-	"\x16\x90>\xcd\xe2L7r\xab6\x07\xf5\xbe\xe2\xa7s" +
-	"\xf9p\xa4\x84Y.\xfe\xecvr\x1eR\xdePSn" +
-	"&\x15\xd5M\x96\xcb\x87<\xe3\xba\xedGY\xa2^F" +
-	"m\x81c\xbf\xc6\x19\x8eM\xed,\xd1\xd4\xe5\xd8\xcf\x15" +
-	"\xe6}C\xba\xdf\xf0\x1d<c[\x99L\\Zn\x19" +
-	"[\\\xf2\xd8N6\xc3q2\x0a_\xeec$c\xb3" +
-	"\x8c\xda\x1fKC\xca?\x83\x0a;\x04HP\xe8\x12\x9b" +
-	"\xe2\xf8\\\xb0\x95\xb8\x1c\x97\xb3\x0b\xd7~]\xee\xba\xfb" +
-	"\xdf\xd2\x8b\xb3\xd3@\xee\x14M\xde\x93 \xd9,\x7f\x12" +
-	"\xaa\xfc\xd6\xfe\xd4_\x18\x08\x7fr!\x88\xb4\x83 l" +
-	"\x001\xc3\x05 \xfa\xd94\x94lk3\x989t\x0b" +
-	"\x90O\xe7<\x86\x07\xa3l\xde\x00TV@\xc3\x96\xed" +
-	"s\xf9\xa6%d\xe5\x81\x9b\x8a\x07s\x88\"\x87H\x85" +
-	"\x04.\x1b\xafta\xa8\\\"m\x80\xca|?\xb4{" +
-	"\x07\xfd\x02\x0b:qc\xa2\x0d9\xac\xa8\x17\xab\xab\xbb" +
-	"q\x14@x\x07\xca\x18\xde\x87\xf6\x11\xd5=\xd8\x00\x10" +
-	"~\x86\xc8\x07\xd0I\x1b\xea~l\x01\x08\xef#\xfaK" +
-	"\xe8\xe0\x0b\xf50\xce\x00\x08\x1f \xfa1\xa2{d~" +
-	"\x85\xaaG9\xffKD\x7f\x83\xe8E\x1e~\x8b\xaa\xc7" +
-	"q\x1e@\xf8u\xa2\xbfE\xf4b\x0c`1a\x7f\xec" +
-	"\x02\x08\xbfI\xf4\xb3D\xf7J\x01\xde\xfe8\x83\x9b\x01" +
-	"\xc2g\x89~\x81\xe8%r\x00K\x00\xd4\xf3\xf8\x18@" +
-	"\xf8\x02\xd1\xbf \xba\xaf$\x80>\x00\xf52_\xe73" +
-	"\x94\xb1E\x92P)\xf5\x05\xb0\x14@\xfd\x0a\xd7\x03\xb4" +
-	"H2\x86\xcb\x89\\V\x1a\xc02\x00\xd5'\xa5\x01\xc2" +
-	"%D\x0f\x10\xbd\xbc,\x80\xe5\x00\xaa\"m\x04\x08\x07" +
-	"\x88\xfeC\xa2\xfb\x8b\x02\xe8\x07Pk\xa4V\x80\xf0\x18" +
-	"\xa2\x8f#zEq\x00+\x00\xd4[9\xbd\x8e\xe8\xb7" +
-	"\x13\xbd\xd2\x1b\xc0J\x00u\x12_\x7f\"\xd1\xa7Iy" +
-	"\xf9\xf6:\xcc:\x844\xd7\x16Ks\x9c\x05\x98\xb8\x01" +
-	"\xd0+\x991[\x93\x99D\x14\xc3\xb9Qo\xde\xd4\\" +
-	"\xc2\x80\x103\x9a\xf4(\xb3\xb1\x87\x18@f4\xeb\x86" +
-	"\xc1\xa2.\\\x12I&\x12,b\xc6 \x98L\x18\x8b" +
-	"V\xd9\xf4X\xc2d+\xd21\x13;g\x99&\xebH" +
-	"\x99.\x9c\x13I&L=b6\x02!a\xfbH\xf9" +
-	"\xb8\xaa\xefy \x87\xa7\x86~G\xf1[\xb4\x85\x05o" +
-	"n\xd4;\x97\xa3\xc0\x1d7mkq\xa18\xf5\xaf\xb7" +
-	"\xcf\xc9\xa7\xe4\xb6\xafw]\xce3I\xa6i\xd6\xe5<" +
-	"\xc8\x0d\xb8\xb6#f\x18\xb1\xc4\x8a\xfe*\xbc\x01\x12!" +
-	"\x19\xc3pT\xd2\xcf\x05\x9c\".{{\xd1\x7f\xeb\x93" +
-	"\xf6\xe4\xbc\xb4\xc7\xb3{\x133\xf5\xa8.[\x80w\x8c" +
-	"\xbd\xf6\x1e\x02\xbc\xcf\xcb\xa8\x1dr\xd4}\x90\x90\xdf>" +
-	"\x19\xb5\x97\\\x80\xf70\xa1\x96C2j\xafS\xda\x93" +
-	"\xad\xb2\xa1w\x99\xabB\x10e\xd5\x89\xfb\x9c\x0a\xc1." +
-	"\xab\xde&,\xf3\x96\x8c\xda\x7fQ\xb6+\xe6\xd9N9" +
-	"G\xb5\xc4Y\x19\xb5\x0bC\x00\xd1\xd9\x98a]\x15\x80" +
-	"\x0e\x90N\xd1\xbd\xdd\x98\x88\x82\xcc\xeeu\xd7\x11\x14\x0e" +
-	"\xed\xa8\xa7\xa3w\xe8F\xbb\xbd^\xd6`\xab3,\x11" +
-	"a\x10Z\x98\xe9he\xe9\xfc\x82\xa59\xc6\xc0\x1ba" +
-	"N\x10\x0epo\xea\x89D2\x93\x10\xd0Y6\xfb-" +
-	"\xca\xfb\xb8\xeb`A\xe98\xc2\x00\xdd\x0ekB\x90\xcf" +
-	" sN\x95\x8b\\\x0dD\x14\x1d6\xf5A\\\x06\x92" +
-	"\xba\x0e\xbd\xe8\xf4\xa2Q\xbc`\xa8k\xb0\x15$5\x83" +
-	"^\x94\xec~\x18\x8a\x86\xaf\x1a\xc3\xf5 \xa9\x0c\xbd(" +
-	"\xdb\x1d9\x14\xddWu)\xa6AR5\xf4\xa2\xf3\xac" +
-	"\x81\xa2\xbb\xa8\xce\xc5\x16\x90\xd4\x99\xe8\xc5\"\xfb\xb9\x02" +
-	"E\xdbL\x9d\xcc\xf7\x1d\x8f^,\xb6\x1fKPt\xec" +
-	"\xd4\x1a\\\x09\x92:\x0c\xbd\xe8\xb5_2Pt\x8eU" +
-	"\x1f6\x80\xa4|\xe5\xc5\x12\xbbA\x8f\xa2c\xa7\\\\" +
-	"\x06\x92r\xde\x8b>\xbb'\x8b\xa2\x1b\xac\x9ci\x01I" +
-	"9\xe5\xc5R\xbb\xe7\x8e\xa2\xd7\xa9\xf4\xb6\x82\xa4\x1c\xf6" +
-	"b\x99\xddYD\xd1;W\xf6\xac\x04I\xd9\xe9\xc5r" +
-	"\xbb\xdd\x8f\xa2I\xadl\xa55\x1f\xf2fy\xc9\xd6\x10" +
-	"O\x82\xdcj\xd4SQle\x18\xf0&\xf9\x7f\x01r" +
-	"P\xa0\x1c\x80z\xcc\x8aL\x04AN\xab\xc7\xacht" +
-	"\x01\xd2?\xd1Yr\xaf2+.\x90O=\xbf9\xc9" +
-	"Q\xf8\x86VE\x042\xff+\\\xc8ZG@n\xf0" +
-	"&L\xc3f\x9e\x1d\x87J\xca\xc0\xf5\x98\x15\xd9\x18\xd0" +
-	"\xac\xc7f\x1c4U\x89\xd3:\xc5\xc2\x10k\x85\xfe0" +
-	"\xda`e\xe4\x8dC\xa5\x83\xe1\xe1\x02\x05\xec@\xf5\xb7" +
-	"\xdd\xd5\x1dZ1\xe446\x0b\xe5\xfc\x19N\x0e\x11\x00" +
-	"\xa8\xcayP\x03\xc4\xaa\xafWn\xd9\xbd\xde\x02y\xaa" +
-	"N\xc2\xb5\x11\x8b\xcf9\x8d\xfd\xd47x7!\xbfL" +
-	"+t\x9ao\xd2KpwBl\x8cR\xa0\xf6\xa3\xba" +
-	" \xc1X\x94E\x1b\x13\x10\x8c\xc6(\x83\xe7NQ2" +
-	"\xb4\xdb\xd7\xe5\xd2\x05;!\xdf\xddN\xf9\xf8#\xd7s" +
-	"\xfd\x16\x0d\xe3\xa1\xd4\x93\xb9>\xfb\xf7\xd9%\x19\xcas" +
-	"@\xa1\x8b\xf4\xbb\xd1\xc6uUf.\xae\xbfF\xa7\xc9" +
-	"q\x8b\x9b\x86T]/\x0b7\xee\x9df dS\xc0" +
-	"o\xd2\x85:W\xad\x8e\x8f(R\xaeu\xb5\x98`\xe5" +
-	"\x9d2j?\x93\xac+\x88%fE!\x98_\xeb\x15" +
-	"\xaeq\"z<\xde\xaaGV\x11\x0eT\x9c\xb7/@" +
-	"T\xfa-\xec\xc3\xedz(\x1d\x9d\xa3\x0f\x84n\x95B" +
-	"\xf0V\xb4\xda\xf2\xd1-\x16B\xb7R!t\x8b\x85\xd0" +
-	"\xadg\x88\xe86/\x11~\x7f\xe8V\xea\xeb\x03\xc8," +
-	"-\x12\xa8\x14\xdfY\xa0x\xd7UN\x10Z\xea%H" +
-	")\x9e\x9bQ|G\xa0\x1c$\xb4\xb4\x87\x00\xa5\xf8<" +
-	"\x01\xc5w\x18\xca\x93] )[\xbd(\x8b//\x9c" +
-	"\x07m\xe5oi\xde_\x13\x98\x14\xdf=\xa0xhV" +
-	"\xba\xd3 )\x9d\x04%\xc5w+(>SQ:6" +
-	"\x82\xa4\xc4\x08H\x8a'W\x14\xef\xf5\xca\xf2y )" +
-	"\x8bs\xe8L\xd4\xcc6<\x0b\xb7C\xa5n\x11\\5" +
-	"=\xbf\xc0\xea1+\xf0\x07\x81$Np\xd0\x9a`q" +
-	"\xa3:N\xe3hK\x04\x0f\x10\xc6kF\xfcm\x00\x00" +
-	"\x00\xff\xffChY`"
+const schema_df5e7a9b8c1d2e3f = "x\xda\xc4Z}pT\xd5\x15?\xe7\xbeM6\x1b\xf2" +
+	"\xf5\xfa\x96o\x92\x856v\x80\x01\x14\x84)\xc6q\x12" +
+	"\x02\xb4\x86\xcf\xbc\xacH\xa1\xa5\xf5e\xf7\x86,lv" +
+	"\x97}oUb\x95\x86\x96\"\x8c#\x95\xc1*T\xaa" +
+	"\x11\xe9\x88B\x11\x15\x04\x0bS\xa0\xa2`a*T\x18" +
+	"\xad2\x82\xfd\x92\x91\x8eB\xa5h+l\xe7\xdc\xb7\xef" +
+	"c\x93\x0d\x89#\xd2\xffv\xcf=\xf7\xdcs\xcf=\xe7" +
+	"\xdc\xdf9\xf7\xdd\xb0\xb4\xb0\xc63\xbax\x95\x0cL=" +
+	"\x9c\x97\x9f\xees\xe8\xe7\xd3\xbf\xfe\xa3\xbc6P+\x10" +
+	"\x01\xf2\xd0\x0bp\xe3\x96\x82\xd5\x08\xa8\xec)\xb8\x0b0" +
+	"}\x7f\xe2\xf7\xb7\x7f6\xe9\xfc2\x90+\x10\xc0C\xe3" +
+	"\xfd}\xab\x11<\xe9\xeb\xcfL\xde\x17y\xf1\xcc\x0a\xd7" +
+	"\x88\xcf\xd7J#\x1b\x8f\xafyl\xc6\x8c\xc4J\x90e" +
+	"LW\x8f*\x7f\xe0\x97\xad?x\x0f\xf2\x98\x17@\xb9" +
+	"PpLA\x1f\xfd\xba$\xe4\xbf\xe4\x9d\xb4\xf8\xf6\xc4" +
+	"\x0b\xabM)\xa6\x02\xf3|+I\x81\x16_5`\xba" +
+	"\xe9\xb5__\xfc\xacv\xc3/\xdc\x0c\xed\xbe\x05\xc4\xb0" +
+	"E0\xdc4\xa2\xef\x9c\xb37\x17>\x02\xf2\x00b\x90" +
+	"\x88\xe1\x88\xaf\x81\x18\xde\xf6m\x05L\xc7\xcb\x966\xd7" +
+	"\x0e>\xba\x0e\xd4\x01hizo\xe1\\bXQH" +
+	"\x12\xb4?\x8dy\xe8\xf5\xcb\xfb\x1f\x03UF\xc9\xa50" +
+	"\x89R6\x15\xbe\xafl/\xa49\xdb\x0ag#`\xfa" +
+	"\xdc\xc6\x07\xc7G\x1e\xb8w=q{\x1cn!V." +
+	"\x1a\x80\xca\x90\"\xfaY^$\xb8\x8f|\xa3=\xf9\xbb" +
+	"\xd0\xe4v\xe2f.\xd9\xb4\x0f\xe5\xa1\xe2\xf3\xca\xfab" +
+	"\xfa\xb5\xb6\x984\xbd\xeb\xd3\x92^\x7f\xde-?\x95\xd9" +
+	"\x8a\xd8\xeb\xb8\x12\xb1\xd7\x09%\xa4\xe9\xf2\x7f\xddYr" +
+	"\xfe\xdc\xac\x8dn\x86E%\xc2Zm\xc4p\xf9\xcey" +
+	"\xc1\x89}\xb7lt\x0d\xb7\x97$\x85\xad\xc4\xfc^?" +
+	"\xfc\xf0\xf4\xf0;\xbe\xfd\x0c\x9d7\xb38\x8e\x96,%" +
+	"\x8e\x93%\xa4\xc2\xe9[J\xca\xf6\xf7Y\xf6\xac\xe5\x11" +
+	"th7..m%\x8ee\xa5\xc4qs\xfb\xdf\x02" +
+	"\xbf\x19{\xdff\xf7\x81\\W&t\x18WF\x8b\xbc" +
+	"z\xe4\xe5\xca\x9f\xb6\x8d\xdd\xear\x0cN\xe3\x9et\xa5" +
+	"\xff-i\xc7\xb2\x09;M\xf5\xc5\xc8\xac\xb2u4\xd2" +
+	"\xe2\xd9?\xf5\x9f\xdb<\xbb2gdJ\x9d\\&\x14" +
+	"S\xcb\xc8QVU\xacy\xe2g\xcbv\xbd\x9c\xe5\xaa" +
+	"\xdbh6*\xfb\x04\xc7\xcc\xa7\x03m\xb7O\xbd\xbc;" +
+	"KF\xb9,d\x0c\x93\x89c\xe1\x86\x09\xcf\x07\xd7\xcf" +
+	"\xdd\xe3V}\x99\xfc21<,W\x03^\xfc\xd6\xe6" +
+	"g\xe6\x0c\xffx\x8f*c\x81\xeb\xac\xf2\xe9\x84\x0e\xc9" +
+	"\xc7\x94\xe3\xb2\xb0\x97\xbc\\\x02L\xff\xea\xbe\x99\xad7" +
+	"\xad\xb9qo\x96B\xbbz\x0bk\x1f\xe8M\xcb\x9d\xfa" +
+	"\xc3k+\x9e\xec\x95\xb7?\x8bcH\x1f\xa1\xd0\xc8>" +
+	"\xc41\xe5\xfd\x9f\xac\xf8\xf7\xa4\xf2\xfd\x19\x85\x84\xb1W" +
+	"\xf4y\x92\x18\xd6\x0a\x86U\xb1-C.\x0e\xddp\xc0" +
+	"\xadq\xef\xbeB\xc2\x90\xbed\xec\x8a\xf1\xb7V/*" +
+	"\xba\xe7\xd5\x0e\xdeh\x8aR\xfb\x0e@E\xeb+b\xaa" +
+	"\xef*r\xc7\x13\x03\xce\x9e\x9c\xf6\xecmG]gs" +
+	"\xa9\x9f\x08\xdaG?_\xb0\xe3\xdc?\xf2O\x80,\xbb" +
+	"b\x00P9\xd3\xef\xbcr\xa1\x1fq\x9e\xeb\xf7\x1dI" +
+	"\x199\xd0\x0b\x90\xfec\xea\xd59_{\xbd\xf5D\x96" +
+	"^\x03M\xbd\x06\x92^\xc3\xf3O\x1c\xaaO\xff\xf6\xed" +
+	"\xac\xc3P\x07\x0a?\x9a7\x90\xb66u\xf3P\xf9\xa5" +
+	"C\xa1w\xdc\xbe\xbc\xcbd8 D|\x9a\x7fO\xb8" +
+	"\xff\xe7?~\xc7\xbd\xc6\x05s\x0d\x1cD\x0c\x1fn\x9d" +
+	"9\xb6\xff\x85\xf3\xef\xba\x19\x86\x0c\x12\xc9k\xb4`\x98" +
+	"\xbdh\xeb{\xc5\xc3f\x9dt/\xa1\x0d\x12\xe6]$" +
+	"\x18&.h;\xf0\xf8\xce\x17\xb2\x18\xda\x07\x99\x01#" +
+	"\x18\x86\xf7\x09\x94\xb0\xd9m\x7fw/qz\x90p\xf6" +
+	"s\x82\xa1m\xfa\xb8p\xdb#\xc5\x1fdEC\xb9\xf0" +
+	"\xcaq\xe5\xc4P\xf6Mm\\\xff\x8b\x9f\x9c\xcd\x0a\xb9" +
+	"H\xb9\xd0rq9\x05\xd4\xf2\x07v\x8cyi\xf4\xb0" +
+	"\x8f\xb2lY!D\\WA\">\x0e\xce\xde\xff\x97" +
+	"w\x0f~\xe4:\xb49\x15\xcf\xd3\xa1m\xdb\xb1ao" +
+	"\xf5\xae\x8f/fyX]\x85\xd0oN\x05Y\xb98" +
+	"r\xa6\xf8\xc1\xc3\xc7\xff\x9b\xc5\xb1\xbdB,\x7f@p" +
+	"\xecm\xfc`\xca\xaa\xa7\xee\xbe\x943\xfb\x0d\x09\xfcG" +
+	"\x19\x19\xa09\xc3\x02\xc2\x81\x1eo\xba\xff{\xa7O\xdd" +
+	"t\xb9\x93\x9b\x1c\x1a|L9>X\xc4\xc7\xe0\xe5\xa8" +
+	"\x9c\x1c\xe2\x85\x11i-\x11\xb9^\x0f5\xf3\xbc\x16m" +
+	"THK\xc4\x12U\xb5Zha*\x11\xe4\xc9;y" +
+	"rT*\x11\x8dk\xe1\xdah\xbcQ\xafl\xe0z*" +
+	"j\xa0\xae\x16H\x1e\x00\x0f\x02\xc8\xc3j\x01\xd4J\x09" +
+	"\xd5\x1b\x18\"\xfaI\x7fy\xe4\x18\x00u\xa8\x84\xeaX" +
+	"\x86K\xf4T(\xc4u\x1d\x11\x18\"`\x80'\x93\xf1" +
+	"$\x16\x01\xc3\"J\xebW^<\x1a\xd1\x8d\x09\xd1\xa8" +
+	"\xb9z\xbd\x96\xd4ZP\xb7\xe7xr\xcf\x99\xcf\x8d\xa0" +
+	"\xa1\x19)\xbd\xb2Z\xccp&0gB4\xde8I" +
+	"3P\xabGtof\x8a\xa3\xb8l\xedf\xf4p\x00" +
+	"u\x84\x84\xeax\x86\xe9P3\x0f-\xd4S-\x00\x80" +
+	"\xc5\xc0\xb0\x18\xb04\xac\x19\x9a\xf5\xa7\xbb\x0d\x85y\x94" +
+	"\x1b\xdc\xb5\x1f\x1d@\xf5\xd8\x0a\x147\x00\xa8E\x12\xaa" +
+	"C\xddk\xa1\x8e%\x80\xf5\x12\x8aUJ\\\xabta" +
+	"\x02-\x1c\xae\xe7<YY\xaf\x95\xd2\x12\xee\x05\xe8\xb8" +
+	"\x0a$T\xfd\x0c\x97h\xe1p\x92\x8e\xa6\xe3a8R" +
+	"I\xca\x8cx\x98\x8f\xd2b\xb1x*\x16\xe2\xd6!\xa8" +
+	"E\xb6\xc8\xc9I\x00u\x92\x84j\xbd\xcbh\xd3\x1b\x01" +
+	"\xd4i\x12\xaa\xdfe(3\xe6\xa7\xb0\x92g\x91yo" +
+	"\x93P\xbd\x83a\x9a\x8e\x96\xc7&\x84!\x90\xadD(" +
+	"\x1e3\xb4\x90Q\x07\xdeXS\xdc\xa1j\xd1h\xa3\x16" +
+	"ZHv\x97\x1d\x07\x07D\xb9\x87\x8a\x0b\xdf\x95\x8c." +
+	"\x8d\xd1\xc1Os8\xcd\xc4h\x84\xc7\x8c:\xd2\x8b\xdc" +
+	"\xa6\x9f-g\xed\x00\x00u\x8d\x84\xea\x13N\x0c\xac\xa7" +
+	"\x93|LB\xf5i2\x00\x9a\x06\xd8X\x05\xa0>!" +
+	"\xa1\xba\x99\xa1,1?J\x00\xf2&\xb2\xca\xd3\x12\xaa" +
+	"/2\x94=\xe8G\x0f\x80\xbc\xad\x15@}NBu" +
+	"7C9\x8f\xf91\x0f@\xde\xb5\x0e@\xdd-\xa1z" +
+	"\x90\xa1\x14\x09\xa3\x0f\x18\xfa\x00\xd3\x89Tc4\x12\x9a" +
+	"\xca\x01\x17[\x06\xab\xd6E\x08\xd8\xf6\x8bj\xba\x11\xe4" +
+	"<F\xf6\xb3h-\xda\xddA#\x9e\xd4\xa0z>\x0f" +
+	"FZ\xb9-/\x94J&y\xcc\x08\"\x8d\xd2\x98\xe4" +
+	"\x1a\xb4\xec\"\xd9v\x99\x16\x0fiQ\xd3\xf3(\xf0\xa4" +
+	"\x94\xde\xc1<\xe4 \x8fJ\xa8>E\x0e\xc2L\xfb\xb4" +
+	"7\xbaL\xc1$\xd3>\x9b\x9e\x07P7K\xa8\xee$" +
+	"\xfbxL\xfbl?\xe6\xecZ\xf6\xe4\x99\xf69\xb0\x12" +
+	"@=(\xa1\xfa&\xd9G2\xeds\x94d\xbe!\xa1" +
+	"\xfa.\xc3t*aDZx\x90C \x14\x8f\x85u" +
+	"[\x7f#nh\xd1`\xb3\x06\xdedX\xc7\x02`X" +
+	"@\x086\x15\x8d.n\xe0\x09\x8cFB\x9a\xc1\xc3\xc1" +
+	"@\xb3\xe6\x1eOhI#\xa2E\xa3\x8c\x98,\x1eb" +
+	"A\x87\xa79\xae\x1b<\\\xcf\x91'\xc5\x90\x0e`\x8f" +
+	"-J\xf1\x14\x0f\xd7.\x06\xaf\xc1\xf5N\xb6\xccNL" +
+	"\xd3\xb9\x11\xd0(\xa9\x90\x19]q6\xc5\x893;\xcc" +
+	"(7\xdd*\xa1z\x1bY\xb1\xc6\xb4\xa2Z\xeb\xc4^" +
+	"\xce\x84\xa5\xbb\x0e{\x89\x9e\xe0\xa1\x88\x16\xed\xe4\xf79" +
+	"b)\xde\xd4dm-Wj\xa9\xcaDS%\xc3j" +
+	"\xdd4_&m\x959\x10\x080+\x81\xe5u^%" +
+	"\xd4\xacE\xa3<6\x9f\xd7G\xb8\x15\xb7F\x8749" +
+	"\xdc\x09\xdc\xdc\xe97\x87\xf6I\x1e\xe5\x9a\x9e\x91Z\x1f" +
+	"\xd0:\xaa\x9f\xcc\xa4\xde~\x0c\xd3B\xfd\x89\xcd\xe4<" +
+	"d\xbc\x9ef\xf7T\"\xac\x19<\x93zErw\x9f" +
+	"\x1fe\x89\x1a\x09\xd5i\xce\xf9\xd5U\xb9r\xa7\x95%" +
+	"\xa6\xb7:\xe7\xe7\x0a\xf3\x8e!\xdde\xf8v\x7f9\x98" +
+	"\x99\xcc\xba\x1f\xdd:6\xe4\xca\xe5U\x8e\x93a&\x95" +
+	"\xab\xa4c\xbd\x84\xea\xf7Y\x8f\xf2O\xb7\xca\xf6\x00}" +
+	"\xe4\xba/\xc78>\x17h$.\xc7\xe5\xec\x0a\xb7K" +
+	"\x97\xeb\x045L\xbb8+]\xc9M\x89?h\xc6\x8e" +
+	"p)s\x96\xe4\x82\x1b\xdd\xfb\xb6\xe5$.\x04\x92t" +
+	"\x10\x88\x0d@\xaa\\\x00\xa4\x0b\xcf\xac\x8e75\xe9\xdc" +
+	"\xe8\xb9Y\xc9Q3n`\xdf\x8c_!\xaa\xb3-\x90" +
+	"H\xf2\x84\x96\xe4\xb3\xc4\xb9\xda\xc1}M\x01e\xe6\xd4" +
+	"2\x90\xb6\xdaT\xc1\xedT\x0b\\ ,\x93\x1ek\xa1" +
+	"4\xdb\xbb\xec\x9eA\x07\xefbY[\xae\x8b5\xa1\x00" +
+	"\x0b5\x96te\x1b\x0e\x00\x08nF\x09\x83;\xd1\xde" +
+	"\xa2\xb2\x1dk\x01\x82\xcf\x11y7:\xc9@\xd9\x85\x0d" +
+	"\x00\xc1\x9dD\x7f\x05\x1d\xd4\xa0\xec\xc3*\x80\xe0n\xa2" +
+	"\x1f$\xbaG\x12\x17\xa3r@\xf0\xbfB\xf47\x88\x9e" +
+	"\xe7\x11w\xa3r\x04\xa7\x00\x04\x0f\x13\xfd-\xa2\xe7\xa3" +
+	"\x1f\xf3\x01\x94\xe3\xd8\x0a\x10|\x93\xe8\xa7\x88\xeee~" +
+	"\xd1\xf68\x89\xeb\x00\x82\xa7\x88~\x96\xe8\x05\x92\x1f\x0b" +
+	"\x00\x943\xf8$@\xf0,\xd1?%\xba\xaf\xc0\x8f>" +
+	"\x00\xe5\x82\x90\xf3\x09J\xd8\xc0\x18\xca\x85>?\x16\x02" +
+	"(\x97p%@\x03\x930XD\xe4^\x85~\xec\x05" +
+	"\xa0\xf8X\x12 X@t?\xd1\x8bz\xf9\xb1\x08@" +
+	"\x91\xd9j\x80\xa0\x9f\xe8\x83\x89^\x9c\xe7\xc7b\x00\xa5" +
+	"\x9c5\x02\x04\x07\x11}(\xd1K\xf2\xfdX\x02\xa0\\" +
+	"'\xe8\x95D\xbf\x81\xe8\xa5^?\x96\x02(#\x85\xfc" +
+	"\x11D\x1f\xcf\xb2\xb2h'\xd0\xdb\x83\xe4\xd5\x14I\x0a" +
+	"\xf4\x04\x18\xfb\x0a\x00U<e4\xc6S\xb10\x063" +
+	"\xa3\xde\xac\xa9\x99\x8c\x01\xd5\\\x9f\xae\x85\xb9\x8d(\xac" +
+	"\x01\xe4z\xbd\xa6\xeb<\xecB\x1b\xa1x,\xc6CF" +
+	"\x04\x02\xf1\x98>s\xa1M\x8f\xc4\x0c>?\x191p" +
+	"\xf1\x04\xc3\xe0-\x09\xc3\x85^r\xe3\xeel\xb4\xd4q" +
+	"?\x90AI=\xbfy\xc4\xdd\xd8\xc0\x03f\xcc]\xab" +
+	"\xa8w\xae\xbck\x9ep\xc2\xf1\xbbb\xd9\x05\xb4\xb7\xc3" +
+	"\xce\xc7d\x96\xafq]\xb9\xb7\x90N\xe3\xcd+\xb7\x9b" +
+	"{mIKD\xd7#\xb1\xf9]\x95\x88WH\x84t" +
+	"\x18\xbac\x92.\xae\xd5\x04q\xd9\xcb[\xed\xb7\x0ei" +
+	"O\xcaJ{\x02#N\xe7\x86\x16\xd6$\x13\xc6\x0e\xb2" +
+	"eo'\x18\xfb\xa2\x84\xea^\xc7\xdc{\x08\xcf\xed\x94" +
+	"P}\xc5\x05c\xf7\x11\x16\xd9+\xa1z\x98\xd2\x9ed" +
+	"\x16\x03\x87\xe6\xbap\xbfU,\x1d]\xea\xe0~\xbbX" +
+	"z\x9b\x10\xca[\x12\xaa\x7f\xa5l\x97/\xb2\x9d|\x9a" +
+	"*\x84S\x12\xaag{\x00\x8d\xd3\x11\xdd\xbc*\x00\x1d" +
+	"x\x9c\xa0\x8b\xbb.\x16\x06\x89\xdf\xed\xae\x0e(\x1c\x9a" +
+	"QK\x86o\xd5\xf4f[^Z\xe7\x8bR<\x16\xe2" +
+	"P=#\xd5\xd2\xc8\x93\xd9eH}\x84\x837\xc4\x9d" +
+	" \xec&\x80\x9cC\xbbBk\xc3\x9c\x10\x103\xc8\xf4" +
+	"c\xa5<W3\x10\xadn\x99\xf2\x10\xce\x05\xa6\xac@" +
+	"/:\xfdb\xb4\x1e\x1b\x94{\xb1\x11\x98\x92B/2" +
+	"\xbb\xb7\x85VoV\x89\xe0J`\x0aG/Jvw" +
+	"\x0d\xadF\xa92\x07\x93\xc0\x14\x15\xbd\xe8\xbc@\xa0\xd5" +
+	")T&c\x030\xe5\x16\xf4b\x9e\xfd\xb2\x80V\x0b" +
+	"L\x19-\xd6\x1d\x86^\xcc\xb7\xdf5\xd0\xea\xbe)\xe5" +
+	"\xb8\x00\x98\xd2\x1b\xbd\xe8\xb5\x1f\x1d\xd0j\xf2*>\xac" +
+	"\x05&_\xf2b\x81\xddDG\xab\xfb&\x9f\x9b\x0bL" +
+	">\xe3E\x9f\xdd_E\xabq+\x9fl\x00&\x1f\xf7" +
+	"b\xa1\xdd\x17G\xabo)\x1fj\x04&\xef\xf3b/" +
+	"\xbbK\x88V\x9b[\xde\xbe\x00\x98\xbc\xc5\x8bEvK" +
+	"\x1e\xad~\xb2\xdcN2\xd7z\xd3\xa2h\xaa\x8d\xc6A" +
+	"j\xd4k\xa8,5\xb3\x01x\xe3\xe2\xbf\x05H\xd0B" +
+	"$\x005\x98\xb6\xb2\x06\x04\x04\xad\x06\xd3VW\x0b\x90" +
+	"\xfeYm$\xb7\x94\x09Q\x0b\xa5\xd4\x88[\x8e\x1cE" +
+	",h\xd6$ \x89\xbf\x96\x0b\x99r,\xd0\x0b\xde\x98" +
+	"\xa1\xdb\xcc\x13\xa3PJ\xd9\xb2\x06\xd3V\xe6\x044j" +
+	"\xb0\x1e\xbbM+\xd6n\x1d\xb8\xdeC\xb4\xde\x15\x9e\xea" +
+	"\xae\x90\xb3\xf1\xdbUO\xe8\x9e\xee\xc0\xabU>]\xb5" +
+	"\x12\xb8\x8b6f\xae\x04]\xe5\x14\xc0\x16Z)s^" +
+	"\xbd\x00\xb1\xec\x8bU<vg7Gw\xac\x92\xe1\x92" +
+	"\x90\xc9\xe7\xec\xc6~\x8f\xeb\xbe\xa0\xef\\)\xd9\xd7\xe0" +
+	"\x974]7=\x0a\x1bg\xe4\xa8\xf2\x09\xdb\xc78\x0f" +
+	"\xf3p]\x0c\x02\xe1\x08e\xe1\xccz\x05=\xbbA]" +
+	"\xae\x9e\xb3Gq\xf5V\xca\xc6\x10\x992\xf3Kt\x8d" +
+	"{R\x14\xe6\xe8\xf3^\xeb\xfeEO\xde\x04ruu" +
+	"\xaf\x8e5:U\x8a\x99\x96\xd1\x17\xe8\x019nq\xcd" +
+	"\xd0\xa6\xeby\xe1\xab{\xaca\x1d\xc1^u2<I" +
+	"\xbb\x12\xd0\x93s!=\xab\x97\x94\x0d\xf40\x17\xd0c" +
+	"\xb9\x80\x1e\xe6\x02z\x9e\x1e\x02\xbd\xac\xae\xe1\xff\x0f\xe8" +
+	"\xb1\x8e\x19\x0c\xb9\xd9<'\xccf}j\x80\xd6\x13\xa8" +
+	"\xbc\x8d\xc0\xc8&Bl\xd6\xcb,Z/\xea\xf2\xfa$" +
+	"0\xf9a\xc2k\xd6C=Z\x9f\"\xc8+Z\x81\xc9" +
+	"m^\x94\xac\x8f\x0f\x9c\xb7_9E \xa6\x85\xb0\x9a" +
+	"\xf5\xf4\x8f\xd6\x9b\xac\xac\xad\x06&\xcf#\xa4f}\xc1" +
+	"\x81\xd6\x97\x1a\xb2:\x05\x98\\\x97\x018V\x89X\x83" +
+	"i\xeb\x92\x84\x80\xb8&k\xb2jXq\x01\xd4`\xda" +
+	"\xba\xc3\x09h\x08\x82\x1b\x07\x09&\x81O\xac\xd7\x1b " +
+	"TT\x8f\xf8\xbf\x00\x00\x00\xff\xff\xf8\x0e\x0bx"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -5881,7 +5670,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xc21d44f68983e24a,
 			0xc5a328f721ad6e8f,
 			0xc67b0c713f48381e,
-			0xcb16383952c09279,
 			0xd154ab4cddec1ad6,
 			0xd606e7f1b66afc98,
 			0xd67aca1259c675cf,
@@ -5898,7 +5686,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xefc8dce3c25753f0,
 			0xf7f0b93fc0a3b6b1,
 			0xfbd5cc8e0de9690d,
-			0xfcf6fefc4e228591,
 			0xfd78a48f4ae862c0,
 			0xfe39e0e15b88669f,
 		},

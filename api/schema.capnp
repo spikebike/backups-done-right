@@ -123,7 +123,9 @@ struct PeerShardMetadata {
 # Interface exposed by remote Peers to the Server
 interface PeerNode @0xfe39e0e15b88669f {
   offerShards @0 (shards :List(PeerShardMetadata)) -> (neededIndices :List(UInt32));
-  uploadShards @1 (shards :List(PeerShardData)) -> (success :Bool, error :Text);
+  
+  # 2. Control Plane: Notify peer of upcoming out-of-band data streams
+  prepareUpload @1 (shards :List(PeerShardMetadata)) -> (success :Bool, error :Text);
   
   # Evaluate PoS hash fingerprints over explicit intervals natively
   challengePiece @2 (shardChecksum :Data, offset :UInt64) -> (data :Data);
@@ -131,12 +133,11 @@ interface PeerNode @0xfe39e0e15b88669f {
   # Garbage Collection: Tell a peer we no longer need them to store this piece.
   releasePiece @3 (shardChecksum :Data) -> (success :Bool, error :Text);
 
-  # Garbage Collection: Download a piece from a peer for reconstruction.
-  downloadPiece @4 (shardChecksum :Data) -> (data :Data);
+  # @4 (downloadPiece) removed: handled out-of-band via raw stream
 
   # Disaster Recovery: List shard pieces tagged as "Special" for the calling node.
-  listSpecialPieces @5 () -> (shards :List(PeerShardMetadata));
+  listSpecialPieces @4 () -> (shards :List(PeerShardMetadata));
 
   # Peer Discovery: Tell a peer our own listen address so they can dial us back (or use the callback directly).
-  announce @6 (listenAddress :Text, contactInfo :Text, callback :PeerNode) -> (success :Bool);
+  announce @5 (listenAddress :Text, contactInfo :Text, callback :PeerNode) -> (success :Bool);
 }

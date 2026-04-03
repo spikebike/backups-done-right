@@ -65,15 +65,20 @@ type Engine struct {
 	mu                         sync.Mutex // Protects pendingBlobs and shard writing
 	pendingBlobs    map[string]rpc.BlobMeta
 	wg              sync.WaitGroup
+	streamSemaphore chan struct{}
+	pendingInboundStreams sync.Map
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string) *Engine {
+func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
 	if shardSize <= 0 {
 		shardSize = int64(dataShards) * 256 * 1024 * 1024 // Default piece size to 256MB
+	}
+	if maxConcurrentStreams <= 0 {
+		maxConcurrentStreams = 4 // Default to 4 concurrent streams
 	}
 	if dataShards <= 0 {
 		dataShards = 10
@@ -147,6 +152,7 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		MasterKey:                  masterKey,
 		AdminPublicKey:             adminPublicKey,
 		pendingBlobs:               make(map[string]rpc.BlobMeta),
+		streamSemaphore:            make(chan struct{}, maxConcurrentStreams),
 	}
 }
 
@@ -156,7 +162,7 @@ func (e *Engine) Wait() {
 }
 
 // AttemptRescue attempts to recover the server database from a peer that has a mirrored copy of the special metadata shard.
-func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode) error {
+func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode, pid peer.ID) error {
 	if e.Verbose {
 		log.Println("RESCUE: Attempting to recover database from peer...")
 	}
@@ -188,19 +194,13 @@ func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode) error {
 		return fmt.Errorf("no special mirrored shards found")
 	}
 
-	// 3. Download the piece (which is the full shard copy since it was mirrored)
+	// 3. Download the piece
 	hashBytes, _ := targetPiece.Checksum()
-	reqD, releaseD := peer.DownloadPiece(ctx, func(p rpc.PeerNode_downloadPiece_Params) error {
-		return p.SetShardChecksum(hashBytes)
-	})
-	defer releaseD()
-	resD, err := reqD.Struct()
+	hashHex := hex.EncodeToString(hashBytes)
+
+	data, err := e.PullPieceDirect(ctx, pid, hashHex)
 	if err != nil {
-		return fmt.Errorf("download piece: %w", err)
-	}
-	data, err := resD.Data()
-	if err != nil {
-		return fmt.Errorf("get data from rpc: %w", err)
+		return fmt.Errorf("pull piece direct: %w", err)
 	}
 
 	if e.Verbose {
@@ -410,13 +410,7 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			var pieceHash string
 			_ = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = 0 AND peer_id = ? LIMIT 1", shardID, p.peerID).Scan(&pieceHash)
 			
-			client, err := e.GetOrDialPeer(ctx, p.peerID)
-			if err != nil {
-				continue
-			}
-			defer client.Close()
-			
-			data, err := client.DownloadPiece(ctx, hexToBytes(pieceHash))
+			data, err := e.PullPiece(ctx, p.peerID, pieceHash)
 			if err != nil {
 				continue
 			}
@@ -448,14 +442,7 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			continue
 		}
 
-		client, err := e.GetOrDialPeer(ctx, p.peerID)
-		if err != nil {
-			log.Printf("EnsureShardLocal: failed to dial peer %d: %v", p.peerID, err)
-			continue
-		}
-		defer client.Close()
-		
-		data, err := client.DownloadPiece(ctx, hexToBytes(pieceHash))
+		data, err := e.PullPiece(ctx, p.peerID, pieceHash)
 		if err != nil {
 			log.Printf("EnsureShardLocal: failed to download piece %d from peer %d: %v", p.index, p.peerID, err)
 			continue
@@ -1682,25 +1669,6 @@ func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex s
 }
 
 // DownloadPiece retrieves a hosted shard piece from storage.
-func (e *Engine) DownloadPiece(ctx context.Context, hashBytes []byte) ([]byte, error) {
-	hashStr := hex.EncodeToString(hashBytes)
-
-	// 1. Verify we host this shard
-	var exists int
-	err := e.DB.QueryRowContext(ctx, "SELECT 1 FROM hosted_shards WHERE hash = ?", hashStr).Scan(&exists)
-	if err != nil {
-		return nil, fmt.Errorf("shard piece %s not found: %w", hashStr, err)
-	}
-
-	// 2. Read from disk
-	shardPath := filepath.Join(e.BlobStoreDir, "peer_"+hashStr)
-	data, err := os.ReadFile(shardPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read shard file: %w", err)
-	}
-
-	return data, nil
-}
 
 type PeerDBInfo struct {
 	ID                  int64
@@ -1823,4 +1791,43 @@ func (e *Engine) GetOrDialPeer(ctx context.Context, peerID int64) (*CapnpPeerCli
 	}(peerID, client)
 
 	return client, nil
+}
+
+// PrepareUpload validates quota and saves expected metadata for incoming streams.
+func (e *Engine) PrepareUpload(ctx context.Context, pubKeyHex string, metas []PendingStreamMeta) error {
+	if pubKeyHex != "" {
+		var status string
+		var currentSize, maxStorageBytes int64
+		var peerID int64
+		err := e.DB.QueryRowContext(ctx, "SELECT id, status, current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID, &status, &currentSize, &maxStorageBytes)
+		if err == nil {
+			var incomingSize int64
+			for _, m := range metas {
+				incomingSize += int64(m.Size)
+			}
+
+			limitBytes := maxStorageBytes
+			if status == "untrusted" {
+				var myPiecesOnPeer int
+				_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
+				
+				pieceSize := e.ShardSize / int64(e.DataShards)
+				limitBytes = (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
+			}
+
+			if limitBytes > 0 && currentSize+incomingSize > limitBytes {
+				return fmt.Errorf("peer upload quota exceeded")
+			}
+
+			if e.MaxStorageBytes > 0 {
+				var localTotal, peerTotal int64
+				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
+				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
+				if (localTotal + peerTotal + incomingSize) > e.MaxStorageBytes {
+					return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes / (1024*1024*1024))
+				}
+			}
+		}
+	}
+	return nil
 }

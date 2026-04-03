@@ -155,8 +155,8 @@ func (c *CapnpPeerClient) OfferShards(ctx context.Context, shards []rpc.PeerShar
 	return neededIndices, nil
 }
 
-func (c *CapnpPeerClient) UploadShards(ctx context.Context, shards []rpc.LocalBlobData) error {
-	req, release := c.clientStub.UploadShards(ctx, func(p rpc.PeerNode_uploadShards_Params) error {
+func (c *CapnpPeerClient) PrepareUpload(ctx context.Context, shards []rpc.PeerShardMeta) error {
+	req, release := c.clientStub.PrepareUpload(ctx, func(p rpc.PeerNode_prepareUpload_Params) error {
 		capnpShards, err := p.NewShards(int32(len(shards)))
 		if err != nil {
 			return err
@@ -165,7 +165,7 @@ func (c *CapnpPeerClient) UploadShards(ctx context.Context, shards []rpc.LocalBl
 			cs := capnpShards.At(i)
 			hashBytes, _ := hex.DecodeString(s.Hash)
 			cs.SetChecksum(hashBytes)
-			cs.SetData(s.Data)
+			cs.SetSize(uint64(s.Size))
 			cs.SetIsSpecial(s.IsSpecial)
 			cs.SetPieceIndex(uint32(s.PieceIndex))
 			cs.SetSequenceNumber(s.SequenceNumber)
@@ -179,7 +179,7 @@ func (c *CapnpPeerClient) UploadShards(ctx context.Context, shards []rpc.LocalBl
 
 	res, err := req.Struct()
 	if err != nil {
-		return fmt.Errorf("failed to read UploadShards results: %w", err)
+		return fmt.Errorf("failed to read PrepareUpload results: %w", err)
 	}
 
 	if !res.Success() {
@@ -237,32 +237,6 @@ func (c *CapnpPeerClient) ReleasePiece(ctx context.Context, hashBytes []byte) er
 	}
 
 	return nil
-}
-
-func (c *CapnpPeerClient) DownloadPiece(ctx context.Context, hashBytes []byte) ([]byte, error) {
-	req, release := c.clientStub.DownloadPiece(ctx, func(p rpc.PeerNode_downloadPiece_Params) error {
-		if err := p.SetShardChecksum(hashBytes); err != nil {
-			return err
-		}
-		return nil
-	})
-	defer release()
-
-	res, err := req.Struct()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read DownloadPiece results: %w", err)
-	}
-
-	data, err := res.Data()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read piece data: %w", err)
-	}
-
-	// Make a safe copy of the capnp byte slice
-	outBytes := make([]byte, len(data))
-	copy(outBytes, data)
-
-	return outBytes, nil
 }
 
 func (c *CapnpPeerClient) ListSpecialPieces(ctx context.Context) ([]rpc.PeerShardMeta, error) {

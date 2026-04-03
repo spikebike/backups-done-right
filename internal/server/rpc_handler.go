@@ -469,53 +469,59 @@ func (h *RPCHandler) OfferShards(ctx context.Context, call rpc.PeerNode_offerSha
 	return nil
 }
 
-func (h *RPCHandler) UploadShards(ctx context.Context, call rpc.PeerNode_uploadShards) error {
+func (h *RPCHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_prepareUpload) error {
 	args := call.Args()
 	capnpShards, err := args.Shards()
 	if err != nil {
 		return err
 	}
 
-	var dataShards []rpc.LocalBlobData
+	var metas []PendingStreamMeta
 	for i := 0; i < capnpShards.Len(); i++ {
 		cs := capnpShards.At(i)
 		hashBytes, err := cs.Checksum()
 		if err != nil {
 			return fmt.Errorf("failed to read shard %d checksum: %w", i, err)
 		}
-		dataBytes, err := cs.Data()
-		if err != nil {
-			return fmt.Errorf("failed to read shard %d data: %w", i, err)
-		}
 		parentHash, _ := cs.ParentShardHash()
-		dataShards = append(dataShards, rpc.LocalBlobData{
-			Hash:            hex.EncodeToString(hashBytes),
-			Data:            dataBytes,
+
+		var peerID int64
+		err = h.engine.DB.QueryRowContext(ctx, "SELECT id FROM peers WHERE public_key = ?", h.clientPubKey).Scan(&peerID)
+		if err != nil {
+			return fmt.Errorf("failed to get peer ID from DB: %w", err)
+		}
+
+		metas = append(metas, PendingStreamMeta{
+			PeerID:          peerID,
 			IsSpecial:       cs.IsSpecial(),
 			PieceIndex:      int(cs.PieceIndex()),
 			ParentShardHash: hex.EncodeToString(parentHash),
 			SequenceNumber:  cs.SequenceNumber(),
 			TotalPieces:     int(cs.TotalPieces()),
+			Size:            cs.Size(),
 		})
+
+		h.engine.pendingInboundStreams.Store(hex.EncodeToString(hashBytes), metas[len(metas)-1])
 	}
 
-	err = h.engine.UploadShards(ctx, h.clientPubKey, dataShards)
-	
+	if err := h.engine.PrepareUpload(ctx, h.clientPubKey, metas); err != nil {
+		res, allocErr := call.AllocResults()
+		if allocErr != nil {
+			return allocErr
+		}
+		res.SetSuccess(false)
+		res.SetError(err.Error())
+		return nil
+	}
+
 	res, allocErr := call.AllocResults()
 	if allocErr != nil {
 		return allocErr
 	}
-	
-	if err != nil {
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
-	}
 
+	res.SetSuccess(true)
 	return nil
 }
-
 func (h *RPCHandler) ChallengePiece(ctx context.Context, call rpc.PeerNode_challengePiece) error {
 	args := call.Args()
 	checksum, err := args.ShardChecksum()
@@ -560,26 +566,6 @@ func (h *RPCHandler) ReleasePiece(ctx context.Context, call rpc.PeerNode_release
 	}
 
 	return nil
-}
-
-func (h *RPCHandler) DownloadPiece(ctx context.Context, call rpc.PeerNode_downloadPiece) error {
-	args := call.Args()
-	checksum, err := args.ShardChecksum()
-	if err != nil {
-		return err
-	}
-
-	data, err := h.engine.DownloadPiece(ctx, checksum)
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	return res.SetData(data)
 }
 
 func (h *RPCHandler) ListSpecialPieces(ctx context.Context, call rpc.PeerNode_listSpecialPieces) error {

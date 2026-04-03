@@ -57,10 +57,11 @@ type ServerConfig struct {
 	AdminPublicKey string   `yaml:"admin_public_key"` // Authorized client for management
 	ContactInfo    string   `yaml:"contact_info"` // Optional contact info (email, social, etc.)
 	Network        struct {
-		ListenAddress string `yaml:"listen_address"`
-		EnableUPnP    bool   `yaml:"enable_upnp"`
-		MaxUploadKBPS int    `yaml:"max_upload_kbps"`
-		MaxDownloadKBPS int  `yaml:"max_download_kbps"`
+		ListenAddress        string `yaml:"listen_address"`
+		EnableUPnP           bool   `yaml:"enable_upnp"`
+		MaxUploadKBPS        int    `yaml:"max_upload_kbps"`
+		MaxDownloadKBPS      int    `yaml:"max_download_kbps"`
+		MaxConcurrentStreams int    `yaml:"max_concurrent_streams"`
 	} `yaml:"network"`
 
 	ErasureCoding struct {

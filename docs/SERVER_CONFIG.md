@@ -11,6 +11,9 @@
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `listen_address` | string | Address and port to listen on (default `0.0.0.0:8080`) |
+| `max_concurrent_streams` | int | Max number of concurrent out-of-band piece transfers (default 4) |
+| `max_upload_kbps` | int | Maximum outbound bandwidth in KB/s (default 0, unlimited) |
+| `max_download_kbps` | int | Maximum inbound bandwidth in KB/s (default 0, unlimited) |
 
 ## erasure_coding
 | Parameter | Type | Default | Description |

@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"lukechampine.com/blake3"
 	"p2p-backup/internal/rpc"
+
+	"lukechampine.com/blake3"
 )
 
 // OutboundWorker periodically scans the queue directory for erasure-coded pieces
@@ -58,10 +60,10 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 	defer rows.Close()
 
 	type mShard struct {
-		id     int64
-		hash   string
-		seq    uint64
-		total  int
+		id    int64
+		hash  string
+		seq   uint64
+		total int
 	}
 	var mirrored []mShard
 	for rows.Next() {
@@ -121,12 +123,13 @@ func (e *Engine) processQueue(ctx context.Context) {
 		return
 	}
 
+	var wg sync.WaitGroup
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "shard_") {
 			continue
 		}
 
-		// Filename format: shard_1_piece_0
 		parts := strings.Split(entry.Name(), "_")
 		if len(parts) != 4 {
 			continue
@@ -139,15 +142,28 @@ func (e *Engine) processQueue(ctx context.Context) {
 		}
 
 		filePath := filepath.Join(e.QueueDir, entry.Name())
-		err = e.uploadPiece(ctx, shardID, pieceIndex, filePath)
-		if err != nil {
-			log.Printf("OutboundWorker: Failed to upload piece %s: %v", entry.Name(), err)
-		} else {
-			// Successfully uploaded and recorded, delete the local queued piece
-			os.Remove(filePath)
-			e.checkShardCompletion(ctx, shardID)
-		}
+
+		wg.Add(1)
+		// Launch each upload in a goroutine
+		go func(name, fPath string, sID int64, pIdx int) {
+			defer wg.Done()
+
+			// Acquire concurrency semaphore before attempting to upload
+			e.streamSemaphore <- struct{}{}
+			defer func() { <-e.streamSemaphore }()
+
+			err := e.uploadPiece(ctx, sID, pIdx, fPath)
+			if err != nil {
+				log.Printf("OutboundWorker: Failed to upload piece %s: %v", name, err)
+			} else {
+				os.Remove(fPath)
+				e.checkShardCompletion(ctx, sID)
+			}
+		}(entry.Name(), filePath, shardID, pieceIndex)
 	}
+
+	// Wait for all uploads in this batch to finish before returning
+	wg.Wait()
 }
 
 func (e *Engine) uploadPiece(ctx context.Context, shardID int64, pieceIndex int, filePath string) error {
@@ -183,11 +199,11 @@ func (e *Engine) uploadPiece(ctx context.Context, shardID int64, pieceIndex int,
 			FROM peers p
 			LEFT JOIN outbound_pieces op ON p.id = op.peer_id AND op.shard_id = ?
 		`
-	if isMirrored {
-		query += " AND op.piece_index = ? "
-	}
+		if isMirrored {
+			query += " AND op.piece_index = ? "
+		}
 
-	query += `
+		query += `
 		WHERE p.outbound_storage_size + ? <= 
 		  CASE WHEN p.status = 'untrusted' THEN ? 
 		  ELSE p.max_storage_size * 1024 * 1024 * 1024 END
@@ -201,7 +217,7 @@ func (e *Engine) uploadPiece(ctx context.Context, shardID int64, pieceIndex int,
 		var peerPubKeyHex string
 
 		limitBytes := e.UntrustedPeerUploadLimitMB * 1024 * 1024
-		
+
 		var err error
 		if isMirrored {
 			err = e.DB.QueryRowContext(ctx, query, shardID, pieceIndex, int64(len(data)), limitBytes).Scan(&peerID, &peerAddr, &peerPubKeyHex)
@@ -260,23 +276,18 @@ func (e *Engine) performUpload(ctx context.Context, peerID int64, peerAddr strin
 	}
 
 	if len(needed) > 0 {
-		uploadData := []rpc.LocalBlobData{
-			{
-				Hash:            hashHex,
-				Data:            data,
-				IsSpecial:       isMirrored,
-				PieceIndex:      pieceIndex,
-				ParentShardHash: parentShardHash,
-				SequenceNumber:  sequence,
-				TotalPieces:     totalPieces,
-			},
+		err = client.PrepareUpload(ctx, meta)
+		if err != nil {
+			e.RemoveActivePeer(peerID)
+			return fmt.Errorf("prepare upload: %w", err)
 		}
-		err = client.UploadShards(ctx, uploadData)
+
+		err = e.PushPiece(ctx, peerID, data, hashHex)
 		if err != nil {
 			e.RemoveActivePeer(peerID)
 			// Record failure
 			_, _ = e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", peerID, shardID, pieceIndex)
-			return fmt.Errorf("upload shards: %w", err)
+			return fmt.Errorf("push piece: %w", err)
 		}
 		// Record success (counts as uptime)
 		_, _ = e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'ok')", peerID, shardID, pieceIndex)
@@ -334,7 +345,7 @@ func (e *Engine) checkShardCompletion(ctx context.Context, shardID int64) {
 	// Check if this is a mirrored shard
 	var isMirrored bool
 	_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", shardID).Scan(&isMirrored)
-	
+
 	if isMirrored {
 		return
 	}
