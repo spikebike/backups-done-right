@@ -110,6 +110,7 @@ func (e *Engine) repairShard(ctx context.Context, shardID int64, isMirrored bool
 	// This will re-generate all piece files in the queue directory.
 	// Our OutboundWorker will then see these files and offer them to peers who don't have them.
 	// We run this synchronously here to ensure the files are ready.
+	e.wg.Add(1)
 	e.encodeShard(shardID)
 
 	if e.Verbose {

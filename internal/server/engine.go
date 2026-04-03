@@ -63,6 +63,7 @@ type Engine struct {
 	MasterKey                  []byte
 	mu                         sync.Mutex // Protects pendingBlobs and shard writing
 	pendingBlobs    map[string]rpc.BlobMeta
+	wg              sync.WaitGroup
 }
 
 // NewEngine creates a new server Engine.
@@ -142,6 +143,11 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		AdminPublicKey:             adminPublicKey,
 		pendingBlobs:               make(map[string]rpc.BlobMeta),
 	}
+}
+
+// Wait blocks until all background tasks (like encoding) are finished.
+func (e *Engine) Wait() {
+	e.wg.Wait()
 }
 
 // AttemptRescue attempts to recover the server database from a peer that has a mirrored copy of the special metadata shard.
@@ -701,6 +707,7 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 
 	// 7. Post-commit: Handle Special Seal and Trigger Encoders
 	for _, sid := range sealedShards {
+		e.wg.Add(1)
 		go e.encodeShard(sid)
 	}
 
@@ -726,6 +733,7 @@ func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []r
 		// Update status to sealed and set mirrored flag
 		_, err = e.DB.Exec("UPDATE shards SET status = 'sealed', mirrored = ?, total_pieces = ? WHERE id = ?", isSystemMirrored, totalPieces, activeShardID)
 		if err == nil {
+			e.wg.Add(1)
 			go e.encodeShard(activeShardID)
 		} else {
 			log.Printf("Warning: failed to force seal special shard %d: %v", activeShardID, err)
@@ -882,6 +890,7 @@ func (p *PadReader) Read(buf []byte) (int, error) {
 }
 
 func (e *Engine) encodeShard(shardID int64) {
+	defer e.wg.Done()
 	if e.Verbose {
 		log.Printf("Starting erasure coding for shard %d", shardID)
 	}
@@ -969,7 +978,8 @@ func (e *Engine) encodeShard(shardID int64) {
 	outFiles := make([]*os.File, e.DataShards+e.ParityShards)
 
 	for i := 0; i < e.DataShards+e.ParityShards; i++ {
-		outPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+		// Use .tmp suffix so OutboundWorker doesn't pick them up yet
+		outPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, i))
 		f, err := os.Create(outPath)
 		if err != nil {
 			log.Printf("encodeShard error: failed to create piece %d: %v", i, err)
@@ -984,7 +994,7 @@ func (e *Engine) encodeShard(shardID int64) {
 	}
 
 	// 1. Split data into N files and compute full shard hash
-	// Use PadReader to ensure we always split exactly e.ShardSize bytes (which gives piece sizes of e.ShardSize/N)
+	// Use PadReader to ensure we always split exactly e.ShardSize bytes
 	pr := &PadReader{Reader: inFile, TotalSize: e.ShardSize}
 	hasher := blake3.New(32, nil)
 	teeReader := io.TeeReader(pr, hasher)
@@ -1000,23 +1010,18 @@ func (e *Engine) encodeShard(shardID int64) {
 			log.Printf("encodeShard error: failed to update shard hash in DB: %v", err)
 		}
 
-		// Close the data writers because we need to read from them now
-		for i := 0; i < e.DataShards; i++ {
-			outFiles[i].Close()
-		}
-
+		// Seek data files back to beginning so we can use them as readers for parity encoding
 		inReaders := make([]io.Reader, e.DataShards)
-		inFiles := make([]*os.File, e.DataShards)
-		
 		for i := 0; i < e.DataShards; i++ {
-			inPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
-			f, openErr := os.Open(inPath)
-			if openErr != nil {
-				log.Printf("encodeShard error: failed to reopen piece %d for reading: %v", i, openErr)
-				return // Abort parity generation
+			if _, seekErr := outFiles[i].Seek(0, 0); seekErr != nil {
+				log.Printf("encodeShard error: failed to seek piece %d: %v", i, seekErr)
+				// Cleanup and abort
+				for _, f := range outFiles {
+					f.Close()
+				}
+				return
 			}
-			inFiles[i] = f
-			inReaders[i] = f
+			inReaders[i] = outFiles[i]
 		}
 
 		// 2. Encode to generate K parity pieces
@@ -1026,16 +1031,20 @@ func (e *Engine) encodeShard(shardID int64) {
 		} else if e.Verbose {
 			log.Printf("Successfully erasure coded shard %d into %d pieces", shardID, e.DataShards+e.ParityShards)
 		}
-
-		// Close data readers
-		for i := 0; i < e.DataShards; i++ {
-			inFiles[i].Close()
-		}
 	}
 
-	// Close parity writers
-	for i := e.DataShards; i < e.DataShards+e.ParityShards; i++ {
+	// 3. Finalize all pieces: Close and rename to remove .tmp suffix
+	for i := 0; i < e.DataShards+e.ParityShards; i++ {
 		outFiles[i].Close()
+		
+		// If encoding succeeded, rename to final path so OutboundWorker sees them
+		if err == nil {
+			tmpPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, i))
+			finalPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+			if renameErr := os.Rename(tmpPath, finalPath); renameErr != nil {
+				log.Printf("encodeShard error: failed to finalize piece %d: %v", i, renameErr)
+			}
+		}
 	}
 }
 

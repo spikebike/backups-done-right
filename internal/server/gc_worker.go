@@ -41,6 +41,7 @@ func (e *Engine) TriggerGC(ctx context.Context) {
 
 // TriggerEncodeShard manually triggers erasure coding for a specific shard.
 func (e *Engine) TriggerEncodeShard(shardID int64) {
+	e.wg.Add(1)
 	e.encodeShard(shardID)
 }
 

@@ -27,15 +27,16 @@ type UploadJob struct {
 
 // CryptoPool manages a pool of workers that encrypt files and update the local database.
 type CryptoPool struct {
-	DB          *sql.DB
-	DBJobChan   chan<- db.DBJob
-	Key         []byte
-	SpoolDir    string
-	UploadDir   string
-	NumWorkers  int
-	UploadChan  chan<- UploadJob
-	Verbose     bool
-	wg          sync.WaitGroup
+	DB             *sql.DB
+	DBJobChan      chan<- db.DBJob
+	Key            []byte
+	SpoolDir       string
+	UploadDir      string
+	NumWorkers     int
+	UploadChan     chan<- UploadJob
+	Verbose        bool
+	wg             sync.WaitGroup
+	sessionUploads sync.Map // Track hashes already queued in this session
 }
 
 // NewCryptoPool initializes a new CryptoPool.
@@ -202,47 +203,79 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder) error {
 			ciphertextSize := len(chunk) + crypto.NonceSizeX + 16 // Poly1305 tag is 16 bytes
 
 			if res.Err == sql.ErrNoRows {
-				// Encrypt the chunk (uses Convergent Encryption with BLAKE3 hash of compressed chunk as nonce)
-				ciphertext, encErr := crypto.Encrypt(p.Key, chunk)
-				if encErr != nil {
-					return fmt.Errorf("encryption error: %w", encErr)
-				}
-
-				// Hash ciphertext chunk
-				encHash := crypto.Hash(ciphertext)
-				encHashHex = hex.EncodeToString(encHash)
-				
-				// Record in local_blobs
-				p.DBJobChan <- db.DBJob{
-					Query:      "INSERT OR IGNORE INTO local_blobs (hash_plain, hash_encrypted, size) VALUES (?, ?, ?)",
-					Args:       []interface{}{plainHashHex, encHashHex, ciphertextSize},
-					ResultChan: make(chan db.DBResult, 1),
-				}
-
-				// Write to spool and then upload
-				tmpPath := filepath.Join(p.SpoolDir, "enc-"+encHashHex)
-				if writeErr := os.WriteFile(tmpPath, ciphertext, 0600); writeErr != nil {
-					return fmt.Errorf("spool write error: %w", writeErr)
-				}
-				
-				uploadPath := filepath.Join(p.UploadDir, encHashHex)
-				if _, err := os.Stat(uploadPath); os.IsNotExist(err) {
-					if renameErr := os.Rename(tmpPath, uploadPath); renameErr != nil {
-						// Double-check if it was created in the meantime
-						if _, err2 := os.Stat(uploadPath); os.IsNotExist(err2) {
-							return fmt.Errorf("spool rename error: %w", renameErr)
+				// 1. Check if another thread is already handling this hash in this session
+				if _, loaded := p.sessionUploads.LoadOrStore(plainHashHex, true); loaded {
+					// Another worker is already encrypting/uploading this.
+					// We still need to wait for it to appear in local_blobs? 
+					// Actually, we just need the encHashHex to link the file.
+					// For now, we'll let the Link Blob part handle it once it's in DB.
+					// But we need the encHashHex here. 
+					
+					// Simple approach: poll for a few ms until it appears in DB
+					start := time.Now()
+					for time.Since(start) < 2*time.Second {
+						resChanSub := make(chan db.DBResult)
+						p.DBJobChan <- db.DBJob{
+							Query:      "SELECT hash_encrypted FROM local_blobs WHERE hash_plain = ?",
+							Args:       []interface{}{plainHashHex},
+							ResultChan: resChanSub,
+							Scan: func(row *sql.Row) error {
+								return row.Scan(&encHashHex)
+							},
 						}
+						resSub := <-resChanSub
+						if resSub.Err == nil {
+							break
+						}
+						time.Sleep(50 * time.Millisecond)
+					}
+					
+					if encHashHex == "" {
+						return fmt.Errorf("timeout waiting for concurrent worker to process hash %s", plainHashHex)
 					}
 				} else {
-					os.Remove(tmpPath) // Destination exists, remove the temporary file
-				}
+					// Encrypt the chunk (uses Convergent Encryption with BLAKE3 hash of compressed chunk as nonce)
+					ciphertext, encErr := crypto.Encrypt(p.Key, chunk)
+					if encErr != nil {
+						return fmt.Errorf("encryption error: %w", encErr)
+					}
 
-				// Queue for upload
-				p.UploadChan <- UploadJob{
-					FileID:    fileID,
-					Hash:      encHashHex,
-					Size:      int64(ciphertextSize),
-					IsSpecial: false,
+					// Hash ciphertext chunk
+					encHash := crypto.Hash(ciphertext)
+					encHashHex = hex.EncodeToString(encHash)
+					
+					// Record in local_blobs
+					p.DBJobChan <- db.DBJob{
+						Query:      "INSERT OR IGNORE INTO local_blobs (hash_plain, hash_encrypted, size) VALUES (?, ?, ?)",
+						Args:       []interface{}{plainHashHex, encHashHex, ciphertextSize},
+						ResultChan: make(chan db.DBResult, 1),
+					}
+
+					// Write to spool and then upload
+					tmpPath := filepath.Join(p.SpoolDir, "enc-"+encHashHex)
+					if writeErr := os.WriteFile(tmpPath, ciphertext, 0600); writeErr != nil {
+						return fmt.Errorf("spool write error: %w", writeErr)
+					}
+					
+					uploadPath := filepath.Join(p.UploadDir, encHashHex)
+					if _, err := os.Stat(uploadPath); os.IsNotExist(err) {
+						if renameErr := os.Rename(tmpPath, uploadPath); renameErr != nil {
+							// Double-check if it was created in the meantime
+							if _, err2 := os.Stat(uploadPath); os.IsNotExist(err2) {
+								return fmt.Errorf("spool rename error: %w", renameErr)
+							}
+						}
+					} else {
+						os.Remove(tmpPath) // Destination exists, remove the temporary file
+					}
+
+					// Queue for upload
+					p.UploadChan <- UploadJob{
+						FileID:    fileID,
+						Hash:      encHashHex,
+						Size:      int64(ciphertextSize),
+						IsSpecial: false,
+					}
 				}
 			} else if res.Err != nil {
 				return fmt.Errorf("local dedup check error: %w", res.Err)

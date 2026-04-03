@@ -26,8 +26,8 @@ func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpc
 	}
 	backupID := (<-resChan).ID
 
-	jobChan := make(chan client.FileJob, 100)
-	uploadChan := make(chan client.UploadJob, 100)
+	jobChan := make(chan client.FileJob, 1000)
+	uploadChan := make(chan client.UploadJob, 1000)
 
 	crawler := client.NewCrawler(clientDB, dbJobChan, backupDirs, jobChan, false)
 	cryptoPool := client.NewCryptoPool(clientDB, dbJobChan, key, spoolDir, uploadDir, 2, uploadChan, false)
@@ -68,6 +68,7 @@ func TestEndToEndBackup(t *testing.T) {
 	defer serverDB.Close()
 
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 	
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -116,6 +117,7 @@ func TestDeduplication(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -154,6 +156,7 @@ func TestLargeFile(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -195,6 +198,7 @@ func TestIncrementalBackup(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -236,6 +240,7 @@ func TestFileDeletion(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -276,6 +281,7 @@ func TestServerGC(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10, true, nil, "", 1024, false, false, 8, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 	engine.KeepDeletedMinutes = 0
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -293,6 +299,9 @@ func TestServerGC(t *testing.T) {
 	serverDB.QueryRow("SELECT hash FROM blobs LIMIT 1").Scan(&blobHash)
 	engine.DeleteBlobs(context.Background(), []string{blobHash})
 	serverDB.Exec("UPDATE blobs SET deleted_at = datetime('now', '-1 hour') WHERE hash = ?", blobHash)
+
+	// Wait for any background encoding to finish before we start deleting things
+	engine.Wait()
 
 	engine.TriggerGC(context.Background())
 
@@ -425,6 +434,7 @@ func TestOutboundWorkerFlow(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	mh1 := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
 	mh2 := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -447,9 +457,9 @@ func TestOutboundWorkerFlow(t *testing.T) {
 	rpcClient := client.NewMockRPCClient(engine)
 	_ = runBackupCycle(t, clientDB, dbJobChan, rpcClient, []string{sourceDir}, key, clientSpoolDir, clientUploadDir)
 
-	var shardID int64
-	serverDB.QueryRow("SELECT id FROM shards LIMIT 1").Scan(&shardID)
-	engine.TriggerEncodeShard(shardID)
+	// Wait for background encoding to finish
+	engine.Wait()
+
 	engine.TriggerOutbound(context.Background())
 
 	if len(mh1.Pieces)+len(mh2.Pieces) < 2 {
@@ -468,6 +478,7 @@ func TestChallengeWorkerFlow(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	mh := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
 	serverDB.Exec("INSERT INTO peers (public_key, ip_address, status, max_storage_size) VALUES ('p1', '127.0.0.1', 'trusted', 1000)")
@@ -507,6 +518,7 @@ func TestRepairWorkerFlow(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -551,6 +563,7 @@ func TestReedSolomonIntegration(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
@@ -608,6 +621,7 @@ func TestDisasterRecovery(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "")
+	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	dbJobChan := make(chan db.DBJob, 100)
@@ -653,6 +667,8 @@ func TestServerDisasterRecovery(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	masterKey := []byte("01234567890123456789012345678901")
 	engineA := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "")
+	defer engineA.Wait()
+	defer serverDB.Close()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	dbJobChan := make(chan db.DBJob, 100)
@@ -686,6 +702,9 @@ func TestServerDisasterRecovery(t *testing.T) {
 	engineA.TriggerSyncMirrored(context.Background())
 	engineA.TriggerOutbound(context.Background())
 
+	// Wait for all encoding tasks to finish BEFORE wiping
+	engineA.Wait()
+
 	serverDB.Close()
 	os.Remove(serverDBPath)
 	os.RemoveAll(serverBlobDir)
@@ -694,6 +713,7 @@ func TestServerDisasterRecovery(t *testing.T) {
 	serverDB2, _ := server.InitDB(serverDBPath)
 	defer serverDB2.Close()
 	engineRec := server.NewEngine(serverDB2, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "")
+	defer engineRec.Wait()
 
 	peer0 := rpc.PeerNode_ServerToClient(mockPeers[0])
 	err := engineRec.AttemptRescue(context.Background(), peer0)
@@ -727,6 +747,7 @@ func TestContactInfoPropagation(t *testing.T) {
 	
 	myContact := "operator@server-a.com"
 	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", myContact)
+	defer engine.Wait()
 
 	// 1. Verify Engine has contact info
 	if engine.ContactInfo != myContact {
@@ -772,4 +793,3 @@ func TestContactInfoPropagation(t *testing.T) {
 	}
 	t.Log("Success! Contact info propagated correctly through the engine and DB.")
 }
-

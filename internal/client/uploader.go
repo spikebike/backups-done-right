@@ -161,7 +161,7 @@ func (u *Uploader) processBatch(batch []UploadJob) {
 		// Clean up uploaded blobs from the upload directory
 		for _, blob := range blobsToUpload {
 			blobPath := filepath.Join(u.UploadDir, blob.Hash)
-			if err := os.Remove(blobPath); err != nil {
+			if err := os.Remove(blobPath); err != nil && !os.IsNotExist(err) {
 				log.Printf("Failed to remove uploaded blob %s: %v", blobPath, err)
 			}
 		}
