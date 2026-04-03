@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -312,41 +313,67 @@ func (e *Engine) OfferBlobs(ctx context.Context, clientPubKey string, blobs []rp
 	}
 
 	var neededIndices []uint32
-
-	stmtCheck, err := e.DB.PrepareContext(ctx, "SELECT 1 FROM blobs WHERE hash = ?")
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare check statement: %w", err)
+	if len(blobs) == 0 {
+		return neededIndices, nil
 	}
-	defer stmtCheck.Close()
 
-	stmtInc, err := e.DB.PrepareContext(ctx, "UPDATE blobs SET ref_count = ref_count + 1, deleted_at = NULL WHERE hash = ?")
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare increment statement: %w", err)
+	// 1. Batch SELECT to find which blobs already exist
+	args := make([]interface{}, len(blobs))
+	placeholders := make([]string, len(blobs))
+	for i, b := range blobs {
+		args[i] = b.Hash
+		placeholders[i] = "?"
 	}
-	defer stmtInc.Close()
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	for i, blob := range blobs {
-		var exists int
-		err := stmtCheck.QueryRowContext(ctx, blob.Hash).Scan(&exists)
-		if err == sql.ErrNoRows {
-			// We don't have this blob, request it
+	query := fmt.Sprintf("SELECT hash FROM blobs WHERE hash IN (%s)", strings.Join(placeholders, ","))
+	rows, err := e.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		log.Printf("Batch SELECT error in OfferBlobs: %v", err)
+		// On error, request all of them as a fallback
+		for i := range blobs {
 			neededIndices = append(neededIndices, uint32(i))
-			// Store metadata in memory so we know it's special when uploaded
-			e.pendingBlobs[blob.Hash] = blob
-		} else if err != nil {
-			log.Printf("Error checking blob existence %s: %v", blob.Hash, err)
-			// Safest to request it if there's an error
+		}
+		
+		e.mu.Lock()
+		for _, b := range blobs {
+			e.pendingBlobs[b.Hash] = b
+		}
+		e.mu.Unlock()
+		return neededIndices, nil
+	}
+
+	existingHashes := make(map[string]bool)
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err == nil {
+			existingHashes[h] = true
+		}
+	}
+	rows.Close()
+
+	// 2. Identify missing blobs (need upload) and existing blobs (need ref bump)
+	var existingArgs []interface{}
+	e.mu.Lock()
+	for i, blob := range blobs {
+		if !existingHashes[blob.Hash] {
 			neededIndices = append(neededIndices, uint32(i))
 			e.pendingBlobs[blob.Hash] = blob
 		} else {
-			// Blob exists, increment its reference count safely
-			// And un-delete it if it was previously marked for deletion.
-			if _, err := stmtInc.ExecContext(ctx, blob.Hash); err != nil {
-				log.Printf("Failed to increment ref_count for blob %s: %v", blob.Hash, err)
-			}
+			existingArgs = append(existingArgs, blob.Hash)
+		}
+	}
+	e.mu.Unlock()
+
+	// 3. Batch UPDATE reference counts for existing blobs
+	if len(existingArgs) > 0 {
+		updatePlaceholders := make([]string, len(existingArgs))
+		for i := range existingArgs {
+			updatePlaceholders[i] = "?"
+		}
+		
+		updateQuery := fmt.Sprintf("UPDATE blobs SET ref_count = ref_count + 1, deleted_at = NULL WHERE hash IN (%s)", strings.Join(updatePlaceholders, ","))
+		if _, err := e.DB.ExecContext(ctx, updateQuery, existingArgs...); err != nil {
+			log.Printf("Failed to increment ref_count for batch (len %d): %v", len(existingArgs), err)
 		}
 	}
 

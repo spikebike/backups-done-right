@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -43,6 +44,8 @@ type CapnpRPCClient struct {
 	stream     io.ReadWriteCloser
 	rpcConn    *capnprpc.Conn
 	clientStub rpc.BackupServer
+	p2pHost    host.Host
+	serverID   peer.ID
 }
 
 func NewCapnpRPCClient(ctx context.Context, p2pHost host.Host, serverAddrStr string, expectedServerPubKeyHex string, verbose bool, extraVerbose bool) (*CapnpRPCClient, error) {
@@ -99,6 +102,8 @@ func NewCapnpRPCClient(ctx context.Context, p2pHost host.Host, serverAddrStr str
 		stream:     stream,
 		rpcConn:    rpcConn,
 		clientStub: clientStub,
+		p2pHost:    p2pHost,
+		serverID:   serverPID,
 	}, nil
 }
 
@@ -190,29 +195,53 @@ func (c *CapnpRPCClient) ListAllBlobs(ctx context.Context) ([]string, error) {
 }
 
 func (c *CapnpRPCClient) UploadBlobs(ctx context.Context, blobs []rpc.LocalBlobData) error {
-	req, release := c.clientStub.UploadBlobs(ctx, func(p rpc.BackupServer_uploadBlobs_Params) error {
-		capnpBlobs, err := p.NewBlobs(int32(len(blobs)))
-		if err != nil {
-			return err
-		}
-		for i, b := range blobs {
-			cb := capnpBlobs.At(i)
-			hashBytes, _ := hex.DecodeString(b.Hash)
-			cb.SetChecksum(hashBytes)
-			cb.SetData(b.Data)
-		}
-		return nil
-	})
-	defer release()
-
-	res, err := req.Struct()
-	if err != nil {
-		return fmt.Errorf("failed to read UploadBlobs results: %w", err)
+	if c.p2pHost == nil {
+		return fmt.Errorf("raw data stream unavailable (no libp2p host)")
 	}
 
-	if !res.Success() {
-		errMsg, _ := res.Error()
-		return fmt.Errorf("server rejected upload: %s", errMsg)
+	stream, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/upload/1.0.0")
+	if err != nil {
+		return fmt.Errorf("failed to open upload stream: %w", err)
+	}
+	defer stream.Close()
+
+	// Protocol:
+	// [ uint32 NumberOfBlobs ]
+	// For each blob:
+	//   [ 32 bytes Hash Hex Decoded ]
+	//   [ uint64 Size ]
+	//   [ data ]
+	// Finally:
+	//   Read 1 byte server status (1 = success, 0 = failure)
+
+	countBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(countBuf, uint32(len(blobs)))
+	if _, err := stream.Write(countBuf); err != nil {
+		return fmt.Errorf("failed to write blob count: %w", err)
+	}
+
+	headerBuf := make([]byte, 40)
+	for _, b := range blobs {
+		hashBytes, _ := hex.DecodeString(b.Hash)
+		copy(headerBuf[:32], hashBytes)
+		binary.BigEndian.PutUint64(headerBuf[32:40], uint64(len(b.Data)))
+
+		if _, err := stream.Write(headerBuf); err != nil {
+			return fmt.Errorf("failed to write blob header: %w", err)
+		}
+		if _, err := stream.Write(b.Data); err != nil {
+			return fmt.Errorf("failed to write blob data: %w", err)
+		}
+	}
+
+	// Read server acknowledgment
+	ackBuf := make([]byte, 1)
+	if _, err := io.ReadFull(stream, ackBuf); err != nil {
+		return fmt.Errorf("failed to read server upload acknowledgment: %w", err)
+	}
+
+	if ackBuf[0] == 0 {
+		return fmt.Errorf("server rejected raw stream upload")
 	}
 
 	return nil

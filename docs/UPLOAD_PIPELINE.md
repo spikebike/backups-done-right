@@ -4,16 +4,16 @@ The client uses a multi-stage, channel-based pipeline to back up files. Each sta
 
 ## Pipeline Stages
 
-```
-┌────────────┐    jobChan       ┌────────────┐   uploadChan    ┌───────────┐      RPC       ┌────────┐
-│ Scanners   ├─────────────────►│ CryptoPool ├────────────────►│ Uploade r ├───────────────►│ Server │
-│ (4 threads)│  FileJob(1000)   │ (4 threads)│  UploadJob(100) │(2 threads)│  OfferBlobs    │        │
-└────────────┘                  └─────┬──────┘                 └────┬──────┘  UploadBlobs   └────────┘
-                                      │                             │
-                                ┌─────▼──────┐                ┌─────▼──────┐
-                                │ cipherBufs │◄───────────────│ Release()  │
-                                │ (free-list)│  return buf    │            │
-                                └────────────┘                └────────────┘
+```text
+┌────────────┐    jobChan       ┌────────────┐   uploadChan   ┌───────────────┐  UploadPipelineChan ┌─────────────┐
+│ Scanners   ├─────────────────►│ CryptoPool ├───────────────►│ Offer Pipeline├────────────────────►│ Upload Pump │
+│ (4 threads)│  FileJob(1000)   │ (4 threads)│ UploadJob(100) │ (4 threads)   │   pendingUpload     │ (4 threads) │
+└────────────┘                  └─────┬──────┘                └───────┬───────┘                     └──────┬──────┘
+                                      │                               │   (releases unneeded)              │
+                                ┌─────▼──────┐                  ┌─────▼──────┐                       ┌─────▼──────┐
+                                │ cipherBufs │◄─────────────────│ Release()  │◄──────────────────────│ Release()  │
+                                │ (free-list)│                  └────────────┘    (releases uploaded)└────────────┘
+                                └────────────┘                                                                      
 ```
 
 ### 1. Scanner Pool (`scan_threads`, default 4)
@@ -26,21 +26,28 @@ Crypto workers consume `FileJob` entries from `jobChan`. For each file:
 
 1. **Read** the file in 4MB chunks using a pooled read buffer.
 2. **Compress** each chunk with zstd.
-3. **Check local deduplication** — if the compressed chunk's BLAKE3 hash already exists in `local_blobs`, skip encryption and reuse the existing encrypted hash.
+3. **Check session deduplication** — an ultra-fast in-memory `sync.Map` checks if this exact plain hash has already been processed or is currently being processed by another worker in this session, avoiding duplicate crypto work.
 4. **Grab a cipher buffer** from the pre-allocated free-list (`<-cipherBufs`). This blocks if all buffers are in use, providing natural backpressure.
 5. **Encrypt** the compressed chunk into the buffer using XChaCha20-Poly1305 with Convergent Encryption (the BLAKE3 hash of the plaintext determines the nonce).
 6. **Send an `UploadJob`** into `uploadChan`, carrying the encrypted data and a `Release()` callback that returns the buffer to the free-list.
 7. **Record the chunk** in the local SQLite `file_blobs` table to track the file's reconstruction recipe.
 
-### 3. Uploader (`upload_threads`, default 2)
+### 3. Offer Pipeline (`upload_threads`, default 2)
 
-Uploader workers consume `UploadJob` entries from `uploadChan` and accumulate them into batches of `batch_upload_size` (default 10). For each full batch:
+Offer Pipeline workers consume `UploadJob` entries from `uploadChan` and accumulate them into batches of `batch_upload_size`. For each full batch:
 
-1. **Offer** — Send the batch's hashes and sizes to the server via `OfferBlobs`. The server responds with indices of chunks it doesn't already have (server-side deduplication).
-2. **Upload** — Send only the needed chunks via `UploadBlobs`.
-3. **Release** — Call `Release()` on **every** job in the batch (both uploaded and already-known), returning all cipher buffers to the free-list.
+1. **Offer** — Send the batch's hashes and sizes to the server via the `OfferBlobs` Cap'n Proto RPC. The server executes a highly optimized bulk SQLite check and responds with indices of chunks it doesn't already have.
+2. **Filter & Release** — Instantly release buffers for any unneeded chunks back to the free-list, preventing them from consuming memory pipeline slots.
+3. **Dispatch** — Push the exactly needed chunks into the `UploadPipelineChan` for the next stage.
 
-When the crypto pool finishes and `uploadChan` is closed, the uploader processes any remaining partial batch before exiting.
+### 4. Upload Data Pump (`upload_threads`, default 2)
+
+Upload Pump workers consume the filtered batches from `UploadPipelineChan`.
+
+1. **Stream** — Dynamically establish a raw libp2p QUIC stream (`/bdr/upload/1.0.0`) to the server, bypassing Cap'n Proto memory allocation overhead entirely. It precisely blasts only the required ciphertext bytes array sequentially over the network.
+2. **Release** — Call `Release()` on the uploaded jobs, returning the memory to the pre-allocated free-list.
+
+Because the Offer Phase and Upload Phase are handled by asynchronous goroutines, the client flawlessly hides network TTFB (time-to-first-byte) latency. It can saturate high-bandwidth links by continuously pipelining chunk bundles without blocking on a single rigid sequence.
 
 ## Memory Management
 
