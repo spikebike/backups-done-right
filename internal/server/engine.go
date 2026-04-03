@@ -42,6 +42,7 @@ type Engine struct {
 	ListenAddress              string
 	KeepLocalCopy              bool
 	KeepDeletedMinutes         int
+	KeepMetadataMinutes        int
 	WasteThreshold             float64
 	GCIntervalMinutes          int
 	SelfBackupIntervalMinutes  int
@@ -67,7 +68,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string) *Engine {
+func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -97,6 +98,9 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 	}
 	if basePieceBuffer <= 0 {
 		basePieceBuffer = 4 // Default 4 pieces buffer
+	}
+	if keepMetadataMinutes <= 0 {
+		keepMetadataMinutes = 60 * 24 * 7 // 7 days default
 	}
 
 	var maxBytes int64
@@ -128,6 +132,7 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		ListenAddress:              listenAddress,
 		KeepLocalCopy:              keepLocalCopy,
 		KeepDeletedMinutes:         keepDeletedMinutes,
+		KeepMetadataMinutes:        keepMetadataMinutes,
 		WasteThreshold:             wasteThreshold,
 		GCIntervalMinutes:          gcIntervalMinutes,
 		SelfBackupIntervalMinutes:  selfBackupIntervalMinutes,

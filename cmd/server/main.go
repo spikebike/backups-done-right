@@ -18,6 +18,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/libp2p/go-libp2p"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	capnp "capnproto.org/go/capnp/v3"
@@ -199,6 +200,11 @@ func main() {
 		keepDeletedMinutes = 60 * 24 * 30 // 30 days default
 	}
 
+	keepMetadataMinutes := cfg.Storage.KeepMetadataMinutes
+	if keepMetadataMinutes <= 0 {
+		keepMetadataMinutes = 60 * 24 * 7 // 7 days default
+	}
+
 	wasteThreshold := cfg.Storage.WasteThreshold
 	if wasteThreshold <= 0 {
 		wasteThreshold = 0.5
@@ -235,6 +241,11 @@ func main() {
 		log.Fatalf("Failed to convert identity to libp2p key: %v", err)
 	}
 
+	rm, rmErr := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(rcmgr.InfiniteLimits))
+	if rmErr != nil {
+		log.Fatalf("Failed to initialize resource manager: %v", rmErr)
+	}
+
 	p2pOpts := []libp2p.Option{
 		libp2p.ListenAddrStrings(quicAddr, tcpAddr),
 		libp2p.Identity(p2pPrivKey),
@@ -242,6 +253,7 @@ func main() {
 		libp2p.EnableRelay(),                                     // Enable acting as a limited v2 relay for others (Circuit Relay v2)
 		libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{}), // DCUtR: Automatically use relays to coordinate hole punches
 		libp2p.EnableHolePunching(),                              // Execute UDP hole punching
+		libp2p.ResourceManager(rm),
 	}
 
 	if cfg.Network.EnableUPnP {
@@ -281,6 +293,7 @@ func main() {
 		extraVerbose,
 		challengesPerPiece,
 		keepDeletedMinutes,
+		keepMetadataMinutes,
 		wasteThreshold,
 		gcIntervalMinutes,
 		cfg.Storage.SelfBackupIntervalMinutes,

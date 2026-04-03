@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/libp2p/go-libp2p"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"p2p-backup/internal/client"
 	"p2p-backup/internal/config"
 	"p2p-backup/internal/crypto"
@@ -324,10 +325,16 @@ func main() {
 			log.Fatal("expected_server_key is mandatory in the 'server:' section of client.yaml. Run 'server identity' on your server to get it.")
 		}
 
+		rm, rmErr := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(rcmgr.InfiniteLimits))
+		if rmErr != nil {
+			log.Fatalf("Failed to initialize resource manager: %v", rmErr)
+		}
+
 		// Initialize libp2p host for the client (using random ephemeral ports since it's just dialling out)
 		p2pHost, err := libp2p.New(
 			libp2p.Identity(p2pPrivKey),
 			libp2p.NoListenAddrs, // Client doesn't need to listen for incoming connections
+			libp2p.ResourceManager(rm),
 		)
 		if err != nil {
 			log.Fatalf("Failed to start libp2p client host: %v", err)

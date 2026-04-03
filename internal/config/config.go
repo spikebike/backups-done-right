@@ -78,6 +78,7 @@ type ServerConfig struct {
 		MasterPassword             string  `yaml:"master_password"` // Used to encrypt server's own database backups
 		KeepLocalCopy              bool    `yaml:"keep_local_copy"` // If false, deletes local 256MB shards after P2P sync
 		KeepDeletedMinutes         int     `yaml:"keep_deleted_minutes"` // Minutes to keep blobs after client deletes them
+		KeepMetadataMinutes        int     `yaml:"keep_metadata_minutes"` // Minutes to keep server rescue bundles after update
 		WasteThreshold             float64 `yaml:"waste_threshold"` // Percentage (0.0 to 1.0) of deleted bytes to trigger GC
 		MaxStorageGB               int     `yaml:"max_storage_gb"` // Maximum total disk space to use for all shards
 		GCIntervalMinutes          int     `yaml:"gc_interval_minutes"` // How often to run the GC worker

@@ -51,11 +51,16 @@ func (e *Engine) runGCLoop(ctx context.Context) {
 	}
 
 	// Query for shards that exceed the waste threshold based on bytes
-	// A blob is "wasted" if ref_count is 0 and it was deleted longer than KeepDeletedMinutes ago.
+	// A blob is "wasted" if ref_count is 0 AND it was deleted longer than its specific grace period ago.
+	// We use KeepMetadataMinutes for special blobs and KeepDeletedMinutes for regular blobs.
 	query := `
 		SELECT 
 			l.shard_id, 
-			SUM(CASE WHEN b.ref_count = 0 AND b.deleted_at < datetime('now', '-' || ? || ' minutes') THEN l.length ELSE 0 END) as wasted_bytes,
+			SUM(CASE 
+				WHEN b.ref_count = 0 AND (
+					(b.special = 1 AND b.deleted_at < datetime('now', '-' || ? || ' minutes')) OR
+					(b.special = 0 AND b.deleted_at < datetime('now', '-' || ? || ' minutes'))
+				) THEN l.length ELSE 0 END) as wasted_bytes,
 			s.size as total_bytes
 		FROM blob_locations l
 		JOIN blobs b ON l.blob_hash = b.hash
@@ -66,7 +71,7 @@ func (e *Engine) runGCLoop(ctx context.Context) {
 		ORDER BY (CAST(wasted_bytes AS FLOAT) / total_bytes) DESC
 	`
 
-	rows, err := e.DB.QueryContext(ctx, query, e.KeepDeletedMinutes, e.WasteThreshold)
+	rows, err := e.DB.QueryContext(ctx, query, e.KeepMetadataMinutes, e.KeepDeletedMinutes, e.WasteThreshold)
 	if err != nil {
 		log.Printf("GCWorker: failed to query wasted shards: %v", err)
 		return
@@ -101,8 +106,12 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 		SELECT COUNT(*) 
 		FROM blob_locations l
 		JOIN blobs b ON l.blob_hash = b.hash
-		WHERE l.shard_id = ? AND (b.ref_count > 0 OR b.deleted_at >= datetime('now', '-' || ? || ' minutes'))
-	`, shardID, e.KeepDeletedMinutes).Scan(&totalLive)
+		WHERE l.shard_id = ? AND (
+			b.ref_count > 0 OR 
+			(b.special = 1 AND b.deleted_at >= datetime('now', '-' || ? || ' minutes')) OR
+			(b.special = 0 AND b.deleted_at >= datetime('now', '-' || ? || ' minutes'))
+		)
+	`, shardID, e.KeepMetadataMinutes, e.KeepDeletedMinutes).Scan(&totalLive)
 	
 	if err != nil {
 		return err
@@ -137,8 +146,12 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 		SELECT DISTINCT l.blob_hash, b.special
 		FROM blob_locations l
 		JOIN blobs b ON l.blob_hash = b.hash
-		WHERE l.shard_id = ? AND (b.ref_count > 0 OR b.deleted_at >= datetime('now', '-' || ? || ' minutes'))
-	`, shardID, e.KeepDeletedMinutes)
+		WHERE l.shard_id = ? AND (
+			b.ref_count > 0 OR 
+			(b.special = 1 AND b.deleted_at >= datetime('now', '-' || ? || ' minutes')) OR
+			(b.special = 0 AND b.deleted_at >= datetime('now', '-' || ? || ' minutes'))
+		)
+	`, shardID, e.KeepMetadataMinutes, e.KeepDeletedMinutes)
 	if err != nil {
 		return err
 	}
