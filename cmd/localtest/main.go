@@ -148,10 +148,11 @@ func main() {
 	
 	db.StartDBWriter(database, dbJobChan)
 
-	crawler := client.NewCrawler(database, dbJobChan, backupDirs, jobChan, verbose)
+	crawler := client.NewCrawler(database, dbJobChan, backupDirs, jobChan, 4, verbose)
 	
 	key := []byte("01234567890123456789012345678901")
-	cryptoPool := client.NewCryptoPool(database, dbJobChan, key, 4, uploadChan, verbose)
+	archiveChan := make(chan client.FileArchive, 1000)
+	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, verbose)
 	
 	// Connect the client to the local server engine
 	rpcClient := client.NewMockRPCClient(engine)
@@ -173,12 +174,14 @@ func main() {
 	}
 	backupID := res.ID
 
-	uploader := client.NewUploader(database, uploadChan, rpcClient, 2, batchSize, false, verbose, backupID)
+	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, batchSize, false, verbose, backupID)
+	stateManager := client.NewStateManager(database, dbJobChan, archiveChan, verbose)
 
 	if verbose {
 		log.Println("Pipeline components initialized. Starting threads...")
 	}
 
+	go stateManager.Start()
 	uploader.Start()
 	cryptoPool.Start(jobChan)
 	crawler.Start(backupID)

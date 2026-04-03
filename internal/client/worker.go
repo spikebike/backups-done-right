@@ -1,7 +1,6 @@
 package client
 
 import (
-	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"lukechampine.com/blake3"
 	"p2p-backup/internal/crypto"
-	"p2p-backup/internal/db"
 )
 
 const (
@@ -27,7 +25,6 @@ const (
 
 // UploadJob represents a blob that is ready to be uploaded.
 type UploadJob struct {
-	FileID    int64
 	Hash      string // Blob hash
 	Size      int64  // Blob size
 	Data      []byte // Encrypted data in memory
@@ -35,25 +32,43 @@ type UploadJob struct {
 	Release   func() // Returns the Data buffer to the pool (nil if not pooled)
 }
 
-// CryptoPool manages a pool of workers that encrypt files and update the local database.
+// FileArchive represents a completed file ready to be saved to local state.
+type FileArchive struct {
+	DirPath   string
+	FileName  string
+	BackupID  int64
+	Deleted   bool
+	Mtime     int64
+	Size      int64
+	UID       uint32
+	GID       uint32
+	Mode      uint32
+	PlainHash string
+	Chunks    []ChunkArchive
+}
+
+type ChunkArchive struct {
+	Sequence  int
+	PlainHash string
+	EncHash   string
+	Size      int
+}
+
+// CryptoPool manages a pool of workers that encrypt files and send them to the uploader.
 type CryptoPool struct {
-	DB             *sql.DB
-	DBJobChan      chan<- db.DBJob
 	Key            []byte
 	NumWorkers     int
 	UploadChan     chan<- UploadJob
+	ArchiveChan    chan<- FileArchive
 	Verbose        bool
 	wg             sync.WaitGroup
-	sessionUploads sync.Map   // Track hashes already queued in this session (plainHashHex -> encHashHex)
+	sessionUploads sync.Map    // Track hashes already queued in this session (plainHashHex -> encHashHex)
 	cipherBufs     chan []byte // Pre-allocated free-list of reusable ciphertext buffers
-	rawChunkPool   sync.Pool  // Reusable raw chunk read buffers
+	rawChunkPool   sync.Pool   // Reusable raw chunk read buffers
 }
 
 // NewCryptoPool initializes a new CryptoPool.
-func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, numWorkers int, uploadChan chan<- UploadJob, verbose bool) *CryptoPool {
-	// Pre-allocate cipher buffers: enough to fill the upload channel plus
-	// one per crypto worker so encryption never stalls waiting for a free buffer
-	// while the channel still has capacity.
+func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool) *CryptoPool {
 	poolSize := cap(uploadChan) + numWorkers
 	if poolSize <= 0 {
 		poolSize = 100
@@ -62,19 +77,14 @@ func NewCryptoPool(db *sql.DB, dbJobChan chan<- db.DBJob, key []byte, numWorkers
 	for i := 0; i < poolSize; i++ {
 		cipherBufs <- make([]byte, 0, defaultBlockSize+cipherOverhead+1024)
 	}
-	if verbose {
-		log.Printf("Pre-allocated %d cipher buffers (%.0f MB)",
-			poolSize, float64(poolSize*(defaultBlockSize+cipherOverhead+1024))/(1024*1024))
-	}
 
 	return &CryptoPool{
-		DB:          db,
-		DBJobChan:   dbJobChan,
-		Key:         key,
-		NumWorkers:  numWorkers,
-		UploadChan:  uploadChan,
-		Verbose:     verbose,
-		cipherBufs:  cipherBufs,
+		Key:          key,
+		NumWorkers:   numWorkers,
+		UploadChan:   uploadChan,
+		ArchiveChan:  archiveChan,
+		Verbose:      verbose,
+		cipherBufs:   cipherBufs,
 		rawChunkPool: sync.Pool{
 			New: func() any {
 				return make([]byte, defaultBlockSize)
@@ -113,18 +123,30 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 	for job := range jobChan {
 		err := p.processFile(job, zstdEncoder, &compressBuf)
 		if err != nil {
-			log.Printf("[Worker %d] Error processing %s: %v", workerID, job.Path, err)
+			log.Printf("[Worker %d] Error processing %s/%s: %v", workerID, job.DirPath, job.FileName, err)
 		} else {
 			if p.Verbose {
-				log.Printf("[Worker %d] Successfully processed %s", workerID, job.Path)
+				log.Printf("[Worker %d] Successfully processed %s/%s", workerID, job.DirPath, job.FileName)
 			}
 		}
 	}
 }
 
 func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compressBuf *[]byte) error {
+	fullPath := filepath.Join(job.DirPath, job.FileName)
+
+	if job.Deleted {
+		p.ArchiveChan <- FileArchive{
+			DirPath:  job.DirPath,
+			FileName: job.FileName,
+			BackupID: job.BackupID,
+			Deleted:  true,
+		}
+		return nil
+	}
+
 	// 1. Read file stats (Lstat to avoid following symlinks)
-	info, err := os.Lstat(job.Path)
+	info, err := os.Lstat(fullPath)
 	if err != nil {
 		return err
 	}
@@ -139,58 +161,26 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 	fileMode = info.Mode().Perm()
 	
 	// 2. Open file for streaming
-	inFile, err := os.Open(job.Path)
+	inFile, err := os.Open(fullPath)
 	if err != nil {
 		return err
 	}
 	defer inFile.Close()
 
-	// 3. Register file in DB first to get FileID
-	fileName := filepath.Base(job.Path)
-
 	// We'll compute the full file hash as we read it
 	fullPlainHasher := blake3.New(32, nil)
-
-	var fileID int64
-	// INSERT or UPDATE and get ID
-	resChan := make(chan db.DBResult)
-	p.DBJobChan <- db.DBJob{
-		Query: `
-		INSERT INTO files (dir_id, filename, first_seen, last_seen, deleted)
-		VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)
-		ON CONFLICT(dir_id, filename) DO UPDATE SET
-			last_seen = CURRENT_TIMESTAMP,
-			deleted = 0
-		RETURNING id
-	`,
-		Args:       []interface{}{job.DirID, fileName},
-		ResultChan: resChan,
-		Scan: func(row *sql.Row) error {
-			return row.Scan(&fileID)
-		},
-	}
-	res := <-resChan
-	if res.Err != nil {
-		return fmt.Errorf("failed to upsert file: %w", res.Err)
-	}
-
-	// Create a new version for this backup
-	var versionID int64
-	p.DBJobChan <- db.DBJob{
-		Query: `
-		INSERT INTO file_versions (file_id, backup_id, mtime, size, hash_plain, uid, gid, mode)
-		VALUES (?, ?, ?, ?, '', ?, ?, ?)
-		RETURNING id
-	`,
-		Args:       []interface{}{fileID, job.BackupID, info.ModTime().Unix(), info.Size(), fileUID, fileGID, uint32(fileMode)},
-		ResultChan: resChan,
-		Scan: func(row *sql.Row) error {
-			return row.Scan(&versionID)
-		},
-	}
-	res = <-resChan
-	if res.Err != nil {
-		return fmt.Errorf("failed to insert file version: %w", res.Err)
+	
+	archive := FileArchive{
+		DirPath:  job.DirPath,
+		FileName: job.FileName,
+		BackupID: job.BackupID,
+		Deleted:  false,
+		Mtime:    info.ModTime().Unix(),
+		Size:     info.Size(),
+		UID:      fileUID,
+		GID:      fileGID,
+		Mode:     uint32(fileMode),
+		Chunks:   []ChunkArchive{},
 	}
 
 	// 4. Process in 4MB blocks
@@ -249,17 +239,9 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 				// Update session cache with actual encHashHex so waiting workers can proceed
 				p.sessionUploads.Store(plainHashHex, encHashHex)
 
-				// Record in local_blobs DB (Asynchronous - non blocking)
-				p.DBJobChan <- db.DBJob{
-					Query:      "INSERT OR IGNORE INTO local_blobs (hash_plain, hash_encrypted, size) VALUES (?, ?, ?)",
-					Args:       []interface{}{plainHashHex, encHashHex, ciphertextSize},
-					ResultChan: make(chan db.DBResult, 1),
-				}
-
 				// Queue for upload (In-Memory) — uploader calls Release to return buffer
 				bufs := p.cipherBufs // capture for closure
 				p.UploadChan <- UploadJob{
-					FileID:    fileID,
 					Hash:      encHashHex,
 					Size:      int64(ciphertextSize),
 					Data:      ciphertext,
@@ -270,12 +252,12 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 				}
 			}
 
-			// Link blob to file directly by hash (always done, whether new or deduplicated)
-			p.DBJobChan <- db.DBJob{
-				Query:      "INSERT INTO file_blobs (version_id, hash_encrypted, size, sequence) VALUES (?, ?, ?, ?)",
-				Args:       []interface{}{versionID, encHashHex, ciphertextSize, sequence},
-				ResultChan: make(chan db.DBResult, 1),
-			}
+			archive.Chunks = append(archive.Chunks, ChunkArchive{
+				Sequence:  sequence,
+				PlainHash: plainHashHex,
+				EncHash:   encHashHex,
+				Size:      ciphertextSize,
+			})
 
 			sequence++
 		}
@@ -287,14 +269,9 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 		}
 	}
 
-	// 5. Finalize full file hashes and update the files table
-	fullPlainHashHex := hex.EncodeToString(fullPlainHasher.Sum(nil))
-
-	p.DBJobChan <- db.DBJob{
-		Query:      "UPDATE file_versions SET hash_plain = ? WHERE id = ?",
-		Args:       []interface{}{fullPlainHashHex, versionID},
-		ResultChan: make(chan db.DBResult, 1),
-	}
+	// 5. Finalize full file metadata and send to StateManager
+	archive.PlainHash = hex.EncodeToString(fullPlainHasher.Sum(nil))
+	p.ArchiveChan <- archive
 
 	return nil
 }

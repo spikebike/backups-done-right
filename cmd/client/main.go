@@ -633,18 +633,24 @@ func main() {
 		for _, s := range backupSources {
 			backupPaths = append(backupPaths, s.Path)
 		}
-		crawler := client.NewCrawler(database, dbJobChan, backupPaths, jobChan, verbose)
+		scanThreads := cfg.Pipeline.ScanThreads
+		if scanThreads <= 0 {
+			scanThreads = 4
+		}
+		crawler := client.NewCrawler(database, dbJobChan, backupPaths, jobChan, scanThreads, verbose)
 		for _, s := range backupSources {
 			if len(s.Excludes) > 0 {
 				crawler.SetExcludes(s.Path, s.Excludes)
 			}
 		}
 		
+		archiveChan := make(chan client.FileArchive, 1000)
+
 		cryptoThreads := cfg.Pipeline.CryptoThreads
 		if cryptoThreads <= 0 {
 			cryptoThreads = 4
 		}
-		cryptoPool := client.NewCryptoPool(database, dbJobChan, key, cryptoThreads, uploadChan, verbose)
+		cryptoPool := client.NewCryptoPool(key, cryptoThreads, uploadChan, archiveChan, verbose)
 
 		batchSize := cfg.Pipeline.BatchUploadSize
 		if batchSize <= 0 {
@@ -656,11 +662,14 @@ func main() {
 			uploaderThreads = 2
 		}
 		
-		uploader := client.NewUploader(database, uploadChan, rpcClient, uploaderThreads, batchSize, *fakeUpload, verbose, backupID)
+		uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, uploaderThreads, batchSize, *fakeUpload, verbose, backupID)
+		stateManager := client.NewStateManager(database, dbJobChan, archiveChan, verbose)
 
 		if verbose {
 			log.Println("Pipeline components initialized. Starting threads...")
 		}
+
+		go stateManager.Start()
 
 		// Start the Uploader (runs in background, consumes from uploadChan)
 		uploader.Start()
@@ -681,9 +690,12 @@ func main() {
 
 		// Close uploadChan to signal Uploader that no more uploads are coming
 		close(uploadChan)
+		close(archiveChan)
 
 		// Wait for Uploader to finish uploading all files
 		uploader.Wait()
+		
+		stateManager.Wait()
 		
 		if verbose {
 			log.Println("Backup process completed successfully.")

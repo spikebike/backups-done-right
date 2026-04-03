@@ -97,8 +97,9 @@ CREATE INDEX IF NOT EXISTS idx_local_blobs_hash_encrypted ON local_blobs(hash_en
 
 // InitClientDB opens the SQLite database, configures pragmas, and initializes the schema.
 func InitClientDB(dbPath string) (*sql.DB, error) {
-	// Open the database using the modernc.org/sqlite driver
-	db, err := sql.Open("sqlite", dbPath)
+	// Add pragmas to DSN so they apply to ALL connection pool connections, not just the first one.
+	dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

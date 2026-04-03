@@ -2,17 +2,17 @@ package client
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"sync"
 	"time"
 
+	"p2p-backup/internal/db"
 	"p2p-backup/internal/rpc"
 )
 
 // Uploader manages the syncing of encrypted files and deletions to the server.
 type Uploader struct {
-	DB                 *sql.DB
+	DBJobChan          chan<- db.DBJob
 	UploadChan         <-chan UploadJob
 	RPCClient          RPCClient
 	NumWorkers         int
@@ -31,7 +31,7 @@ type pendingUpload struct {
 }
 
 // NewUploader creates a new Uploader instance.
-func NewUploader(db *sql.DB, uploadChan <-chan UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64) *Uploader {
+func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64) *Uploader {
 	if batchSize <= 0 {
 		batchSize = 10 // Default batch size
 	}
@@ -39,7 +39,7 @@ func NewUploader(db *sql.DB, uploadChan <-chan UploadJob, rpcClient RPCClient, n
 		numWorkers = 1
 	}
 	return &Uploader{
-		DB:              db,
+		DBJobChan:       dbJobChan,
 		UploadChan:      uploadChan,
 		RPCClient:       rpcClient,
 		NumWorkers:      numWorkers,
@@ -106,9 +106,10 @@ func (u *Uploader) uploadWorker(workerID int) {
 					// Note: On failure, we might lose DB sync status for this batch. Production versions should retry.
 				} else {
 					// Update database with upload count
-					_, err := u.DB.Exec("UPDATE backups SET uploaded_files = uploaded_files + ? WHERE id = ?", len(pending.Blobs), u.CurrentBackupID)
-					if err != nil {
-						log.Printf("[Upload Pump %d] Failed to update uploaded_files count: %v", workerID, err)
+					u.DBJobChan <- db.DBJob{
+						Query:      "UPDATE backups SET uploaded_files = uploaded_files + ? WHERE id = ?",
+						Args:       []interface{}{len(pending.Blobs), u.CurrentBackupID},
+						ResultChan: make(chan db.DBResult, 1),
 					}
 				}
 			}
@@ -206,9 +207,10 @@ func (u *Uploader) processOfferBatch(batch []UploadJob, workerID int) {
 	}
 
 	// Update database with offered count
-	_, err = u.DB.Exec("UPDATE backups SET offered_files = offered_files + ? WHERE id = ?", len(blobsToOffer), u.CurrentBackupID)
-	if err != nil {
-		log.Printf("[Offer Pipeline %d] Failed to update offered_files count: %v", workerID, err)
+	u.DBJobChan <- db.DBJob{
+		Query:      "UPDATE backups SET offered_files = offered_files + ? WHERE id = ?",
+		Args:       []interface{}{len(blobsToOffer), u.CurrentBackupID},
+		ResultChan: make(chan db.DBResult, 1),
 	}
 }
 

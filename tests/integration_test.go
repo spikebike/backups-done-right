@@ -29,17 +29,22 @@ func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpc
 	jobChan := make(chan client.FileJob, 1000)
 	uploadChan := make(chan client.UploadJob, 100)
 
-	crawler := client.NewCrawler(clientDB, dbJobChan, backupDirs, jobChan, false)
-	cryptoPool := client.NewCryptoPool(clientDB, dbJobChan, key, 2, uploadChan, false)
-	uploader := client.NewUploader(clientDB, uploadChan, rpcClient, 2, 10, false, false, backupID)
+	crawler := client.NewCrawler(clientDB, dbJobChan, backupDirs, jobChan, 4, false)
+	archiveChan := make(chan client.FileArchive, 1000)
+	cryptoPool := client.NewCryptoPool(key, 2, uploadChan, archiveChan, false)
+	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, 10, false, false, backupID)
+	stateManager := client.NewStateManager(clientDB, dbJobChan, archiveChan, false)
 
+	go stateManager.Start()
 	uploader.Start()
 	cryptoPool.Start(jobChan)
 	crawler.Start(backupID)
 
 	cryptoPool.Wait()
 	close(uploadChan)
+	close(archiveChan)
 	uploader.Wait()
+	stateManager.Wait()
 
 	dbJobChan <- db.DBJob{
 		Query:      "UPDATE backups SET end_time = CURRENT_TIMESTAMP, status = 'complete' WHERE id = ?",
