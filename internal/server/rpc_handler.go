@@ -76,10 +76,13 @@ func (h *RPCHandler) PrepareUploadClient(ctx context.Context, call rpc.BackupSer
 		if err != nil {
 			return fmt.Errorf("failed to read blob %d checksum: %w", i, err)
 		}
-		h.engine.pendingClientStreams.Store(hex.EncodeToString(hashBytes), rpc.BlobMeta{
-			Hash:    hex.EncodeToString(hashBytes),
-			Size:    int64(cb.Size()),
-			Special: cb.Special(),
+		h.engine.pendingClientStreams.Store(hex.EncodeToString(hashBytes), PendingClientBlob{
+			BlobMeta: rpc.BlobMeta{
+				Hash:    hex.EncodeToString(hashBytes),
+				Size:    int64(cb.Size()),
+				Special: cb.Special(),
+			},
+			ClientPubKey: h.clientPubKey,
 		})
 	}
 

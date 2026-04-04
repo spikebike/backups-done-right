@@ -808,12 +808,18 @@ func uploadMetadata(ctx context.Context, filePaths []string, key []byte, rpcClie
 			return fmt.Errorf("prepare upload metadata: %w", err)
 		}
 
+		var finalJobs []client.UploadJob
 		for _, idx := range needed {
 			b := blobsToUpload[idx]
-			err = rpcClient.PushBlob(ctx, b.Hash, b.Data)
-			if err != nil {
-				return fmt.Errorf("push metadata blob: %w", err)
-			}
+			finalJobs = append(finalJobs, client.UploadJob{
+				Hash: b.Hash,
+				Data: b.Data,
+			})
+		}
+
+		err = rpcClient.PushBlobBatch(ctx, finalJobs)
+		if err != nil {
+			return fmt.Errorf("push metadata batch: %w", err)
 		}
 
 		if verbose {

@@ -370,12 +370,17 @@ func (e *Engine) OfferBlobs(ctx context.Context, clientPubKey string, blobs []rp
 	var existingArgs []interface{}
 	e.mu.Lock()
 	for i, blob := range blobs {
-		if !existingHashes[blob.Hash] {
+		// Check both database and currently pending uploads
+		_, isPending := e.pendingBlobs[blob.Hash]
+		
+		if !existingHashes[blob.Hash] && !isPending {
 			neededIndices = append(neededIndices, uint32(i))
 			e.pendingBlobs[blob.Hash] = blob
-		} else {
+		} else if existingHashes[blob.Hash] {
 			existingArgs = append(existingArgs, blob.Hash)
 		}
+		// If it's already pending, we don't add to neededIndices (already being uploaded)
+		// and we don't add to existingArgs (don't bump ref_count yet, IngestBlobs will do it)
 	}
 	e.mu.Unlock()
 

@@ -126,14 +126,10 @@ func (u *Uploader) uploadWorker(workerID int) {
 			if err != nil {
 				log.Printf("[Upload Pump %d] Failed to prepare upload: %v", workerID, err)
 			} else {
-				for _, blob := range pending.Blobs {
-					err = u.RPCClient.PushBlob(ctx, blob.Hash, blob.Data)
-					if err != nil {
-						log.Printf("[Upload Pump %d] Failed to push blob %s: %v", workerID, blob.Hash, err)
-						break
-					}
-				}
-				if err == nil {
+				err = u.RPCClient.PushBlobBatch(ctx, pending.Jobs)
+				if err != nil {
+					log.Printf("[Upload Pump %d] Failed to push batch: %v", workerID, err)
+				} else {
 					// Track upload stats
 					if u.Stats != nil {
 						for _, blob := range pending.Blobs {
@@ -231,8 +227,9 @@ func (u *Uploader) processOfferBatch(batch []UploadJob, workerID int) {
 		if neededMap[uint32(i)] {
 			neededJobs = append(neededJobs, job)
 			blobsToUpload = append(blobsToUpload, rpc.LocalBlobData{
-				Hash: job.Hash,
-				Data: job.Data,
+				Hash:      job.Hash,
+				Data:      job.Data,
+				IsSpecial: job.IsSpecial,
 			})
 		} else {
 			unneededJobs = append(unneededJobs, job)

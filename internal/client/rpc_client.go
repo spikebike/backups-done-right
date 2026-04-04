@@ -42,9 +42,11 @@ type RPCClient interface {
 	OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([]uint32, error)
 	PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error
 	PushBlob(ctx context.Context, hashHex string, data []byte) error
+	PushBlobBatch(ctx context.Context, jobs []UploadJob) error
 	ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
 	GetStatus(ctx context.Context) (rpc.StatusInfo, error)
 	PullBlob(ctx context.Context, hashHex string) ([]byte, error)
+	PullBlobBatch(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, error)
 	DeleteBlobs(ctx context.Context, hashes []string) error
 	ListAllBlobs(ctx context.Context) ([]string, error)
 	AddPeer(ctx context.Context, address string) error
@@ -123,6 +125,17 @@ func (m *MockRPCClient) PushBlob(ctx context.Context, hashHex string, data []byt
 	return nil
 }
 
+func (m *MockRPCClient) PushBlobBatch(ctx context.Context, jobs []UploadJob) error {
+	if m.engine != nil {
+		var blobs []rpc.LocalBlobData
+		for _, j := range jobs {
+			blobs = append(blobs, rpc.LocalBlobData{Hash: j.Hash, Data: j.Data})
+		}
+		return m.engine.IngestBlobs(ctx, "insecure-local-client", blobs, false)
+	}
+	return nil
+}
+
 func (m *MockRPCClient) PullBlob(ctx context.Context, hashHex string) ([]byte, error) {
 	if m.engine != nil {
 		blobs, _, err := m.engine.GetBlobs(ctx, []string{hashHex})
@@ -130,6 +143,17 @@ func (m *MockRPCClient) PullBlob(ctx context.Context, hashHex string) ([]byte, e
 			return nil, fmt.Errorf("blob not found")
 		}
 		return blobs[0].Data, nil
+	}
+	return nil, fmt.Errorf("mock error: engine not set")
+}
+
+func (m *MockRPCClient) PullBlobBatch(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, error) {
+	if m.engine != nil {
+		blobs, _, err := m.engine.GetBlobs(ctx, hashes)
+		if err != nil {
+			return nil, err
+		}
+		return blobs, nil
 	}
 	return nil, fmt.Errorf("mock error: engine not set")
 }

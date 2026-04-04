@@ -392,10 +392,6 @@ func main() {
 		engine.HandleDataStream(s)
 	})
 
-	p2pHost.SetStreamHandler("/bdr/upload/1.0.0", func(s network.Stream) {
-		engine.HandleClientUploadStream(s)
-	})
-
 	// Keep main thread alive
 	select {}
 }

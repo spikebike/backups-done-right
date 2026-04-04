@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"p2p-backup/internal/crypto"
-	"p2p-backup/internal/rpc"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -234,19 +233,22 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 		}
 		batchHashes := chunkHashes[i:end]
 
-		var foundBlobs []rpc.LocalBlobData
-		var missingHashes []string
-		for _, hash := range batchHashes {
-			data, err := r.RPCClient.PullBlob(ctx, hash)
-			if err != nil {
-				missingHashes = append(missingHashes, hash)
-			} else {
-				foundBlobs = append(foundBlobs, rpc.LocalBlobData{Hash: hash, Data: data})
-			}
+		foundBlobs, err := r.RPCClient.PullBlobBatch(ctx, batchHashes)
+		if err != nil {
+			return fmt.Errorf("failed to pull blob batch: %w", err)
 		}
 
-		if len(missingHashes) > 0 {
-			return fmt.Errorf("server is missing %d required chunks for this file (e.g., %s)", len(missingHashes), missingHashes[0])
+		if len(foundBlobs) < len(batchHashes) {
+			// Find missing
+			foundMap := make(map[string]bool)
+			for _, b := range foundBlobs {
+				foundMap[b.Hash] = true
+			}
+			for _, h := range batchHashes {
+				if !foundMap[h] {
+					return fmt.Errorf("server is missing required chunk: %s", h)
+				}
+			}
 		}
 
 		chunkDataMap := make(map[string][]byte)

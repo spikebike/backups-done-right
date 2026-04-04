@@ -224,6 +224,43 @@ func (c *CapnpRPCClient) PrepareUploadClient(ctx context.Context, blobs []rpc.Bl
 	return nil
 }
 
+func (c *CapnpRPCClient) PushBlobBatch(ctx context.Context, jobs []UploadJob) error {
+	if c.p2pHost == nil {
+		return fmt.Errorf("raw data stream unavailable (no libp2p host)")
+	}
+
+	stream, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/data/1.0.0")
+	if err != nil {
+		return fmt.Errorf("failed to open batch upload stream: %w", err)
+	}
+	defer stream.Close()
+
+	// 1. Write Header: [OpCode (1b)][Count (4b)]
+	header := make([]byte, 5)
+	header[0] = 0x05 // OpCodePushBlobBatch
+	binary.BigEndian.PutUint32(header[1:5], uint32(len(jobs)))
+	if _, err := stream.Write(header); err != nil {
+		return fmt.Errorf("failed to write batch header: %w", err)
+	}
+
+	// 2. Loop and write each item: [Checksum (32b)][Size (8b)][Data (Size b)]
+	itemHeader := make([]byte, 40)
+	for _, job := range jobs {
+		hashBytes, _ := hex.DecodeString(job.Hash)
+		copy(itemHeader[0:32], hashBytes)
+		binary.BigEndian.PutUint64(itemHeader[32:40], uint64(len(job.Data)))
+
+		if _, err := stream.Write(itemHeader); err != nil {
+			return fmt.Errorf("failed to write item header for %s: %w", job.Hash, err)
+		}
+		if _, err := stream.Write(job.Data); err != nil {
+			return fmt.Errorf("failed to write item data for %s: %w", job.Hash, err)
+		}
+	}
+
+	return nil
+}
+
 func (c *CapnpRPCClient) PushBlob(ctx context.Context, hashHex string, data []byte) error {
 	if c.p2pHost == nil {
 		return fmt.Errorf("raw data stream unavailable (no libp2p host)")
@@ -373,6 +410,55 @@ func (c *CapnpRPCClient) GetStatus(ctx context.Context) (rpc.StatusInfo, error) 
 		HostedPeerShards:          status.HostedPeerShards(),
 		QueuedBytes:               status.QueuedBytes(),
 	}, nil
+}
+
+func (c *CapnpRPCClient) PullBlobBatch(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, error) {
+	if c.p2pHost == nil {
+		return nil, fmt.Errorf("raw data stream unavailable (no libp2p host)")
+	}
+
+	stream, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/data/1.0.0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open data stream: %w", err)
+	}
+	defer stream.Close()
+
+	// 1. Write Header: [OpCode (1b)][Count (4b)]
+	header := make([]byte, 5)
+	header[0] = 0x06 // OpCodePullBlobBatch
+	binary.BigEndian.PutUint32(header[1:5], uint32(len(hashes)))
+	if _, err := stream.Write(header); err != nil {
+		return nil, fmt.Errorf("failed to write batch header: %w", err)
+	}
+
+	// 2. Write Hashes: [Checksum (32b)]...
+	for _, h := range hashes {
+		hashBytes, _ := hex.DecodeString(h)
+		if _, err := stream.Write(hashBytes); err != nil {
+			return nil, fmt.Errorf("failed to write hash %s: %w", h, err)
+		}
+	}
+
+	// 3. Read Responses: [Size (8b)][Data]...
+	var results []rpc.LocalBlobData
+	for _, h := range hashes {
+		sizeBuf := make([]byte, 8)
+		if _, err := io.ReadFull(stream, sizeBuf); err != nil {
+			return nil, fmt.Errorf("failed to read response size for %s: %w", h, err)
+		}
+		size := binary.BigEndian.Uint64(sizeBuf)
+		if size == 0 {
+			continue // Skip missing
+		}
+
+		data := make([]byte, size)
+		if _, err := io.ReadFull(stream, data); err != nil {
+			return nil, fmt.Errorf("failed to read blob data for %s: %w", h, err)
+		}
+		results = append(results, rpc.LocalBlobData{Hash: h, Data: data})
+	}
+
+	return results, nil
 }
 
 func (c *CapnpRPCClient) PullBlob(ctx context.Context, hashHex string) ([]byte, error) {
