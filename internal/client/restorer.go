@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
 	"p2p-backup/internal/crypto"
+	"p2p-backup/internal/rpc"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // Restorer handles downloading and decrypting files from the backup server.
@@ -42,7 +44,7 @@ func (r *Restorer) Restore(ctx context.Context, targetPath string, targetBackupI
 
 	var count int
 	var err error
-	
+
 	if targetBackupID > 0 {
 		err = r.DB.QueryRowContext(ctx, `
 			SELECT COUNT(*) 
@@ -80,7 +82,7 @@ func (r *Restorer) Restore(ctx context.Context, targetPath string, targetBackupI
 			WHERE d.full_path LIKE '%' || ? || '%' AND f.deleted = 0
 		`, targetPath)
 	}
-	
+
 	if err != nil {
 		return fmt.Errorf("database error searching for path %s: %w", targetPath, err)
 	}
@@ -104,7 +106,7 @@ func (r *Restorer) Restore(ctx context.Context, targetPath string, targetBackupI
 			log.Printf("Failed to restore %s: %v", f, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -136,7 +138,7 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 	var fileMtime int64
 	var fileUID, fileGID int
 	var fileMode uint32
-	
+
 	if targetBackupID > 0 {
 		err = r.DB.QueryRowContext(ctx, `
 			SELECT id, size, mtime, uid, gid, mode 
@@ -198,9 +200,9 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 			safePath = strings.TrimPrefix(safePath, "\\")
 		}
 	}
-	
+
 	outPath := filepath.Join(r.OutputDir, safePath)
-	
+
 	if len(chunkHashes) == 0 && originalSize == 0 {
 		// Empty file
 		return r.writeEmptyFile(outPath)
@@ -218,7 +220,7 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 	// 4. Download and Decrypt chunks in batches of 10
 	var bytesRestored int64
 	batchSize := 10
-	
+
 	zstdDecoder, err := zstd.NewReader(nil)
 	if err != nil {
 		return fmt.Errorf("failed to initialize zstd decoder: %w", err)
@@ -232,9 +234,15 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 		}
 		batchHashes := chunkHashes[i:end]
 
-		foundBlobs, missingHashes, err := r.RPCClient.DownloadBlobs(ctx, batchHashes)
-		if err != nil {
-			return fmt.Errorf("failed to download blobs from server: %w", err)
+		var foundBlobs []rpc.LocalBlobData
+		var missingHashes []string
+		for _, hash := range batchHashes {
+			data, err := r.RPCClient.PullBlob(ctx, hash)
+			if err != nil {
+				missingHashes = append(missingHashes, hash)
+			} else {
+				foundBlobs = append(foundBlobs, rpc.LocalBlobData{Hash: hash, Data: data})
+			}
 		}
 
 		if len(missingHashes) > 0 {
@@ -315,7 +323,7 @@ func (r *Restorer) PrintHistory(ctx context.Context, relativePath string) error 
 	fmt.Printf("\n=== Version History for %s ===\n", fileName)
 	fmt.Printf("%-10s | %-10s | %-20s | %-12s | %-32s\n", "Version ID", "Backup ID", "Date", "Size (bytes)", "Checksum (Truncated)")
 	fmt.Println(strings.Repeat("-", 90))
-	
+
 	var count int
 	for rows.Next() {
 		var vID, bID, size int64
@@ -323,7 +331,7 @@ func (r *Restorer) PrintHistory(ctx context.Context, relativePath string) error 
 		if err := rows.Scan(&vID, &bID, &date, &size, &hash); err != nil {
 			continue
 		}
-		
+
 		displayHash := hash
 		if len(hash) > 32 {
 			displayHash = hash[:32] + "..."

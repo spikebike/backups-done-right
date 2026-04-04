@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	OpCodePush byte = 0x01
-	OpCodePull byte = 0x02
+	OpCodePushPiece byte = 0x01
+	OpCodePullPiece byte = 0x02
+	OpCodePushBlob  byte = 0x03
+	OpCodePullBlob  byte = 0x04
 )
 
 type PendingStreamMeta struct {
@@ -53,16 +55,20 @@ func (e *Engine) HandleDataStream(s network.Stream) {
 	size := binary.BigEndian.Uint64(header[33:41])
 
 	switch opCode {
-	case OpCodePush:
-		e.handleIncomingPush(s, checksumHex, size)
-	case OpCodePull:
-		e.handleIncomingPull(s, checksumHex)
+	case OpCodePushPiece:
+		e.handleIncomingPushPiece(s, checksumHex, size)
+	case OpCodePullPiece:
+		e.handleIncomingPullPiece(s, checksumHex)
+	case OpCodePushBlob:
+		e.handleIncomingPushBlob(s, checksumHex, size)
+	case OpCodePullBlob:
+		e.handleIncomingPullBlob(s, checksumHex)
 	default:
 		log.Printf("DataStream: unknown OpCode %d from %s", opCode, peerID)
 	}
 }
 
-func (e *Engine) handleIncomingPush(s network.Stream, checksumHex string, size uint64) {
+func (e *Engine) handleIncomingPushPiece(s network.Stream, checksumHex string, size uint64) {
 	// Look up expected metadata (needs to be set by prepareUpload RPC first)
 	metaVal, ok := e.pendingInboundStreams.LoadAndDelete(checksumHex)
 	if !ok {
@@ -156,7 +162,7 @@ func (e *Engine) handleIncomingPush(s network.Stream, checksumHex string, size u
 	}
 }
 
-func (e *Engine) handleIncomingPull(s network.Stream, checksumHex string) {
+func (e *Engine) handleIncomingPullPiece(s network.Stream, checksumHex string) {
 	// Send the file over the stream
 	filePath := filepath.Join(e.BlobStoreDir, "peer_"+checksumHex)
 	f, err := os.Open(filePath)
@@ -227,7 +233,7 @@ func (e *Engine) PushPiece(ctx context.Context, peerID int64, dataStream io.Read
 
 	checksumBytes, _ := hex.DecodeString(checksumHex)
 	header := make([]byte, 41)
-	header[0] = OpCodePush
+	header[0] = OpCodePushPiece
 	copy(header[1:33], checksumBytes)
 	binary.BigEndian.PutUint64(header[33:41], uint64(size))
 
@@ -355,7 +361,7 @@ func (e *Engine) PullPieceDirect(ctx context.Context, pid peer.ID, checksumHex s
 
 	checksumBytes, _ := hex.DecodeString(checksumHex)
 	header := make([]byte, 41)
-	header[0] = OpCodePull
+	header[0] = OpCodePullPiece
 	copy(header[1:33], checksumBytes)
 	// Size is ignored for Pull requests
 	
@@ -384,4 +390,77 @@ func (e *Engine) PullPieceDirect(ctx context.Context, pid peer.ID, checksumHex s
 	}
 
 	return data, nil
+}
+
+func (e *Engine) handleIncomingPushBlob(s network.Stream, checksumHex string, size uint64) {
+	metaVal, ok := e.pendingClientStreams.LoadAndDelete(checksumHex)
+	if !ok {
+		log.Printf("DataStream: unexpected push blob for %s (not in pending streams)", checksumHex)
+		return
+	}
+	meta := metaVal.(rpc.BlobMeta)
+
+	if size != uint64(meta.Size) {
+		log.Printf("DataStream: size mismatch for blob %s: expected %d, got %d", checksumHex, meta.Size, size)
+		return
+	}
+
+	data := make([]byte, size)
+	hasher := blake3.New(32, nil)
+	tee := io.TeeReader(s, hasher)
+
+	written, err := io.ReadFull(tee, data)
+	if err != nil {
+		log.Printf("DataStream: failed to stream blob %s: %v", checksumHex, err)
+		return
+	}
+
+	if uint64(written) != size {
+		log.Printf("DataStream: incomplete blob transfer for %s (got %d, expected %d)", checksumHex, written, size)
+		return
+	}
+
+	actualHash := hex.EncodeToString(hasher.Sum(nil))
+	if actualHash != checksumHex {
+		log.Printf("DataStream: checksum mismatch for blob %s (got %s)", checksumHex, actualHash)
+		return
+	}
+
+	blobs := []rpc.LocalBlobData{
+		{
+			Hash:      checksumHex,
+			Data:      data,
+			IsSpecial: meta.Special,
+		},
+	}
+	
+	if err := e.IngestBlobs(context.Background(), "insecure-local-client", blobs, false); err != nil {
+		log.Printf("DataStream: failed to ingest blob %s: %v", checksumHex, err)
+	} else if e.Verbose {
+		log.Printf("DataStream: successfully received and ingested blob %s", checksumHex)
+	}
+}
+
+func (e *Engine) handleIncomingPullBlob(s network.Stream, checksumHex string) {
+	blobs, _, err := e.GetBlobs(context.Background(), []string{checksumHex})
+	if err != nil || len(blobs) == 0 {
+		log.Printf("DataStream: failed to get blob %s for pull: %v", checksumHex, err)
+		sizeBuf := make([]byte, 8)
+		s.Write(sizeBuf)
+		return
+	}
+
+	blob := blobs[0]
+	sizeBuf := make([]byte, 8)
+	binary.BigEndian.PutUint64(sizeBuf, uint64(len(blob.Data)))
+	if _, err := s.Write(sizeBuf); err != nil {
+		log.Printf("DataStream: failed to write size header for blob pull %s: %v", checksumHex, err)
+		return
+	}
+
+	if _, err := s.Write(blob.Data); err != nil {
+		log.Printf("DataStream: failed to send blob %s: %v", checksumHex, err)
+	} else if e.Verbose {
+		log.Printf("DataStream: successfully served blob %s to client", checksumHex)
+	}
 }

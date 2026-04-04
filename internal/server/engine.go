@@ -69,6 +69,7 @@ type Engine struct {
 	wg              sync.WaitGroup
 	streamSemaphore chan struct{}
 	pendingInboundStreams sync.Map
+	pendingClientStreams  sync.Map
 	StreamBufferPool      sync.Pool
 }
 
@@ -311,12 +312,18 @@ func (e *Engine) AuthorizeAndCheckQuota(ctx context.Context, pubKeyHex string, i
 // OfferBlobs checks which of the offered blobs the server already has.
 // It returns a list of indices of the blobs that are missing and need to be uploaded.
 func (e *Engine) OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error) {
+	if e.Verbose {
+		log.Printf("Engine: Offering %d blobs for client %s...", len(blobs), clientPubKey[:16])
+	}
 	var totalSize int64
 	for _, b := range blobs {
 		totalSize += b.Size
 	}
 
 	if err := e.AuthorizeAndCheckQuota(ctx, clientPubKey, totalSize); err != nil {
+		if e.Verbose {
+			log.Printf("Engine: Offer rejected - quota error: %v", err)
+		}
 		return nil, err
 	}
 
@@ -386,7 +393,7 @@ func (e *Engine) OfferBlobs(ctx context.Context, clientPubKey string, blobs []rp
 	}
 
 	if e.Verbose {
-		log.Printf("Offered %d blobs, requesting %d missing blobs", len(blobs), len(neededIndices))
+		log.Printf("Engine: Offered %d blobs, requesting %d missing blobs", len(blobs), len(neededIndices))
 	}
 
 	return neededIndices, nil
@@ -1651,7 +1658,7 @@ func (e *Engine) ListSpecialPieces(ctx context.Context, pubKeyHex string) ([]rpc
 	var pieces []rpc.PeerShardMeta
 	for rows.Next() {
 		var p rpc.PeerShardMeta
-		if err := rows.Scan(&p.Hash, &p.Size, &p.PieceIndex, &p.ParentShardHash); err != nil {
+		if err := rows.Scan(&p.Hash, &p.Size, &p.PieceIndex, &p.ParentShardHash, &p.SequenceNumber, &p.TotalPieces); err != nil {
 			return nil, err
 		}
 		p.IsSpecial = true

@@ -2,7 +2,7 @@ package client
 
 import (
 	"context"
-	
+	"fmt"
 	"p2p-backup/internal/rpc"
 	"p2p-backup/internal/server"
 )
@@ -40,10 +40,11 @@ type ClientMeta struct {
 // RPCClient defines the interface for communicating with the backup server.
 type RPCClient interface {
 	OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([]uint32, error)
-	UploadBlobs(ctx context.Context, blobs []rpc.LocalBlobData) error
+	PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error
+	PushBlob(ctx context.Context, hashHex string, data []byte) error
 	ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
 	GetStatus(ctx context.Context) (rpc.StatusInfo, error)
-	DownloadBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, []string, error)
+	PullBlob(ctx context.Context, hashHex string) ([]byte, error)
 	DeleteBlobs(ctx context.Context, hashes []string) error
 	ListAllBlobs(ctx context.Context) ([]string, error)
 	AddPeer(ctx context.Context, address string) error
@@ -58,7 +59,8 @@ type RPCClient interface {
 type MockRPCClient struct{
 	engine interface {
 		OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error)
-		UploadBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData) error
+		PrepareUpload(ctx context.Context, clientPubKey string, metas []server.PendingStreamMeta) error
+		IngestBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData, isGC bool) error
 		ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
 		GetStatus(ctx context.Context) (rpc.StatusInfo, error)
 		GetBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, []string, error)
@@ -75,7 +77,8 @@ type MockRPCClient struct{
 
 func NewMockRPCClient(engine interface {
 	OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error)
-	UploadBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData) error
+	PrepareUpload(ctx context.Context, clientPubKey string, metas []server.PendingStreamMeta) error
+	IngestBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData, isGC bool) error
 	ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
 	GetStatus(ctx context.Context) (rpc.StatusInfo, error)
 	GetBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, []string, error)
@@ -103,11 +106,32 @@ func (m *MockRPCClient) OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([
 	return needed, nil
 }
 
-func (m *MockRPCClient) UploadBlobs(ctx context.Context, blobs []rpc.LocalBlobData) error {
+func (m *MockRPCClient) PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error {
 	if m.engine != nil {
-		return m.engine.UploadBlobs(ctx, "insecure-local-client", blobs)
+		var metas []server.PendingStreamMeta
+		// In mock, we can just pass the data directly in PushBlob
+		return m.engine.PrepareUpload(ctx, "insecure-local-client", metas)
 	}
 	return nil
+}
+
+func (m *MockRPCClient) PushBlob(ctx context.Context, hashHex string, data []byte) error {
+	if m.engine != nil {
+		blobs := []rpc.LocalBlobData{{Hash: hashHex, Data: data}}
+		return m.engine.IngestBlobs(ctx, "insecure-local-client", blobs, false)
+	}
+	return nil
+}
+
+func (m *MockRPCClient) PullBlob(ctx context.Context, hashHex string) ([]byte, error) {
+	if m.engine != nil {
+		blobs, _, err := m.engine.GetBlobs(ctx, []string{hashHex})
+		if err != nil || len(blobs) == 0 {
+			return nil, fmt.Errorf("blob not found")
+		}
+		return blobs[0].Data, nil
+	}
+	return nil, fmt.Errorf("mock error: engine not set")
 }
 
 func (m *MockRPCClient) ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error) {
@@ -122,13 +146,6 @@ func (m *MockRPCClient) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 		return m.engine.GetStatus(ctx)
 	}
 	return rpc.StatusInfo{}, nil
-}
-
-func (m *MockRPCClient) DownloadBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, []string, error) {
-	if m.engine != nil {
-		return m.engine.GetBlobs(ctx, hashes)
-	}
-	return nil, hashes, nil
 }
 
 func (m *MockRPCClient) DeleteBlobs(ctx context.Context, hashes []string) error {

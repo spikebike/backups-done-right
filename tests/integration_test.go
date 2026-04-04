@@ -628,12 +628,13 @@ func TestDisasterRecovery(t *testing.T) {
 	dbData, _ := os.ReadFile(filepath.Join(baseDir, "client.db"))
 	cipher, _ := crypto.Encrypt(key, dbData)
 	h := hex.EncodeToString(crypto.Hash(cipher))
-	rpcClient.UploadBlobs(context.Background(), []rpc.LocalBlobData{{Hash: h, Data: cipher, IsSpecial: true}})
+	rpcClient.PrepareUploadClient(context.Background(), []rpc.BlobMeta{{Hash: h, Size: int64(len(cipher)), Special: true}})
+	engine.IngestBlobs(context.Background(), "insecure-local-client", []rpc.LocalBlobData{{Hash: h, Data: cipher, IsSpecial: true}}, false)
 
 	os.Remove(filepath.Join(baseDir, "client.db"))
 	specials, _ := rpcClient.ListSpecialBlobs(context.Background())
-	blobs, _, _ := rpcClient.DownloadBlobs(context.Background(), []string{specials[0].Hash})
-	dec, _ := crypto.Decrypt(key, blobs[0].Data)
+	data, _ := rpcClient.PullBlob(context.Background(), specials[0].Hash)
+	dec, _ := crypto.Decrypt(key, data)
 	os.WriteFile(filepath.Join(baseDir, "client.db"), dec, 0644)
 
 	recDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))

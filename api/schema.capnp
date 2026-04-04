@@ -61,41 +61,40 @@ interface BackupServer @0xd606e7f1b66afc98 {
   # 1. Offer a list of blobs. Server replies with indices of blobs it needs.
   offerBlobs @0 (blobs :List(BlobMetadata)) -> (neededIndices :List(UInt32));
   
-  # 2. Upload a batch of files that the server requested.
-  uploadBlobs @1 (blobs :List(BlobData)) -> (success :Bool, error :Text);
+  # 2. Control Plane: Notify server of upcoming out-of-band blob streams.
+  prepareUploadClient @1 (blobs :List(BlobMetadata)) -> (success :Bool, error :Text);
   
   # 3. Disaster Recovery: Get a list of all "special" blobs (the encrypted SQLite DBs).
   listSpecialBlobs @2 () -> (specialBlobs :List(BlobMetadata));
   
-  # 4. Restore: Download specific encrypted blobs by their checksums.
-  downloadBlobs @3 (checksums :List(Data)) -> (blobs :List(BlobData), missing :List(Data));
+  # @3 (downloadBlobs) removed: handled out-of-band via raw stream
 
   # 5. Monitoring: Get current server status and swarm replication metrics.
-  getStatus @4 () -> (status :LocalServerStatus);
+  getStatus @3 () -> (status :LocalServerStatus);
 
   # 6. Garbage Collection: Mark specific blobs as deleted (to be purged after retention period).
-  deleteBlobs @5 (checksums :List(Data)) -> (success :Bool, error :Text);
+  deleteBlobs @4 (checksums :List(Data)) -> (success :Bool, error :Text);
 
   # 7. Garbage Collection: Get a list of all blob hashes currently stored for this client.
-  listAllBlobs @6 () -> (checksums :List(Data));
+  listAllBlobs @5 () -> (checksums :List(Data));
 
   # 8. Manage Peers: Add a new peer by IP address/port.
-  addPeer @7 (address :Text) -> (success :Bool, error :Text);
+  addPeer @6 (address :Text) -> (success :Bool, error :Text);
 
   # 9. Manage Peers: Set peer status (e.g. trusted/blocked) and storage limit.
-  updatePeer @8 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
+  updatePeer @7 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
 
   # 10. Manage Peers: List all active peers.
-  listPeers @9 () -> (peers :List(PeerInfo));
+  listPeers @8 () -> (peers :List(PeerInfo));
 
   # 11. Manage Clients: List all known clients.
-  listClients @10 () -> (clients :List(ClientInfo));
+  listClients @9 () -> (clients :List(ClientInfo));
 
   # 12. Manage Clients: Update client status and quota.
-  updateClient @11 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
+  updateClient @10 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
 
   # 13. Manage Clients: Add a new client by Public Key.
-  addClient @12 (publicKey :Text, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
+  addClient @11 (publicKey :Text, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
 }
 
 # Metadata for an erasure-coded shard sent to a peer

@@ -69,13 +69,20 @@ type CryptoPool struct {
 }
 
 func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool, compress bool, stats *BackupStats) *CryptoPool {
-	poolSize := cap(uploadChan) + numWorkers
-	if poolSize <= 0 {
-		poolSize = 100
+	// The pool must be large enough to handle the uploader's batch size plus active worker buffers.
+	// We'll default to a safe multiplier.
+	poolSize := 250 // Sufficient for 2 uploader workers with batch size 100
+	if numWorkers*4 > poolSize {
+		poolSize = numWorkers * 4
 	}
+	
 	cipherBufs := make(chan []byte, poolSize)
 	for i := 0; i < poolSize; i++ {
 		cipherBufs <- make([]byte, 0, defaultBlockSize+cipherOverhead+1024)
+	}
+
+	if verbose {
+		log.Printf("CryptoPool: Initialized with %d workers and %d buffers", numWorkers, poolSize)
 	}
 
 	return &CryptoPool{
@@ -114,8 +121,13 @@ func (p *CryptoPool) Wait() {
 }
 
 func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID int) {
-	defer wg.Done()
-	
+	defer func() {
+		if p.Verbose {
+			log.Printf("[Worker %d] Thread exiting.", workerID)
+		}
+		wg.Done()
+	}()
+
 	zstdEncoder, _ := zstd.NewWriter(nil)
 	defer zstdEncoder.Close()
 
@@ -123,7 +135,10 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 	compressBuf := make([]byte, 0, defaultBlockSize)
 
 	for job := range jobChan {
-		err := p.processFile(job, zstdEncoder, &compressBuf)
+		if p.Verbose {
+			log.Printf("[Worker %d] Processing job: %s/%s", workerID, job.DirPath, job.FileName)
+		}
+		err := p.processFile(job, zstdEncoder, &compressBuf, workerID)
 		if err != nil {
 			log.Printf("[Worker %d] Error processing %s/%s: %v", workerID, job.DirPath, job.FileName, err)
 		} else {
@@ -133,8 +148,7 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 		}
 	}
 }
-
-func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compressBuf *[]byte) error {
+func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compressBuf *[]byte, workerID int) error {
 	fullPath := filepath.Join(job.DirPath, job.FileName)
 
 	if job.Deleted {
@@ -231,6 +245,11 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 				}
 			} else {
 				// We own this hash for this session — encrypt it
+				if p.Verbose {
+					if len(p.cipherBufs) == 0 {
+						log.Printf("[Worker %d] Buffer pool exhausted, waiting for free buffer...", workerID)
+					}
+				}
 				cipherBuf := <-p.cipherBufs
 				ciphertext, encErr := crypto.EncryptTo(p.Key, chunk, cipherBuf)
 				if encErr != nil {

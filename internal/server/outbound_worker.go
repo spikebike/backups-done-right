@@ -87,16 +87,25 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 	}
 	rows.Close()
 
+	peerBatches := make(map[int64][]QueueJob)
+	
+	tx, err := e.DB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("syncMirroredShards: failed to start tx: %v", err)
+		return
+	}
+	defer tx.Rollback()
+
 	for _, s := range mirrored {
 		// For each mirrored shard, find peers who don't have it yet.
 		query := `
-			SELECT p.id, p.ip_address, p.public_key 
+			SELECT p.id
 			FROM peers p
 			LEFT JOIN outbound_pieces op ON p.id = op.peer_id AND op.shard_id = ? AND op.piece_index = 0
 			WHERE p.status != 'blocked'
 			  AND (op.shard_id IS NULL OR (op.status != 'uploaded' AND op.status != 'pending'))
 		`
-		pRows, err := e.DB.QueryContext(ctx, query, s.id)
+		pRows, err := tx.QueryContext(ctx, query, s.id)
 		if err != nil {
 			continue
 		}
@@ -118,14 +127,25 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 		var peers []int64
 		for pRows.Next() {
 			var peerID int64
-			var peerAddr, peerPubKey string
-			if err := pRows.Scan(&peerID, &peerAddr, &peerPubKey); err == nil {
+			if err := pRows.Scan(&peerID); err == nil {
 				peers = append(peers, peerID)
 			}
 		}
 		pRows.Close()
 
 		for _, peerID := range peers {
+			// Record pending status
+			_, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, 0, ?, 'pending')", s.id, peerID)
+			if err != nil {
+				continue
+			}
+			
+			// Update outbound storage tracking
+			_, err = tx.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = outbound_storage_size + ? WHERE id = ?", size, peerID)
+			if err != nil {
+				continue
+			}
+
 			job := QueueJob{
 				ShardID:         s.id,
 				PieceIndex:      0,
@@ -137,9 +157,25 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 				Sequence:        s.seq,
 				TotalPieces:     s.total,
 			}
-			e.performUploadBatch(ctx, peerID, []QueueJob{job})
+			peerBatches[peerID] = append(peerBatches[peerID], job)
 		}
 	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("syncMirroredShards: failed to commit tx: %v", err)
+		return
+	}
+
+	// Launch parallel uploads
+	var wg sync.WaitGroup
+	for peerID, batch := range peerBatches {
+		wg.Add(1)
+		go func(pID int64, b []QueueJob) {
+			defer wg.Done()
+			e.performUploadBatch(ctx, pID, b)
+		}(peerID, batch)
+	}
+	wg.Wait()
 }
 
 func (e *Engine) processQueue(ctx context.Context) {
@@ -384,6 +420,25 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 	}
 }
 
+type ZeroReader struct {
+	Remaining int64
+}
+
+func (r *ZeroReader) Read(p []byte) (n int, err error) {
+	if r.Remaining <= 0 {
+		return 0, io.EOF
+	}
+	toRead := int64(len(p))
+	if toRead > r.Remaining {
+		toRead = r.Remaining
+	}
+	for i := int64(0); i < toRead; i++ {
+		p[i] = 0
+	}
+	r.Remaining -= toRead
+	return int(toRead), nil
+}
+
 func (e *Engine) PushPieceDirectStreamed(ctx context.Context, peerID int64, job QueueJob) error {
 	f, err := os.Open(job.FilePath)
 	if err != nil {
@@ -395,13 +450,12 @@ func (e *Engine) PushPieceDirectStreamed(ctx context.Context, peerID int64, job 
 	targetPieceSize := e.ShardSize / int64(e.DataShards)
 	
 	var reader io.Reader = f
-	if job.IsMirrored && int64(job.Size) == targetPieceSize {
+	if job.IsMirrored && job.Size == targetPieceSize {
 	    // If the file is physically smaller but job.Size is maxed (due to padding in syncMirrored), we must pad the stream.
 	    stat, _ := f.Stat()
 	    if stat.Size() < targetPieceSize {
-	        padding := make([]byte, targetPieceSize - stat.Size())
-	        // simple multi-reader to append zeros dynamically during stream to avoid allocations
-	        reader = io.MultiReader(f, strings.NewReader(string(padding)))
+	        // Use ZeroReader to append zeros dynamically during stream to avoid massive allocations
+	        reader = io.MultiReader(f, &ZeroReader{Remaining: targetPieceSize - stat.Size()})
 	    }
 	}
 
@@ -420,7 +474,10 @@ func (e *Engine) failJob(ctx context.Context, peerID int64, job QueueJob) {
 }
 
 func (e *Engine) finalizeJobSuccess(ctx context.Context, peerID int64, job QueueJob) {
-	e.DB.ExecContext(ctx, "UPDATE outbound_pieces SET status = 'uploaded' WHERE shard_id = ? AND piece_index = ? AND peer_id = ?", job.ShardID, job.PieceIndex, peerID)
+	_, err := e.DB.ExecContext(ctx, "INSERT OR REPLACE INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, ?, ?, 'uploaded')", job.ShardID, job.PieceIndex, peerID)
+	if err != nil {
+		log.Printf("OutboundWorker: failed to finalize success in DB: %v", err)
+	}
 	e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'ok')", peerID, job.ShardID, job.PieceIndex)
 	
 	if e.ChallengesPerPiece > 0 {

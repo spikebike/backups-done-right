@@ -73,19 +73,32 @@ func (u *Uploader) offerWorker(workerID int) {
 	defer u.wg.Done()
 
 	var batch []UploadJob
+	ticker := time.NewTicker(2 * time.Second) // Flush partial batches every 2 seconds
+	defer ticker.Stop()
 
-	for job := range u.UploadChan {
-		batch = append(batch, job)
-
-		if len(batch) >= u.BatchUploadSize {
-			u.processOfferBatch(batch, workerID)
-			batch = nil // Reset batch
+	for {
+		select {
+		case job, ok := <-u.UploadChan:
+			if !ok {
+				if len(batch) > 0 {
+					u.processOfferBatch(batch, workerID)
+				}
+				return
+			}
+			batch = append(batch, job)
+			if len(batch) >= u.BatchUploadSize {
+				u.processOfferBatch(batch, workerID)
+				batch = nil
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				if u.Verbose {
+					log.Printf("[Offer Pipeline %d] Periodic flush of %d jobs", workerID, len(batch))
+				}
+				u.processOfferBatch(batch, workerID)
+				batch = nil
+			}
 		}
-	}
-
-	// Process remaining jobs in the final batch
-	if len(batch) > 0 {
-		u.processOfferBatch(batch, workerID)
 	}
 }
 
@@ -93,20 +106,34 @@ func (u *Uploader) uploadWorker(workerID int) {
 	defer u.uploadWg.Done()
 
 	for pending := range u.uploadPipelineChan {
-		if len(pending.Blobs) > 0 {
-			if u.FakeUpload {
-				if u.Verbose {
-					log.Printf("[Upload Pump %d] Fake upload: Pretending to stream %d blobs", workerID, len(pending.Blobs))
-				}
+		if u.FakeUpload {
+			if u.Verbose {
+				log.Printf("[Upload Pump %d] Fake upload: Pretending to stream %d blobs", workerID, len(pending.Blobs))
+			}
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // allow longer for stream
+
+			var blobsMeta []rpc.BlobMeta
+			for _, blob := range pending.Blobs {
+				blobsMeta = append(blobsMeta, rpc.BlobMeta{
+					Hash:    blob.Hash,
+					Size:    int64(len(blob.Data)),
+					Special: blob.IsSpecial,
+				})
+			}
+
+			err := u.RPCClient.PrepareUploadClient(ctx, blobsMeta)
+			if err != nil {
+				log.Printf("[Upload Pump %d] Failed to prepare upload: %v", workerID, err)
 			} else {
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // allow longer for stream
-				err := u.RPCClient.UploadBlobs(ctx, pending.Blobs)
-				cancel()
-				
-				if err != nil {
-					log.Printf("[Upload Pump %d] Failed to upload stream to server: %v", workerID, err)
-					// Note: On failure, we might lose DB sync status for this batch. Production versions should retry.
-				} else {
+				for _, blob := range pending.Blobs {
+					err = u.RPCClient.PushBlob(ctx, blob.Hash, blob.Data)
+					if err != nil {
+						log.Printf("[Upload Pump %d] Failed to push blob %s: %v", workerID, blob.Hash, err)
+						break
+					}
+				}
+				if err == nil {
 					// Track upload stats
 					if u.Stats != nil {
 						for _, blob := range pending.Blobs {
@@ -121,6 +148,7 @@ func (u *Uploader) uploadWorker(workerID int) {
 					}
 				}
 			}
+			cancel()
 		}
 
 		// Always release buffers back to pool
@@ -171,7 +199,13 @@ func (u *Uploader) processOfferBatch(batch []UploadJob, workerID int) {
 			neededIndices[i] = uint32(i)
 		}
 	} else {
+		if u.Verbose {
+			log.Printf("[Offer Pipeline %d] Sending OfferBlobs RPC for %d blobs...", workerID, len(blobsToOffer))
+		}
 		neededIndices, err = u.RPCClient.OfferBlobs(ctx, blobsToOffer)
+		if u.Verbose {
+			log.Printf("[Offer Pipeline %d] OfferBlobs RPC returned (err=%v)", workerID, err)
+		}
 		if err != nil {
 			log.Printf("[Offer Pipeline %d] Failed to offer blobs to server: %v", workerID, err)
 			releaseBatch(batch) // Abort, release all back to pool.

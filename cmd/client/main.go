@@ -687,22 +687,37 @@ func main() {
 		// This will block until the crawler finishes walking all directories
 		crawler.Start(backupID)
 
+		if verbose {
+			log.Println("Crawler finished. Waiting for CryptoPool...")
+		}
+
 		// Wait for CryptoPool to finish processing all jobs
 		cryptoPool.Wait()
 
 		if verbose {
-			log.Println("Crypto workers finished. Closing upload channel...")
+			log.Println("Crypto workers finished. Closing upload and archive channels...")
 		}
 
 		// Close uploadChan to signal Uploader that no more uploads are coming
 		close(uploadChan)
 		close(archiveChan)
 
+		if verbose {
+			log.Println("Waiting for Uploader to finish...")
+		}
+
 		// Wait for Uploader to finish uploading all files
 		uploader.Wait()
-		
+
+		if verbose {
+			log.Println("Uploader finished. Waiting for StateManager...")
+		}
+
 		stateManager.Wait()
 
+		if verbose {
+			log.Println("StateManager finished.")
+		}
 		// Print performance summary
 		stats.PrintSummary()
 		
@@ -778,17 +793,31 @@ func uploadMetadata(ctx context.Context, filePaths []string, key []byte, rpcClie
 
 	// 2. Filter blobs to only those the server needs
 	if len(needed) > 0 {
-		var finalUpload []rpc.LocalBlobData
+		var finalUploadMeta []rpc.BlobMeta
 		for _, idx := range needed {
-			finalUpload = append(finalUpload, blobsToUpload[idx])
+			b := blobsToUpload[idx]
+			finalUploadMeta = append(finalUploadMeta, rpc.BlobMeta{
+				Hash:    b.Hash,
+				Size:    int64(len(b.Data)),
+				Special: true,
+			})
 		}
 
-		err = rpcClient.UploadBlobs(ctx, finalUpload)
+		err = rpcClient.PrepareUploadClient(ctx, finalUploadMeta)
 		if err != nil {
-			return fmt.Errorf("upload metadata: %w", err)
+			return fmt.Errorf("prepare upload metadata: %w", err)
 		}
+
+		for _, idx := range needed {
+			b := blobsToUpload[idx]
+			err = rpcClient.PushBlob(ctx, b.Hash, b.Data)
+			if err != nil {
+				return fmt.Errorf("push metadata blob: %w", err)
+			}
+		}
+
 		if verbose {
-			log.Printf("Successfully uploaded %d metadata files.", len(finalUpload))
+			log.Printf("Successfully uploaded %d metadata files.", len(needed))
 		}
 	} else if verbose {
 		log.Println("Metadata already up to date on server.")

@@ -725,23 +725,23 @@ func (c BackupServer) OfferBlobs(ctx context.Context, params func(BackupServer_o
 
 }
 
-func (c BackupServer) UploadBlobs(ctx context.Context, params func(BackupServer_uploadBlobs_Params) error) (BackupServer_uploadBlobs_Results_Future, capnp.ReleaseFunc) {
+func (c BackupServer) PrepareUploadClient(ctx context.Context, params func(BackupServer_prepareUploadClient_Params) error) (BackupServer_prepareUploadClient_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      1,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "uploadBlobs",
+			MethodName:    "prepareUploadClient",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_uploadBlobs_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_prepareUploadClient_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return BackupServer_uploadBlobs_Results_Future{Future: ans.Future()}, release
+	return BackupServer_prepareUploadClient_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -765,32 +765,12 @@ func (c BackupServer) ListSpecialBlobs(ctx context.Context, params func(BackupSe
 
 }
 
-func (c BackupServer) DownloadBlobs(ctx context.Context, params func(BackupServer_downloadBlobs_Params) error) (BackupServer_downloadBlobs_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      3,
-			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "downloadBlobs",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_downloadBlobs_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return BackupServer_downloadBlobs_Results_Future{Future: ans.Future()}, release
-
-}
-
 func (c BackupServer) GetStatus(ctx context.Context, params func(BackupServer_getStatus_Params) error) (BackupServer_getStatus_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      4,
+			MethodID:      3,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "getStatus",
 		},
@@ -810,7 +790,7 @@ func (c BackupServer) DeleteBlobs(ctx context.Context, params func(BackupServer_
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      5,
+			MethodID:      4,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "deleteBlobs",
 		},
@@ -830,7 +810,7 @@ func (c BackupServer) ListAllBlobs(ctx context.Context, params func(BackupServer
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      6,
+			MethodID:      5,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listAllBlobs",
 		},
@@ -850,7 +830,7 @@ func (c BackupServer) AddPeer(ctx context.Context, params func(BackupServer_addP
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      7,
+			MethodID:      6,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addPeer",
 		},
@@ -870,7 +850,7 @@ func (c BackupServer) UpdatePeer(ctx context.Context, params func(BackupServer_u
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      8,
+			MethodID:      7,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updatePeer",
 		},
@@ -890,7 +870,7 @@ func (c BackupServer) ListPeers(ctx context.Context, params func(BackupServer_li
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      9,
+			MethodID:      8,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listPeers",
 		},
@@ -910,7 +890,7 @@ func (c BackupServer) ListClients(ctx context.Context, params func(BackupServer_
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      10,
+			MethodID:      9,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listClients",
 		},
@@ -930,7 +910,7 @@ func (c BackupServer) UpdateClient(ctx context.Context, params func(BackupServer
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      11,
+			MethodID:      10,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updateClient",
 		},
@@ -950,7 +930,7 @@ func (c BackupServer) AddClient(ctx context.Context, params func(BackupServer_ad
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      12,
+			MethodID:      11,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addClient",
 		},
@@ -1040,11 +1020,9 @@ func (c BackupServer) GetFlowLimiter() fc.FlowLimiter {
 type BackupServer_Server interface {
 	OfferBlobs(context.Context, BackupServer_offerBlobs) error
 
-	UploadBlobs(context.Context, BackupServer_uploadBlobs) error
+	PrepareUploadClient(context.Context, BackupServer_prepareUploadClient) error
 
 	ListSpecialBlobs(context.Context, BackupServer_listSpecialBlobs) error
-
-	DownloadBlobs(context.Context, BackupServer_downloadBlobs) error
 
 	GetStatus(context.Context, BackupServer_getStatus) error
 
@@ -1081,7 +1059,7 @@ func BackupServer_ServerToClient(s BackupServer_Server) BackupServer {
 // This can be used to create a more complicated Server.
 func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 13)
+		methods = make([]server.Method, 0, 12)
 	}
 
 	methods = append(methods, server.Method{
@@ -1101,10 +1079,10 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      1,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "uploadBlobs",
+			MethodName:    "prepareUploadClient",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.UploadBlobs(ctx, BackupServer_uploadBlobs{call})
+			return s.PrepareUploadClient(ctx, BackupServer_prepareUploadClient{call})
 		},
 	})
 
@@ -1125,18 +1103,6 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      3,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "downloadBlobs",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.DownloadBlobs(ctx, BackupServer_downloadBlobs{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      4,
-			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "getStatus",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
@@ -1147,7 +1113,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      5,
+			MethodID:      4,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "deleteBlobs",
 		},
@@ -1159,7 +1125,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      6,
+			MethodID:      5,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listAllBlobs",
 		},
@@ -1171,7 +1137,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      7,
+			MethodID:      6,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addPeer",
 		},
@@ -1183,7 +1149,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      8,
+			MethodID:      7,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updatePeer",
 		},
@@ -1195,7 +1161,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      9,
+			MethodID:      8,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listPeers",
 		},
@@ -1207,7 +1173,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      10,
+			MethodID:      9,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listClients",
 		},
@@ -1219,7 +1185,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      11,
+			MethodID:      10,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updateClient",
 		},
@@ -1231,7 +1197,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      12,
+			MethodID:      11,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addClient",
 		},
@@ -1260,21 +1226,21 @@ func (c BackupServer_offerBlobs) AllocResults() (BackupServer_offerBlobs_Results
 	return BackupServer_offerBlobs_Results(r), err
 }
 
-// BackupServer_uploadBlobs holds the state for a server call to BackupServer.uploadBlobs.
+// BackupServer_prepareUploadClient holds the state for a server call to BackupServer.prepareUploadClient.
 // See server.Call for documentation.
-type BackupServer_uploadBlobs struct {
+type BackupServer_prepareUploadClient struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c BackupServer_uploadBlobs) Args() BackupServer_uploadBlobs_Params {
-	return BackupServer_uploadBlobs_Params(c.Call.Args())
+func (c BackupServer_prepareUploadClient) Args() BackupServer_prepareUploadClient_Params {
+	return BackupServer_prepareUploadClient_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c BackupServer_uploadBlobs) AllocResults() (BackupServer_uploadBlobs_Results, error) {
+func (c BackupServer_prepareUploadClient) AllocResults() (BackupServer_prepareUploadClient_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_uploadBlobs_Results(r), err
+	return BackupServer_prepareUploadClient_Results(r), err
 }
 
 // BackupServer_listSpecialBlobs holds the state for a server call to BackupServer.listSpecialBlobs.
@@ -1292,23 +1258,6 @@ func (c BackupServer_listSpecialBlobs) Args() BackupServer_listSpecialBlobs_Para
 func (c BackupServer_listSpecialBlobs) AllocResults() (BackupServer_listSpecialBlobs_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
 	return BackupServer_listSpecialBlobs_Results(r), err
-}
-
-// BackupServer_downloadBlobs holds the state for a server call to BackupServer.downloadBlobs.
-// See server.Call for documentation.
-type BackupServer_downloadBlobs struct {
-	*server.Call
-}
-
-// Args returns the call's arguments.
-func (c BackupServer_downloadBlobs) Args() BackupServer_downloadBlobs_Params {
-	return BackupServer_downloadBlobs_Params(c.Call.Args())
-}
-
-// AllocResults allocates the results struct.
-func (c BackupServer_downloadBlobs) AllocResults() (BackupServer_downloadBlobs_Results, error) {
-	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return BackupServer_downloadBlobs_Results(r), err
 }
 
 // BackupServer_getStatus holds the state for a server call to BackupServer.getStatus.
@@ -1649,182 +1598,182 @@ func (f BackupServer_offerBlobs_Results_Future) Struct() (BackupServer_offerBlob
 	return BackupServer_offerBlobs_Results(p.Struct()), err
 }
 
-type BackupServer_uploadBlobs_Params capnp.Struct
+type BackupServer_prepareUploadClient_Params capnp.Struct
 
-// BackupServer_uploadBlobs_Params_TypeID is the unique identifier for the type BackupServer_uploadBlobs_Params.
-const BackupServer_uploadBlobs_Params_TypeID = 0xac7e34ae1fe5a13b
+// BackupServer_prepareUploadClient_Params_TypeID is the unique identifier for the type BackupServer_prepareUploadClient_Params.
+const BackupServer_prepareUploadClient_Params_TypeID = 0xac7e34ae1fe5a13b
 
-func NewBackupServer_uploadBlobs_Params(s *capnp.Segment) (BackupServer_uploadBlobs_Params, error) {
+func NewBackupServer_prepareUploadClient_Params(s *capnp.Segment) (BackupServer_prepareUploadClient_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_uploadBlobs_Params(st), err
+	return BackupServer_prepareUploadClient_Params(st), err
 }
 
-func NewRootBackupServer_uploadBlobs_Params(s *capnp.Segment) (BackupServer_uploadBlobs_Params, error) {
+func NewRootBackupServer_prepareUploadClient_Params(s *capnp.Segment) (BackupServer_prepareUploadClient_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_uploadBlobs_Params(st), err
+	return BackupServer_prepareUploadClient_Params(st), err
 }
 
-func ReadRootBackupServer_uploadBlobs_Params(msg *capnp.Message) (BackupServer_uploadBlobs_Params, error) {
+func ReadRootBackupServer_prepareUploadClient_Params(msg *capnp.Message) (BackupServer_prepareUploadClient_Params, error) {
 	root, err := msg.Root()
-	return BackupServer_uploadBlobs_Params(root.Struct()), err
+	return BackupServer_prepareUploadClient_Params(root.Struct()), err
 }
 
-func (s BackupServer_uploadBlobs_Params) String() string {
+func (s BackupServer_prepareUploadClient_Params) String() string {
 	str, _ := text.Marshal(0xac7e34ae1fe5a13b, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_uploadBlobs_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_prepareUploadClient_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_uploadBlobs_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_uploadBlobs_Params {
-	return BackupServer_uploadBlobs_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_prepareUploadClient_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_prepareUploadClient_Params {
+	return BackupServer_prepareUploadClient_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_uploadBlobs_Params) ToPtr() capnp.Ptr {
+func (s BackupServer_prepareUploadClient_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_uploadBlobs_Params) IsValid() bool {
+func (s BackupServer_prepareUploadClient_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_uploadBlobs_Params) Message() *capnp.Message {
+func (s BackupServer_prepareUploadClient_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_uploadBlobs_Params) Segment() *capnp.Segment {
+func (s BackupServer_prepareUploadClient_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BackupServer_uploadBlobs_Params) Blobs() (BlobData_List, error) {
+func (s BackupServer_prepareUploadClient_Params) Blobs() (BlobMetadata_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return BlobData_List(p.List()), err
+	return BlobMetadata_List(p.List()), err
 }
 
-func (s BackupServer_uploadBlobs_Params) HasBlobs() bool {
+func (s BackupServer_prepareUploadClient_Params) HasBlobs() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_uploadBlobs_Params) SetBlobs(v BlobData_List) error {
+func (s BackupServer_prepareUploadClient_Params) SetBlobs(v BlobMetadata_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewBlobs sets the blobs field to a newly
-// allocated BlobData_List, preferring placement in s's segment.
-func (s BackupServer_uploadBlobs_Params) NewBlobs(n int32) (BlobData_List, error) {
-	l, err := NewBlobData_List(capnp.Struct(s).Segment(), n)
+// allocated BlobMetadata_List, preferring placement in s's segment.
+func (s BackupServer_prepareUploadClient_Params) NewBlobs(n int32) (BlobMetadata_List, error) {
+	l, err := NewBlobMetadata_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return BlobData_List{}, err
+		return BlobMetadata_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// BackupServer_uploadBlobs_Params_List is a list of BackupServer_uploadBlobs_Params.
-type BackupServer_uploadBlobs_Params_List = capnp.StructList[BackupServer_uploadBlobs_Params]
+// BackupServer_prepareUploadClient_Params_List is a list of BackupServer_prepareUploadClient_Params.
+type BackupServer_prepareUploadClient_Params_List = capnp.StructList[BackupServer_prepareUploadClient_Params]
 
-// NewBackupServer_uploadBlobs_Params creates a new list of BackupServer_uploadBlobs_Params.
-func NewBackupServer_uploadBlobs_Params_List(s *capnp.Segment, sz int32) (BackupServer_uploadBlobs_Params_List, error) {
+// NewBackupServer_prepareUploadClient_Params creates a new list of BackupServer_prepareUploadClient_Params.
+func NewBackupServer_prepareUploadClient_Params_List(s *capnp.Segment, sz int32) (BackupServer_prepareUploadClient_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_uploadBlobs_Params](l), err
+	return capnp.StructList[BackupServer_prepareUploadClient_Params](l), err
 }
 
-// BackupServer_uploadBlobs_Params_Future is a wrapper for a BackupServer_uploadBlobs_Params promised by a client call.
-type BackupServer_uploadBlobs_Params_Future struct{ *capnp.Future }
+// BackupServer_prepareUploadClient_Params_Future is a wrapper for a BackupServer_prepareUploadClient_Params promised by a client call.
+type BackupServer_prepareUploadClient_Params_Future struct{ *capnp.Future }
 
-func (f BackupServer_uploadBlobs_Params_Future) Struct() (BackupServer_uploadBlobs_Params, error) {
+func (f BackupServer_prepareUploadClient_Params_Future) Struct() (BackupServer_prepareUploadClient_Params, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_uploadBlobs_Params(p.Struct()), err
+	return BackupServer_prepareUploadClient_Params(p.Struct()), err
 }
 
-type BackupServer_uploadBlobs_Results capnp.Struct
+type BackupServer_prepareUploadClient_Results capnp.Struct
 
-// BackupServer_uploadBlobs_Results_TypeID is the unique identifier for the type BackupServer_uploadBlobs_Results.
-const BackupServer_uploadBlobs_Results_TypeID = 0x81057c224d90c916
+// BackupServer_prepareUploadClient_Results_TypeID is the unique identifier for the type BackupServer_prepareUploadClient_Results.
+const BackupServer_prepareUploadClient_Results_TypeID = 0x81057c224d90c916
 
-func NewBackupServer_uploadBlobs_Results(s *capnp.Segment) (BackupServer_uploadBlobs_Results, error) {
+func NewBackupServer_prepareUploadClient_Results(s *capnp.Segment) (BackupServer_prepareUploadClient_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_uploadBlobs_Results(st), err
+	return BackupServer_prepareUploadClient_Results(st), err
 }
 
-func NewRootBackupServer_uploadBlobs_Results(s *capnp.Segment) (BackupServer_uploadBlobs_Results, error) {
+func NewRootBackupServer_prepareUploadClient_Results(s *capnp.Segment) (BackupServer_prepareUploadClient_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_uploadBlobs_Results(st), err
+	return BackupServer_prepareUploadClient_Results(st), err
 }
 
-func ReadRootBackupServer_uploadBlobs_Results(msg *capnp.Message) (BackupServer_uploadBlobs_Results, error) {
+func ReadRootBackupServer_prepareUploadClient_Results(msg *capnp.Message) (BackupServer_prepareUploadClient_Results, error) {
 	root, err := msg.Root()
-	return BackupServer_uploadBlobs_Results(root.Struct()), err
+	return BackupServer_prepareUploadClient_Results(root.Struct()), err
 }
 
-func (s BackupServer_uploadBlobs_Results) String() string {
+func (s BackupServer_prepareUploadClient_Results) String() string {
 	str, _ := text.Marshal(0x81057c224d90c916, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_uploadBlobs_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_prepareUploadClient_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_uploadBlobs_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_uploadBlobs_Results {
-	return BackupServer_uploadBlobs_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_prepareUploadClient_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_prepareUploadClient_Results {
+	return BackupServer_prepareUploadClient_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_uploadBlobs_Results) ToPtr() capnp.Ptr {
+func (s BackupServer_prepareUploadClient_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_uploadBlobs_Results) IsValid() bool {
+func (s BackupServer_prepareUploadClient_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_uploadBlobs_Results) Message() *capnp.Message {
+func (s BackupServer_prepareUploadClient_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_uploadBlobs_Results) Segment() *capnp.Segment {
+func (s BackupServer_prepareUploadClient_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BackupServer_uploadBlobs_Results) Success() bool {
+func (s BackupServer_prepareUploadClient_Results) Success() bool {
 	return capnp.Struct(s).Bit(0)
 }
 
-func (s BackupServer_uploadBlobs_Results) SetSuccess(v bool) {
+func (s BackupServer_prepareUploadClient_Results) SetSuccess(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
-func (s BackupServer_uploadBlobs_Results) Error() (string, error) {
+func (s BackupServer_prepareUploadClient_Results) Error() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.Text(), err
 }
 
-func (s BackupServer_uploadBlobs_Results) HasError() bool {
+func (s BackupServer_prepareUploadClient_Results) HasError() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_uploadBlobs_Results) ErrorBytes() ([]byte, error) {
+func (s BackupServer_prepareUploadClient_Results) ErrorBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.TextBytes(), err
 }
 
-func (s BackupServer_uploadBlobs_Results) SetError(v string) error {
+func (s BackupServer_prepareUploadClient_Results) SetError(v string) error {
 	return capnp.Struct(s).SetText(0, v)
 }
 
-// BackupServer_uploadBlobs_Results_List is a list of BackupServer_uploadBlobs_Results.
-type BackupServer_uploadBlobs_Results_List = capnp.StructList[BackupServer_uploadBlobs_Results]
+// BackupServer_prepareUploadClient_Results_List is a list of BackupServer_prepareUploadClient_Results.
+type BackupServer_prepareUploadClient_Results_List = capnp.StructList[BackupServer_prepareUploadClient_Results]
 
-// NewBackupServer_uploadBlobs_Results creates a new list of BackupServer_uploadBlobs_Results.
-func NewBackupServer_uploadBlobs_Results_List(s *capnp.Segment, sz int32) (BackupServer_uploadBlobs_Results_List, error) {
+// NewBackupServer_prepareUploadClient_Results creates a new list of BackupServer_prepareUploadClient_Results.
+func NewBackupServer_prepareUploadClient_Results_List(s *capnp.Segment, sz int32) (BackupServer_prepareUploadClient_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_uploadBlobs_Results](l), err
+	return capnp.StructList[BackupServer_prepareUploadClient_Results](l), err
 }
 
-// BackupServer_uploadBlobs_Results_Future is a wrapper for a BackupServer_uploadBlobs_Results promised by a client call.
-type BackupServer_uploadBlobs_Results_Future struct{ *capnp.Future }
+// BackupServer_prepareUploadClient_Results_Future is a wrapper for a BackupServer_prepareUploadClient_Results promised by a client call.
+type BackupServer_prepareUploadClient_Results_Future struct{ *capnp.Future }
 
-func (f BackupServer_uploadBlobs_Results_Future) Struct() (BackupServer_uploadBlobs_Results, error) {
+func (f BackupServer_prepareUploadClient_Results_Future) Struct() (BackupServer_prepareUploadClient_Results, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_uploadBlobs_Results(p.Struct()), err
+	return BackupServer_prepareUploadClient_Results(p.Struct()), err
 }
 
 type BackupServer_listSpecialBlobs_Params capnp.Struct
@@ -1980,209 +1929,10 @@ func (f BackupServer_listSpecialBlobs_Results_Future) Struct() (BackupServer_lis
 	return BackupServer_listSpecialBlobs_Results(p.Struct()), err
 }
 
-type BackupServer_downloadBlobs_Params capnp.Struct
-
-// BackupServer_downloadBlobs_Params_TypeID is the unique identifier for the type BackupServer_downloadBlobs_Params.
-const BackupServer_downloadBlobs_Params_TypeID = 0xe80d978164354d81
-
-func NewBackupServer_downloadBlobs_Params(s *capnp.Segment) (BackupServer_downloadBlobs_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_downloadBlobs_Params(st), err
-}
-
-func NewRootBackupServer_downloadBlobs_Params(s *capnp.Segment) (BackupServer_downloadBlobs_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_downloadBlobs_Params(st), err
-}
-
-func ReadRootBackupServer_downloadBlobs_Params(msg *capnp.Message) (BackupServer_downloadBlobs_Params, error) {
-	root, err := msg.Root()
-	return BackupServer_downloadBlobs_Params(root.Struct()), err
-}
-
-func (s BackupServer_downloadBlobs_Params) String() string {
-	str, _ := text.Marshal(0xe80d978164354d81, capnp.Struct(s))
-	return str
-}
-
-func (s BackupServer_downloadBlobs_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (BackupServer_downloadBlobs_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_downloadBlobs_Params {
-	return BackupServer_downloadBlobs_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s BackupServer_downloadBlobs_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s BackupServer_downloadBlobs_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s BackupServer_downloadBlobs_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s BackupServer_downloadBlobs_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s BackupServer_downloadBlobs_Params) Checksums() (capnp.DataList, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.DataList(p.List()), err
-}
-
-func (s BackupServer_downloadBlobs_Params) HasChecksums() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BackupServer_downloadBlobs_Params) SetChecksums(v capnp.DataList) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewChecksums sets the checksums field to a newly
-// allocated capnp.DataList, preferring placement in s's segment.
-func (s BackupServer_downloadBlobs_Params) NewChecksums(n int32) (capnp.DataList, error) {
-	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.DataList{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-
-// BackupServer_downloadBlobs_Params_List is a list of BackupServer_downloadBlobs_Params.
-type BackupServer_downloadBlobs_Params_List = capnp.StructList[BackupServer_downloadBlobs_Params]
-
-// NewBackupServer_downloadBlobs_Params creates a new list of BackupServer_downloadBlobs_Params.
-func NewBackupServer_downloadBlobs_Params_List(s *capnp.Segment, sz int32) (BackupServer_downloadBlobs_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_downloadBlobs_Params](l), err
-}
-
-// BackupServer_downloadBlobs_Params_Future is a wrapper for a BackupServer_downloadBlobs_Params promised by a client call.
-type BackupServer_downloadBlobs_Params_Future struct{ *capnp.Future }
-
-func (f BackupServer_downloadBlobs_Params_Future) Struct() (BackupServer_downloadBlobs_Params, error) {
-	p, err := f.Future.Ptr()
-	return BackupServer_downloadBlobs_Params(p.Struct()), err
-}
-
-type BackupServer_downloadBlobs_Results capnp.Struct
-
-// BackupServer_downloadBlobs_Results_TypeID is the unique identifier for the type BackupServer_downloadBlobs_Results.
-const BackupServer_downloadBlobs_Results_TypeID = 0xc21d44f68983e24a
-
-func NewBackupServer_downloadBlobs_Results(s *capnp.Segment) (BackupServer_downloadBlobs_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return BackupServer_downloadBlobs_Results(st), err
-}
-
-func NewRootBackupServer_downloadBlobs_Results(s *capnp.Segment) (BackupServer_downloadBlobs_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return BackupServer_downloadBlobs_Results(st), err
-}
-
-func ReadRootBackupServer_downloadBlobs_Results(msg *capnp.Message) (BackupServer_downloadBlobs_Results, error) {
-	root, err := msg.Root()
-	return BackupServer_downloadBlobs_Results(root.Struct()), err
-}
-
-func (s BackupServer_downloadBlobs_Results) String() string {
-	str, _ := text.Marshal(0xc21d44f68983e24a, capnp.Struct(s))
-	return str
-}
-
-func (s BackupServer_downloadBlobs_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (BackupServer_downloadBlobs_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_downloadBlobs_Results {
-	return BackupServer_downloadBlobs_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s BackupServer_downloadBlobs_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s BackupServer_downloadBlobs_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s BackupServer_downloadBlobs_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s BackupServer_downloadBlobs_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s BackupServer_downloadBlobs_Results) Blobs() (BlobData_List, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return BlobData_List(p.List()), err
-}
-
-func (s BackupServer_downloadBlobs_Results) HasBlobs() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BackupServer_downloadBlobs_Results) SetBlobs(v BlobData_List) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewBlobs sets the blobs field to a newly
-// allocated BlobData_List, preferring placement in s's segment.
-func (s BackupServer_downloadBlobs_Results) NewBlobs(n int32) (BlobData_List, error) {
-	l, err := NewBlobData_List(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return BlobData_List{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-func (s BackupServer_downloadBlobs_Results) Missing() (capnp.DataList, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return capnp.DataList(p.List()), err
-}
-
-func (s BackupServer_downloadBlobs_Results) HasMissing() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s BackupServer_downloadBlobs_Results) SetMissing(v capnp.DataList) error {
-	return capnp.Struct(s).SetPtr(1, v.ToPtr())
-}
-
-// NewMissing sets the missing field to a newly
-// allocated capnp.DataList, preferring placement in s's segment.
-func (s BackupServer_downloadBlobs_Results) NewMissing(n int32) (capnp.DataList, error) {
-	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.DataList{}, err
-	}
-	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
-	return l, err
-}
-
-// BackupServer_downloadBlobs_Results_List is a list of BackupServer_downloadBlobs_Results.
-type BackupServer_downloadBlobs_Results_List = capnp.StructList[BackupServer_downloadBlobs_Results]
-
-// NewBackupServer_downloadBlobs_Results creates a new list of BackupServer_downloadBlobs_Results.
-func NewBackupServer_downloadBlobs_Results_List(s *capnp.Segment, sz int32) (BackupServer_downloadBlobs_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[BackupServer_downloadBlobs_Results](l), err
-}
-
-// BackupServer_downloadBlobs_Results_Future is a wrapper for a BackupServer_downloadBlobs_Results promised by a client call.
-type BackupServer_downloadBlobs_Results_Future struct{ *capnp.Future }
-
-func (f BackupServer_downloadBlobs_Results_Future) Struct() (BackupServer_downloadBlobs_Results, error) {
-	p, err := f.Future.Ptr()
-	return BackupServer_downloadBlobs_Results(p.Struct()), err
-}
-
 type BackupServer_getStatus_Params capnp.Struct
 
 // BackupServer_getStatus_Params_TypeID is the unique identifier for the type BackupServer_getStatus_Params.
-const BackupServer_getStatus_Params_TypeID = 0x89e9b469c145e92f
+const BackupServer_getStatus_Params_TypeID = 0xe80d978164354d81
 
 func NewBackupServer_getStatus_Params(s *capnp.Segment) (BackupServer_getStatus_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -2200,7 +1950,7 @@ func ReadRootBackupServer_getStatus_Params(msg *capnp.Message) (BackupServer_get
 }
 
 func (s BackupServer_getStatus_Params) String() string {
-	str, _ := text.Marshal(0x89e9b469c145e92f, capnp.Struct(s))
+	str, _ := text.Marshal(0xe80d978164354d81, capnp.Struct(s))
 	return str
 }
 
@@ -2247,7 +1997,7 @@ func (f BackupServer_getStatus_Params_Future) Struct() (BackupServer_getStatus_P
 type BackupServer_getStatus_Results capnp.Struct
 
 // BackupServer_getStatus_Results_TypeID is the unique identifier for the type BackupServer_getStatus_Results.
-const BackupServer_getStatus_Results_TypeID = 0xdb80fc19647b06f8
+const BackupServer_getStatus_Results_TypeID = 0xc21d44f68983e24a
 
 func NewBackupServer_getStatus_Results(s *capnp.Segment) (BackupServer_getStatus_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -2265,7 +2015,7 @@ func ReadRootBackupServer_getStatus_Results(msg *capnp.Message) (BackupServer_ge
 }
 
 func (s BackupServer_getStatus_Results) String() string {
-	str, _ := text.Marshal(0xdb80fc19647b06f8, capnp.Struct(s))
+	str, _ := text.Marshal(0xc21d44f68983e24a, capnp.Struct(s))
 	return str
 }
 
@@ -2338,7 +2088,7 @@ func (p BackupServer_getStatus_Results_Future) Status() LocalServerStatus_Future
 type BackupServer_deleteBlobs_Params capnp.Struct
 
 // BackupServer_deleteBlobs_Params_TypeID is the unique identifier for the type BackupServer_deleteBlobs_Params.
-const BackupServer_deleteBlobs_Params_TypeID = 0x92b37056794407b7
+const BackupServer_deleteBlobs_Params_TypeID = 0x89e9b469c145e92f
 
 func NewBackupServer_deleteBlobs_Params(s *capnp.Segment) (BackupServer_deleteBlobs_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -2356,7 +2106,7 @@ func ReadRootBackupServer_deleteBlobs_Params(msg *capnp.Message) (BackupServer_d
 }
 
 func (s BackupServer_deleteBlobs_Params) String() string {
-	str, _ := text.Marshal(0x92b37056794407b7, capnp.Struct(s))
+	str, _ := text.Marshal(0x89e9b469c145e92f, capnp.Struct(s))
 	return str
 }
 
@@ -2426,7 +2176,7 @@ func (f BackupServer_deleteBlobs_Params_Future) Struct() (BackupServer_deleteBlo
 type BackupServer_deleteBlobs_Results capnp.Struct
 
 // BackupServer_deleteBlobs_Results_TypeID is the unique identifier for the type BackupServer_deleteBlobs_Results.
-const BackupServer_deleteBlobs_Results_TypeID = 0xfbd5cc8e0de9690d
+const BackupServer_deleteBlobs_Results_TypeID = 0xdb80fc19647b06f8
 
 func NewBackupServer_deleteBlobs_Results(s *capnp.Segment) (BackupServer_deleteBlobs_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -2444,7 +2194,7 @@ func ReadRootBackupServer_deleteBlobs_Results(msg *capnp.Message) (BackupServer_
 }
 
 func (s BackupServer_deleteBlobs_Results) String() string {
-	str, _ := text.Marshal(0xfbd5cc8e0de9690d, capnp.Struct(s))
+	str, _ := text.Marshal(0xdb80fc19647b06f8, capnp.Struct(s))
 	return str
 }
 
@@ -2516,7 +2266,7 @@ func (f BackupServer_deleteBlobs_Results_Future) Struct() (BackupServer_deleteBl
 type BackupServer_listAllBlobs_Params capnp.Struct
 
 // BackupServer_listAllBlobs_Params_TypeID is the unique identifier for the type BackupServer_listAllBlobs_Params.
-const BackupServer_listAllBlobs_Params_TypeID = 0x85f244f956c37088
+const BackupServer_listAllBlobs_Params_TypeID = 0x92b37056794407b7
 
 func NewBackupServer_listAllBlobs_Params(s *capnp.Segment) (BackupServer_listAllBlobs_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -2534,7 +2284,7 @@ func ReadRootBackupServer_listAllBlobs_Params(msg *capnp.Message) (BackupServer_
 }
 
 func (s BackupServer_listAllBlobs_Params) String() string {
-	str, _ := text.Marshal(0x85f244f956c37088, capnp.Struct(s))
+	str, _ := text.Marshal(0x92b37056794407b7, capnp.Struct(s))
 	return str
 }
 
@@ -2581,7 +2331,7 @@ func (f BackupServer_listAllBlobs_Params_Future) Struct() (BackupServer_listAllB
 type BackupServer_listAllBlobs_Results capnp.Struct
 
 // BackupServer_listAllBlobs_Results_TypeID is the unique identifier for the type BackupServer_listAllBlobs_Results.
-const BackupServer_listAllBlobs_Results_TypeID = 0xef2931b732b68c87
+const BackupServer_listAllBlobs_Results_TypeID = 0xfbd5cc8e0de9690d
 
 func NewBackupServer_listAllBlobs_Results(s *capnp.Segment) (BackupServer_listAllBlobs_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -2599,7 +2349,7 @@ func ReadRootBackupServer_listAllBlobs_Results(msg *capnp.Message) (BackupServer
 }
 
 func (s BackupServer_listAllBlobs_Results) String() string {
-	str, _ := text.Marshal(0xef2931b732b68c87, capnp.Struct(s))
+	str, _ := text.Marshal(0xfbd5cc8e0de9690d, capnp.Struct(s))
 	return str
 }
 
@@ -2669,7 +2419,7 @@ func (f BackupServer_listAllBlobs_Results_Future) Struct() (BackupServer_listAll
 type BackupServer_addPeer_Params capnp.Struct
 
 // BackupServer_addPeer_Params_TypeID is the unique identifier for the type BackupServer_addPeer_Params.
-const BackupServer_addPeer_Params_TypeID = 0x96a342f9f7a6c766
+const BackupServer_addPeer_Params_TypeID = 0x85f244f956c37088
 
 func NewBackupServer_addPeer_Params(s *capnp.Segment) (BackupServer_addPeer_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -2687,7 +2437,7 @@ func ReadRootBackupServer_addPeer_Params(msg *capnp.Message) (BackupServer_addPe
 }
 
 func (s BackupServer_addPeer_Params) String() string {
-	str, _ := text.Marshal(0x96a342f9f7a6c766, capnp.Struct(s))
+	str, _ := text.Marshal(0x85f244f956c37088, capnp.Struct(s))
 	return str
 }
 
@@ -2751,7 +2501,7 @@ func (f BackupServer_addPeer_Params_Future) Struct() (BackupServer_addPeer_Param
 type BackupServer_addPeer_Results capnp.Struct
 
 // BackupServer_addPeer_Results_TypeID is the unique identifier for the type BackupServer_addPeer_Results.
-const BackupServer_addPeer_Results_TypeID = 0xc03394397a4f7e9e
+const BackupServer_addPeer_Results_TypeID = 0xef2931b732b68c87
 
 func NewBackupServer_addPeer_Results(s *capnp.Segment) (BackupServer_addPeer_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -2769,7 +2519,7 @@ func ReadRootBackupServer_addPeer_Results(msg *capnp.Message) (BackupServer_addP
 }
 
 func (s BackupServer_addPeer_Results) String() string {
-	str, _ := text.Marshal(0xc03394397a4f7e9e, capnp.Struct(s))
+	str, _ := text.Marshal(0xef2931b732b68c87, capnp.Struct(s))
 	return str
 }
 
@@ -2841,7 +2591,7 @@ func (f BackupServer_addPeer_Results_Future) Struct() (BackupServer_addPeer_Resu
 type BackupServer_updatePeer_Params capnp.Struct
 
 // BackupServer_updatePeer_Params_TypeID is the unique identifier for the type BackupServer_updatePeer_Params.
-const BackupServer_updatePeer_Params_TypeID = 0xaa46602ae1eb5f0b
+const BackupServer_updatePeer_Params_TypeID = 0x96a342f9f7a6c766
 
 func NewBackupServer_updatePeer_Params(s *capnp.Segment) (BackupServer_updatePeer_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
@@ -2859,7 +2609,7 @@ func ReadRootBackupServer_updatePeer_Params(msg *capnp.Message) (BackupServer_up
 }
 
 func (s BackupServer_updatePeer_Params) String() string {
-	str, _ := text.Marshal(0xaa46602ae1eb5f0b, capnp.Struct(s))
+	str, _ := text.Marshal(0x96a342f9f7a6c766, capnp.Struct(s))
 	return str
 }
 
@@ -2939,7 +2689,7 @@ func (f BackupServer_updatePeer_Params_Future) Struct() (BackupServer_updatePeer
 type BackupServer_updatePeer_Results capnp.Struct
 
 // BackupServer_updatePeer_Results_TypeID is the unique identifier for the type BackupServer_updatePeer_Results.
-const BackupServer_updatePeer_Results_TypeID = 0xf7f0b93fc0a3b6b1
+const BackupServer_updatePeer_Results_TypeID = 0xc03394397a4f7e9e
 
 func NewBackupServer_updatePeer_Results(s *capnp.Segment) (BackupServer_updatePeer_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -2957,7 +2707,7 @@ func ReadRootBackupServer_updatePeer_Results(msg *capnp.Message) (BackupServer_u
 }
 
 func (s BackupServer_updatePeer_Results) String() string {
-	str, _ := text.Marshal(0xf7f0b93fc0a3b6b1, capnp.Struct(s))
+	str, _ := text.Marshal(0xc03394397a4f7e9e, capnp.Struct(s))
 	return str
 }
 
@@ -3029,7 +2779,7 @@ func (f BackupServer_updatePeer_Results_Future) Struct() (BackupServer_updatePee
 type BackupServer_listPeers_Params capnp.Struct
 
 // BackupServer_listPeers_Params_TypeID is the unique identifier for the type BackupServer_listPeers_Params.
-const BackupServer_listPeers_Params_TypeID = 0xd154ab4cddec1ad6
+const BackupServer_listPeers_Params_TypeID = 0xaa46602ae1eb5f0b
 
 func NewBackupServer_listPeers_Params(s *capnp.Segment) (BackupServer_listPeers_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -3047,7 +2797,7 @@ func ReadRootBackupServer_listPeers_Params(msg *capnp.Message) (BackupServer_lis
 }
 
 func (s BackupServer_listPeers_Params) String() string {
-	str, _ := text.Marshal(0xd154ab4cddec1ad6, capnp.Struct(s))
+	str, _ := text.Marshal(0xaa46602ae1eb5f0b, capnp.Struct(s))
 	return str
 }
 
@@ -3094,7 +2844,7 @@ func (f BackupServer_listPeers_Params_Future) Struct() (BackupServer_listPeers_P
 type BackupServer_listPeers_Results capnp.Struct
 
 // BackupServer_listPeers_Results_TypeID is the unique identifier for the type BackupServer_listPeers_Results.
-const BackupServer_listPeers_Results_TypeID = 0xc5a328f721ad6e8f
+const BackupServer_listPeers_Results_TypeID = 0xf7f0b93fc0a3b6b1
 
 func NewBackupServer_listPeers_Results(s *capnp.Segment) (BackupServer_listPeers_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -3112,7 +2862,7 @@ func ReadRootBackupServer_listPeers_Results(msg *capnp.Message) (BackupServer_li
 }
 
 func (s BackupServer_listPeers_Results) String() string {
-	str, _ := text.Marshal(0xc5a328f721ad6e8f, capnp.Struct(s))
+	str, _ := text.Marshal(0xf7f0b93fc0a3b6b1, capnp.Struct(s))
 	return str
 }
 
@@ -3182,7 +2932,7 @@ func (f BackupServer_listPeers_Results_Future) Struct() (BackupServer_listPeers_
 type BackupServer_listClients_Params capnp.Struct
 
 // BackupServer_listClients_Params_TypeID is the unique identifier for the type BackupServer_listClients_Params.
-const BackupServer_listClients_Params_TypeID = 0xaf34818424bacdc6
+const BackupServer_listClients_Params_TypeID = 0xd154ab4cddec1ad6
 
 func NewBackupServer_listClients_Params(s *capnp.Segment) (BackupServer_listClients_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -3200,7 +2950,7 @@ func ReadRootBackupServer_listClients_Params(msg *capnp.Message) (BackupServer_l
 }
 
 func (s BackupServer_listClients_Params) String() string {
-	str, _ := text.Marshal(0xaf34818424bacdc6, capnp.Struct(s))
+	str, _ := text.Marshal(0xd154ab4cddec1ad6, capnp.Struct(s))
 	return str
 }
 
@@ -3247,7 +2997,7 @@ func (f BackupServer_listClients_Params_Future) Struct() (BackupServer_listClien
 type BackupServer_listClients_Results capnp.Struct
 
 // BackupServer_listClients_Results_TypeID is the unique identifier for the type BackupServer_listClients_Results.
-const BackupServer_listClients_Results_TypeID = 0xdcf2f519344fafeb
+const BackupServer_listClients_Results_TypeID = 0xc5a328f721ad6e8f
 
 func NewBackupServer_listClients_Results(s *capnp.Segment) (BackupServer_listClients_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -3265,7 +3015,7 @@ func ReadRootBackupServer_listClients_Results(msg *capnp.Message) (BackupServer_
 }
 
 func (s BackupServer_listClients_Results) String() string {
-	str, _ := text.Marshal(0xdcf2f519344fafeb, capnp.Struct(s))
+	str, _ := text.Marshal(0xc5a328f721ad6e8f, capnp.Struct(s))
 	return str
 }
 
@@ -3335,7 +3085,7 @@ func (f BackupServer_listClients_Results_Future) Struct() (BackupServer_listClie
 type BackupServer_updateClient_Params capnp.Struct
 
 // BackupServer_updateClient_Params_TypeID is the unique identifier for the type BackupServer_updateClient_Params.
-const BackupServer_updateClient_Params_TypeID = 0xecf4f71935612610
+const BackupServer_updateClient_Params_TypeID = 0xaf34818424bacdc6
 
 func NewBackupServer_updateClient_Params(s *capnp.Segment) (BackupServer_updateClient_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
@@ -3353,7 +3103,7 @@ func ReadRootBackupServer_updateClient_Params(msg *capnp.Message) (BackupServer_
 }
 
 func (s BackupServer_updateClient_Params) String() string {
-	str, _ := text.Marshal(0xecf4f71935612610, capnp.Struct(s))
+	str, _ := text.Marshal(0xaf34818424bacdc6, capnp.Struct(s))
 	return str
 }
 
@@ -3433,7 +3183,7 @@ func (f BackupServer_updateClient_Params_Future) Struct() (BackupServer_updateCl
 type BackupServer_updateClient_Results capnp.Struct
 
 // BackupServer_updateClient_Results_TypeID is the unique identifier for the type BackupServer_updateClient_Results.
-const BackupServer_updateClient_Results_TypeID = 0xbab98586a0941e8f
+const BackupServer_updateClient_Results_TypeID = 0xdcf2f519344fafeb
 
 func NewBackupServer_updateClient_Results(s *capnp.Segment) (BackupServer_updateClient_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -3451,7 +3201,7 @@ func ReadRootBackupServer_updateClient_Results(msg *capnp.Message) (BackupServer
 }
 
 func (s BackupServer_updateClient_Results) String() string {
-	str, _ := text.Marshal(0xbab98586a0941e8f, capnp.Struct(s))
+	str, _ := text.Marshal(0xdcf2f519344fafeb, capnp.Struct(s))
 	return str
 }
 
@@ -3523,7 +3273,7 @@ func (f BackupServer_updateClient_Results_Future) Struct() (BackupServer_updateC
 type BackupServer_addClient_Params capnp.Struct
 
 // BackupServer_addClient_Params_TypeID is the unique identifier for the type BackupServer_addClient_Params.
-const BackupServer_addClient_Params_TypeID = 0xab8516c2100e3de1
+const BackupServer_addClient_Params_TypeID = 0xecf4f71935612610
 
 func NewBackupServer_addClient_Params(s *capnp.Segment) (BackupServer_addClient_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
@@ -3541,7 +3291,7 @@ func ReadRootBackupServer_addClient_Params(msg *capnp.Message) (BackupServer_add
 }
 
 func (s BackupServer_addClient_Params) String() string {
-	str, _ := text.Marshal(0xab8516c2100e3de1, capnp.Struct(s))
+	str, _ := text.Marshal(0xecf4f71935612610, capnp.Struct(s))
 	return str
 }
 
@@ -3631,7 +3381,7 @@ func (f BackupServer_addClient_Params_Future) Struct() (BackupServer_addClient_P
 type BackupServer_addClient_Results capnp.Struct
 
 // BackupServer_addClient_Results_TypeID is the unique identifier for the type BackupServer_addClient_Results.
-const BackupServer_addClient_Results_TypeID = 0xc2050ba289c7cbe0
+const BackupServer_addClient_Results_TypeID = 0xbab98586a0941e8f
 
 func NewBackupServer_addClient_Results(s *capnp.Segment) (BackupServer_addClient_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -3649,7 +3399,7 @@ func ReadRootBackupServer_addClient_Results(msg *capnp.Message) (BackupServer_ad
 }
 
 func (s BackupServer_addClient_Results) String() string {
-	str, _ := text.Marshal(0xc2050ba289c7cbe0, capnp.Struct(s))
+	str, _ := text.Marshal(0xbab98586a0941e8f, capnp.Struct(s))
 	return str
 }
 
@@ -5428,214 +5178,208 @@ func (f PeerNode_announce_Results_Future) Struct() (PeerNode_announce_Results, e
 	return PeerNode_announce_Results(p.Struct()), err
 }
 
-const schema_df5e7a9b8c1d2e3f = "x\xda\xc4Z}pT\xd5\x15?\xe7\xbeM6\x1b\xf2" +
-	"\xf5\xfa\x96o\x92\x856v\x80\x01\x14\x84)\xc6q\x12" +
-	"\x02\xb4\x86\xcf\xbc\xacH\xa1\xa5\xf5e\xf7\x86,lv" +
-	"\x97}oUb\x95\x86\x96\"\x8c#\x95\xc1*T\xaa" +
-	"\x11\xe9\x88B\x11\x15\x04\x0bS\xa0\xa2`a*T\x18" +
-	"\xad2\x82\xfd\x92\x91\x8eB\xa5h+l\xe7\xdc\xb7\xef" +
-	"c\x93\x0d\x89#\xd2\xffv\xcf=\xf7\xdcs\xcf=\xe7" +
-	"\xdc\xdf9\xf7\xdd\xb0\xb4\xb0\xc63\xbax\x95\x0cL=" +
-	"\x9c\x97\x9f\xees\xe8\xe7\xd3\xbf\xfe\xa3\xbc6P+\x10" +
-	"\x01\xf2\xd0\x0bp\xe3\x96\x82\xd5\x08\xa8\xec)\xb8\x0b0" +
-	"}\x7f\xe2\xf7\xb7\x7f6\xe9\xfc2\x90+\x10\xc0C\xe3" +
-	"\xfd}\xab\x11<\xe9\xeb\xcfL\xde\x17y\xf1\xcc\x0a\xd7" +
-	"\x88\xcf\xd7J#\x1b\x8f\xafyl\xc6\x8c\xc4J\x90e" +
-	"LW\x8f*\x7f\xe0\x97\xad?x\x0f\xf2\x98\x17@\xb9" +
-	"PpLA\x1f\xfd\xba$\xe4\xbf\xe4\x9d\xb4\xf8\xf6\xc4" +
-	"\x0b\xabM)\xa6\x02\xf3|+I\x81\x16_5`\xba" +
-	"\xe9\xb5__\xfc\xacv\xc3/\xdc\x0c\xed\xbe\x05\xc4\xb0" +
-	"E0\xdc4\xa2\xef\x9c\xb37\x17>\x02\xf2\x00b\x90" +
-	"\x88\xe1\x88\xaf\x81\x18\xde\xf6m\x05L\xc7\xcb\x966\xd7" +
-	"\x0e>\xba\x0e\xd4\x01hizo\xe1\\bXQH" +
-	"\x12\xb4?\x8dy\xe8\xf5\xcb\xfb\x1f\x03UF\xc9\xa50" +
-	"\x89R6\x15\xbe\xafl/\xa49\xdb\x0ag#`\xfa" +
-	"\xdc\xc6\x07\xc7G\x1e\xb8w=q{\x1cn!V." +
-	"\x1a\x80\xca\x90\"\xfaY^$\xb8\x8f|\xa3=\xf9\xbb" +
-	"\xd0\xe4v\xe2f.\xd9\xb4\x0f\xe5\xa1\xe2\xf3\xca\xfab" +
-	"\xfa\xb5\xb6\x984\xbd\xeb\xd3\x92^\x7f\xde-?\x95\xd9" +
-	"\x8a\xd8\xeb\xb8\x12\xb1\xd7\x09%\xa4\xe9\xf2\x7f\xddYr" +
-	"\xfe\xdc\xac\x8dn\x86E%\xc2Zm\xc4p\xf9\xcey" +
-	"\xc1\x89}\xb7lt\x0d\xb7\x97$\x85\xad\xc4\xfc^?" +
-	"\xfc\xf0\xf4\xf0;\xbe\xfd\x0c\x9d7\xb38\x8e\x96,%" +
-	"\x8e\x93%\xa4\xc2\xe9[J\xca\xf6\xf7Y\xf6\xac\xe5\x11" +
-	"th7..m%\x8ee\xa5\xc4qs\xfb\xdf\x02" +
-	"\xbf\x19{\xdff\xf7\x81\\W&t\x18WF\x8b\xbc" +
-	"z\xe4\xe5\xca\x9f\xb6\x8d\xdd\xear\x0cN\xe3\x9et\xa5" +
-	"\xff-i\xc7\xb2\x09;M\xf5\xc5\xc8\xac\xb2u4\xd2" +
-	"\xe2\xd9?\xf5\x9f\xdb<\xbb2gdJ\x9d\\&\x14" +
-	"S\xcb\xc8QVU\xacy\xe2g\xcbv\xbd\x9c\xe5\xaa" +
-	"\xdbh6*\xfb\x04\xc7\xcc\xa7\x03m\xb7O\xbd\xbc;" +
-	"KF\xb9,d\x0c\x93\x89c\xe1\x86\x09\xcf\x07\xd7\xcf" +
-	"\xdd\xe3V}\x99\xfc21<,W\x03^\xfc\xd6\xe6" +
-	"g\xe6\x0c\xffx\x8f*c\x81\xeb\xac\xf2\xe9\x84\x0e\xc9" +
-	"\xc7\x94\xe3\xb2\xb0\x97\xbc\\\x02L\xff\xea\xbe\x99\xad7" +
-	"\xad\xb9qo\x96B\xbbz\x0bk\x1f\xe8M\xcb\x9d\xfa" +
-	"\xc3k+\x9e\xec\x95\xb7?\x8bcH\x1f\xa1\xd0\xc8>" +
-	"\xc41\xe5\xfd\x9f\xac\xf8\xf7\xa4\xf2\xfd\x19\x85\x84\xb1W" +
-	"\xf4y\x92\x18\xd6\x0a\x86U\xb1-C.\x0e\xddp\xc0" +
-	"\xadq\xef\xbeB\xc2\x90\xbed\xec\x8a\xf1\xb7V/*" +
-	"\xba\xe7\xd5\x0e\xdeh\x8aR\xfb\x0e@E\xeb+b\xaa" +
-	"\xef*r\xc7\x13\x03\xce\x9e\x9c\xf6\xecmG]gs" +
-	"\xa9\x9f\x08\xdaG?_\xb0\xe3\xdc?\xf2O\x80,\xbb" +
-	"b\x00P9\xd3\xef\xbcr\xa1\x1fq\x9e\xeb\xf7\x1dI" +
-	"\x199\xd0\x0b\x90\xfec\xea\xd59_{\xbd\xf5D\x96" +
-	"^\x03M\xbd\x06\x92^\xc3\xf3O\x1c\xaaO\xff\xf6\xed" +
-	"\xac\xc3P\x07\x0a?\x9a7\x90\xb66u\xf3P\xf9\xa5" +
-	"C\xa1w\xdc\xbe\xbc\xcbd8 D|\x9a\x7fO\xb8" +
-	"\xff\xe7?~\xc7\xbd\xc6\x05s\x0d\x1cD\x0c\x1fn\x9d" +
-	"9\xb6\xff\x85\xf3\xef\xba\x19\x86\x0c\x12\xc9k\xb4`\x98" +
-	"\xbdh\xeb{\xc5\xc3f\x9dt/\xa1\x0d\x12\xe6]$" +
-	"\x18&.h;\xf0\xf8\xce\x17\xb2\x18\xda\x07\x99\x01#" +
-	"\x18\x86\xf7\x09\x94\xb0\xd9m\x7fw/qz\x90p\xf6" +
-	"s\x82\xa1m\xfa\xb8p\xdb#\xc5\x1fdEC\xb9\xf0" +
-	"\xcaq\xe5\xc4P\xf6Mm\\\xff\x8b\x9f\x9c\xcd\x0a\xb9" +
-	"H\xb9\xd0rq9\x05\xd4\xf2\x07v\x8cyi\xf4\xb0" +
-	"\x8f\xb2lY!D\\WA\">\x0e\xce\xde\xff\x97" +
-	"w\x0f~\xe4:\xb49\x15\xcf\xd3\xa1m\xdb\xb1ao" +
-	"\xf5\xae\x8f/fyX]\x85\xd0oN\x05Y\xb98" +
-	"r\xa6\xf8\xc1\xc3\xc7\xff\x9b\xc5\xb1\xbdB,\x7f@p" +
-	"\xecm\xfc`\xca\xaa\xa7\xee\xbe\x943\xfb\x0d\x09\xfcG" +
-	"\x19\x19\xa09\xc3\x02\xc2\x81\x1eo\xba\xff{\xa7O\xdd" +
-	"t\xb9\x93\x9b\x1c\x1a|L9>X\xc4\xc7\xe0\xe5\xa8" +
-	"\x9c\x1c\xe2\x85\x11i-\x11\xb9^\x0f5\xf3\xbc\x16m" +
-	"THK\xc4\x12U\xb5Zha*\x11\xe4\xc9;y" +
-	"rT*\x11\x8dk\xe1\xdah\xbcQ\xafl\xe0z*" +
-	"j\xa0\xae\x16H\x1e\x00\x0f\x02\xc8\xc3j\x01\xd4J\x09" +
-	"\xd5\x1b\x18\"\xfaI\x7fy\xe4\x18\x00u\xa8\x84\xeaX" +
-	"\x86K\xf4T(\xc4u\x1d\x11\x18\"`\x80'\x93\xf1" +
-	"$\x16\x01\xc3\"J\xebW^<\x1a\xd1\x8d\x09\xd1\xa8" +
-	"\xb9z\xbd\x96\xd4ZP\xb7\xe7xr\xcf\x99\xcf\x8d\xa0" +
-	"\xa1\x19)\xbd\xb2Z\xccp&0gB4\xde8I" +
-	"3P\xabGtof\x8a\xa3\xb8l\xedf\xf4p\x00" +
-	"u\x84\x84\xeax\x86\xe9P3\x0f-\xd4S-\x00\x80" +
-	"\xc5\xc0\xb0\x18\xb04\xac\x19\x9a\xf5\xa7\xbb\x0d\x85y\x94" +
-	"\x1b\xdc\xb5\x1f\x1d@\xf5\xd8\x0a\x147\x00\xa8E\x12\xaa" +
-	"C\xddk\xa1\x8e%\x80\xf5\x12\x8aUJ\\\xabta" +
-	"\x02-\x1c\xae\xe7<YY\xaf\x95\xd2\x12\xee\x05\xe8\xb8" +
-	"\x0a$T\xfd\x0c\x97h\xe1p\x92\x8e\xa6\xe3a8R" +
-	"I\xca\x8cx\x98\x8f\xd2b\xb1x*\x16\xe2\xd6!\xa8" +
-	"E\xb6\xc8\xc9I\x00u\x92\x84j\xbd\xcbh\xd3\x1b\x01" +
-	"\xd4i\x12\xaa\xdfe(3\xe6\xa7\xb0\x92g\x91yo" +
-	"\x93P\xbd\x83a\x9a\x8e\x96\xc7&\x84!\x90\xadD(" +
-	"\x1e3\xb4\x90Q\x07\xdeXS\xdc\xa1j\xd1h\xa3\x16" +
-	"ZHv\x97\x1d\x07\x07D\xb9\x87\x8a\x0b\xdf\x95\x8c." +
-	"\x8d\xd1\xc1Os8\xcd\xc4h\x84\xc7\x8c:\xd2\x8b\xdc" +
-	"\xa6\x9f-g\xed\x00\x00u\x8d\x84\xea\x13N\x0c\xac\xa7" +
-	"\x93|LB\xf5i2\x00\x9a\x06\xd8X\x05\xa0>!" +
-	"\xa1\xba\x99\xa1,1?J\x00\xf2&\xb2\xca\xd3\x12\xaa" +
-	"/2\x94=\xe8G\x0f\x80\xbc\xad\x15@}NBu" +
-	"7C9\x8f\xf91\x0f@\xde\xb5\x0e@\xdd-\xa1z" +
-	"\x90\xa1\x14\x09\xa3\x0f\x18\xfa\x00\xd3\x89Tc4\x12\x9a" +
-	"\xca\x01\x17[\x06\xab\xd6E\x08\xd8\xf6\x8bj\xba\x11\xe4" +
-	"<F\xf6\xb3h-\xda\xddA#\x9e\xd4\xa0z>\x0f" +
-	"FZ\xb9-/\x94J&y\xcc\x08\"\x8d\xd2\x98\xe4" +
-	"\x1a\xb4\xec\"\xd9v\x99\x16\x0fiQ\xd3\xf3(\xf0\xa4" +
-	"\x94\xde\xc1<\xe4 \x8fJ\xa8>E\x0e\xc2L\xfb\xb4" +
-	"7\xbaL\xc1$\xd3>\x9b\x9e\x07P7K\xa8\xee$" +
-	"\xfbxL\xfbl?\xe6\xecZ\xf6\xe4\x99\xf69\xb0\x12" +
-	"@=(\xa1\xfa&\xd9G2\xeds\x94d\xbe!\xa1" +
-	"\xfa.\xc3t*aDZx\x90C \x14\x8f\x85u" +
-	"[\x7f#nh\xd1`\xb3\x06\xdedX\xc7\x02`X" +
-	"@\x086\x15\x8d.n\xe0\x09\x8cFB\x9a\xc1\xc3\xc1" +
-	"@\xb3\xe6\x1eOhI#\xa2E\xa3\x8c\x98,\x1eb" +
-	"A\x87\xa79\xae\x1b<\\\xcf\x91'\xc5\x90\x0e`\x8f" +
-	"-J\xf1\x14\x0f\xd7.\x06\xaf\xc1\xf5N\xb6\xccNL" +
-	"\xd3\xb9\x11\xd0(\xa9\x90\x19]q6\xc5\x893;\xcc" +
-	"(7\xdd*\xa1z\x1bY\xb1\xc6\xb4\xa2Z\xeb\xc4^" +
-	"\xce\x84\xa5\xbb\x0e{\x89\x9e\xe0\xa1\x88\x16\xed\xe4\xf79" +
-	"b)\xde\xd4dm-Wj\xa9\xcaDS%\xc3j" +
-	"\xdd4_&m\x959\x10\x080+\x81\xe5u^%" +
-	"\xd4\xacE\xa3<6\x9f\xd7G\xb8\x15\xb7F\x8749" +
-	"\xdc\x09\xdc\xdc\xe97\x87\xf6I\x1e\xe5\x9a\x9e\x91Z\x1f" +
-	"\xd0:\xaa\x9f\xcc\xa4\xde~\x0c\xd3B\xfd\x89\xcd\xe4<" +
-	"d\xbc\x9ef\xf7T\"\xac\x19<\x93zErw\x9f" +
-	"\x1fe\x89\x1a\x09\xd5i\xce\xf9\xd5U\xb9r\xa7\x95%" +
-	"\xa6\xb7:\xe7\xe7\x0a\xf3\x8e!\xdde\xf8v\x7f9\x98" +
-	"\x99\xcc\xba\x1f\xdd:6\xe4\xca\xe5U\x8e\x93a&\x95" +
-	"\xab\xa4c\xbd\x84\xea\xf7Y\x8f\xf2O\xb7\xca\xf6\x00}" +
-	"\xe4\xba/\xc78>\x17h$.\xc7\xe5\xec\x0a\xb7K" +
-	"\x97\xeb\x045L\xbb8+]\xc9M\x89?h\xc6\x8e" +
-	"p)s\x96\xe4\x82\x1b\xdd\xfb\xb6\xe5$.\x04\x92t" +
-	"\x10\x88\x0d@\xaa\\\x00\xa4\x0b\xcf\xac\x8e75\xe9\xdc" +
-	"\xe8\xb9Y\xc9Q3n`\xdf\x8c_!\xaa\xb3-\x90" +
-	"H\xf2\x84\x96\xe4\xb3\xc4\xb9\xda\xc1}M\x01e\xe6\xd4" +
-	"2\x90\xb6\xdaT\xc1\xedT\x0b\\ ,\x93\x1ek\xa1" +
-	"4\xdb\xbb\xec\x9eA\x07\xefbY[\xae\x8b5\xa1\x00" +
-	"\x0b5\x96te\x1b\x0e\x00\x08nF\x09\x83;\xd1\xde" +
-	"\xa2\xb2\x1dk\x01\x82\xcf\x11y7:\xc9@\xd9\x85\x0d" +
-	"\x00\xc1\x9dD\x7f\x05\x1d\xd4\xa0\xec\xc3*\x80\xe0n\xa2" +
-	"\x1f$\xbaG\x12\x17\xa3r@\xf0\xbfB\xf47\x88\x9e" +
-	"\xe7\x11w\xa3r\x04\xa7\x00\x04\x0f\x13\xfd-\xa2\xe7\xa3" +
-	"\x1f\xf3\x01\x94\xe3\xd8\x0a\x10|\x93\xe8\xa7\x88\xeee~" +
-	"\xd1\xf68\x89\xeb\x00\x82\xa7\x88~\x96\xe8\x05\x92\x1f\x0b" +
-	"\x00\x943\xf8$@\xf0,\xd1?%\xba\xaf\xc0\x8f>" +
-	"\x00\xe5\x82\x90\xf3\x09J\xd8\xc0\x18\xca\x85>?\x16\x02" +
-	"(\x97p%@\x03\x930XD\xe4^\x85~\xec\x05" +
-	"\xa0\xf8X\x12 X@t?\xd1\x8bz\xf9\xb1\x08@" +
-	"\x91\xd9j\x80\xa0\x9f\xe8\x83\x89^\x9c\xe7\xc7b\x00\xa5" +
-	"\x9c5\x02\x04\x07\x11}(\xd1K\xf2\xfdX\x02\xa0\\" +
-	"'\xe8\x95D\xbf\x81\xe8\xa5^?\x96\x02(#\x85\xfc" +
-	"\x11D\x1f\xcf\xb2\xb2h'\xd0\xdb\x83\xe4\xd5\x14I\x0a" +
-	"\xf4\x04\x18\xfb\x0a\x00U<e4\xc6S\xb10\x063" +
-	"\xa3\xde\xac\xa9\x99\x8c\x01\xd5\\\x9f\xae\x85\xb9\x8d(\xac" +
-	"\x01\xe4z\xbd\xa6\xeb<\xecB\x1b\xa1x,\xc6CF" +
-	"\x04\x02\xf1\x98>s\xa1M\x8f\xc4\x0c>?\x191p" +
-	"\xf1\x04\xc3\xe0-\x09\xc3\x85^r\xe3\xeel\xb4\xd4q" +
-	"?\x90AI=\xbfy\xc4\xdd\xd8\xc0\x03f\xcc]\xab" +
-	"\xa8w\xae\xbck\x9ep\xc2\xf1\xbbb\xd9\x05\xb4\xb7\xc3" +
-	"\xce\xc7d\x96\xafq]\xb9\xb7\x90N\xe3\xcd+\xb7\x9b" +
-	"{mIKD\xd7#\xb1\xf9]\x95\x88WH\x84t" +
-	"\x18\xbac\x92.\xae\xd5\x04q\xd9\xcb[\xed\xb7\x0ei" +
-	"O\xcaJ{\x02#N\xe7\x86\x16\xd6$\x13\xc6\x0e\xb2" +
-	"eo'\x18\xfb\xa2\x84\xea^\xc7\xdc{\x08\xcf\xed\x94" +
-	"P}\xc5\x05c\xf7\x11\x16\xd9+\xa1z\x98\xd2\x9ed" +
-	"\x16\x03\x87\xe6\xbap\xbfU,\x1d]\xea\xe0~\xbbX" +
-	"z\x9b\x10\xca[\x12\xaa\x7f\xa5l\x97/\xb2\x9d|\x9a" +
-	"*\x84S\x12\xaag{\x00\x8d\xd3\x11\xdd\xbc*\x00\x1d" +
-	"x\x9c\xa0\x8b\xbb.\x16\x06\x89\xdf\xed\xae\x0e(\x1c\x9a" +
-	"QK\x86o\xd5\xf4f[^Z\xe7\x8bR<\x16\xe2" +
-	"P=#\xd5\xd2\xc8\x93\xd9eH}\x84\x837\xc4\x9d" +
-	" \xec&\x80\x9cC\xbbBk\xc3\x9c\x10\x103\xc8\xf4" +
-	"c\xa5<W3\x10\xadn\x99\xf2\x10\xce\x05\xa6\xac@" +
-	"/:\xfdb\xb4\x1e\x1b\x94{\xb1\x11\x98\x92B/2" +
-	"\xbb\xb7\x85VoV\x89\xe0J`\x0aG/Jvw" +
-	"\x0d\xadF\xa92\x07\x93\xc0\x14\x15\xbd\xe8\xbc@\xa0\xd5" +
-	")T&c\x030\xe5\x16\xf4b\x9e\xfd\xb2\x80V\x0b" +
-	"L\x19-\xd6\x1d\x86^\xcc\xb7\xdf5\xd0\xea\xbe)\xe5" +
-	"\xb8\x00\x98\xd2\x1b\xbd\xe8\xb5\x1f\x1d\xd0j\xf2*>\xac" +
-	"\x05&_\xf2b\x81\xddDG\xab\xfb&\x9f\x9b\x0bL" +
-	">\xe3E\x9f\xdd_E\xabq+\x9fl\x00&\x1f\xf7" +
-	"b\xa1\xdd\x17G\xabo)\x1fj\x04&\xef\xf3b/" +
-	"\xbbK\x88V\x9b[\xde\xbe\x00\x98\xbc\xc5\x8bEvK" +
-	"\x1e\xad~\xb2\xdcN2\xd7z\xd3\xa2h\xaa\x8d\xc6A" +
-	"j\xd4k\xa8,5\xb3\x01x\xe3\xe2\xbf\x05H\xd0B" +
-	"$\x005\x98\xb6\xb2\x06\x04\x04\xad\x06\xd3VW\x0b\x90" +
-	"\xfeYm$\xb7\x94\x09Q\x0b\xa5\xd4\x88[\x8e\x1cE" +
-	",h\xd6$ \x89\xbf\x96\x0b\x99r,\xd0\x0b\xde\x98" +
-	"\xa1\xdb\xcc\x13\xa3PJ\xd9\xb2\x06\xd3V\xe6\x044j" +
-	"\xb0\x1e\xbbM+\xd6n\x1d\xb8\xdeC\xb4\xde\x15\x9e\xea" +
-	"\xae\x90\xb3\xf1\xdbUO\xe8\x9e\xee\xc0\xabU>]\xb5" +
-	"\x12\xb8\x8b6f\xae\x04]\xe5\x14\xc0\x16Z)s^" +
-	"\xbd\x00\xb1\xec\x8bU<vg7Gw\xac\x92\xe1\x92" +
-	"\x90\xc9\xe7\xec\xc6~\x8f\xeb\xbe\xa0\xef\\)\xd9\xd7\xe0" +
-	"\x974]7=\x0a\x1bg\xe4\xa8\xf2\x09\xdb\xc78\x0f" +
-	"\xf3p]\x0c\x02\xe1\x08e\xe1\xccz\x05=\xbbA]" +
-	"\xae\x9e\xb3Gq\xf5V\xca\xc6\x10\x992\xf3Kt\x8d" +
-	"{R\x14\xe6\xe8\xf3^\xeb\xfeEO\xde\x04ruu" +
-	"\xaf\x8e5:U\x8a\x99\x96\xd1\x17\xe8\x019nq\xcd" +
-	"\xd0\xa6\xeby\xe1\xab{\xaca\x1d\xc1^u2<I" +
-	"\xbb\x12\xd0\x93s!=\xab\x97\x94\x0d\xf40\x17\xd0c" +
-	"\xb9\x80\x1e\xe6\x02z\x9e\x1e\x02\xbd\xac\xae\xe1\xff\x0f\xe8" +
-	"\xb1\x8e\x19\x0c\xb9\xd9<'\xccf}j\x80\xd6\x13\xa8" +
-	"\xbc\x8d\xc0\xc8&Bl\xd6\xcb,Z/\xea\xf2\xfa$" +
-	"0\xf9a\xc2k\xd6C=Z\x9f\"\xc8+Z\x81\xc9" +
-	"m^\x94\xac\x8f\x0f\x9c\xb7_9E \xa6\x85\xb0\x9a" +
-	"\xf5\xf4\x8f\xd6\x9b\xac\xac\xad\x06&\xcf#\xa4f}\xc1" +
-	"\x81\xd6\x97\x1a\xb2:\x05\x98\\\x97\x018V\x89X\x83" +
-	"i\xeb\x92\x84\x80\xb8&k\xb2jXq\x01\xd4`\xda" +
-	"\xba\xc3\x09h\x08\x82\x1b\x07\x09&\x81O\xac\xd7\x1b " +
-	"TT\x8f\xf8\xbf\x00\x00\x00\xff\xff\xf8\x0e\x0bx"
+const schema_df5e7a9b8c1d2e3f = "x\xda\xc4Z}\x90\x14\xe5\xd1\xef~f\xf7f\xef\xfb" +
+	"\xe6\x9d\x05\xe4\xe0X}\xdf\xf3-\xa0\x10\x11\xa1\x02X" +
+	"\xd6}\x80)\x0f8\xb8\xb9\x15\x09$$\xce\xed>\xc7" +
+	"-\xec\xed.3\xb3*g\x94\x9c\x09A(\x95@a" +
+	"T\"Q\xc4K\x89\xc1 *\x08\x06+@\xc0\x80%" +
+	"\x15!BI\x94\x12LH\xa4\xc4R\x88\x04I\x94M" +
+	"\xf5\xcc\xce\xc7\xde-\xdeI\x14\xff\xdb\xeb\xe9\xe9\xa7\x9f" +
+	"\xee~\xba\x7f\xcfonTeQ\xad\xef\xba\xd2w+" +
+	"\x80)\xbb\xfd\x05\x99\xfe\xfb~\xd6\xf8\xbf?\xf4w\x82" +
+	"2\x04\x11\xc0\x8f\"\xc0\xf53\x02\x07\x11P\x8e\x05\xee" +
+	"\x00\xcc\xdc\x97\xfa\xfd\xad\xe7'\x9dY\x0c\xd2\x10Ga" +
+	"O`\x1e)\x1c\x08\xd4\x00f\xae=y\xd3\xce\xd8\x8b" +
+	"'\x97z\x15N\x07\x96\x91\x02\x16\x92B\xd7\xa1U\x8f" +
+	"M\x9b\x96Z\x06\x92\x84\x99\x9a\x91U\xf7\xff\xa2\xe3\xfb" +
+	"\xef\x82\x9f\x89\x00\xf2\xd8\xc2\x83r]!\xfd\xba\xb1\x90" +
+	"V{I\x9c\xb4\xf0\xd6\xd4\x0b+-c>\xb2\xb5\xa6" +
+	"p%\x82/\xd3\xfa\x87_\x9d;_\xbf\xee\xe7\xe4)" +
+	"\xb3\xd7y\xa0\xf0^Z\xe7\xd1\xc2\x8d\x80\x99\xf1#\x06" +
+	"\xcc:uC\xd1\xc3 U\x92#\x02)\x8c-j&" +
+	"\x85\xba\"RHV\xdc\xdbV\x7f\xe5\x81\xd5\xa0T\xa2" +
+	"m\xfdD\xd1lR8]D\x9e\xaa\x7f\x1a\xbd\xe2\xb5" +
+	"\x0b\xbb\x1e\x03EB\xc1\xe3*\x99\x92\xa5\xe2\xf7\xe4\xaa" +
+	"bzg`\xf1L\x04\xcc\x9c\xeezp\\\xec\xfe\xbb" +
+	"\xd7\x90\xb6\xcf\xd56\xcd.,\xa9Dyi\x09\xfd\\" +
+	"\\bj\xef\xff\xbf\xb5\xda\xef\"7\xad%m\xe6\xb1" +
+	"M\xfb\x90\xcf\x97\x9e\x91\xfde\xf4\x0b\xcb\xc8\xd3;>" +
+	"-+\xfe\xf3v\xe9\xa9\xecV\xcc\xbd\xae)3\x83\xbe" +
+	"\xbe\x8c<]\xf2\x8f\xdb\xcb\xce\x9c\x9e\xd1\xe5U8R" +
+	"f\x06\xfd$)\\\xb8}Nx\xe2\x80g\xbb<\x8f" +
+	"\x0b\xcb5z\xdc\xaf\x9c\xde/\xfe\xc1\x07\xc7\x87\xdf\xf6" +
+	"\xedg<q\x1e_\xdeAq\xbea\xed\x89\xd0o\xc6" +
+	"\xdc\xb3\xc1\x9b\xce\xab\xcb_\xa3W\xc7\x9b\xaf\xbe\xba\xff" +
+	"\xe5\xea\x9ft\x8e\xd9\x98\x93\x88X\xf9J\xd2XXN" +
+	"\xdeW\x07\xdf\x12\xb6,\xae\xdbj9g\x1a\xefW\xb1" +
+	"\x9a\x8c\xb7\xfbvM\xf9p\x93o[6\x03\xd6\xbb\xfe" +
+	"\x0a3\x89R\x05\x15\xc0\xf2!\xab\x9e\xf8\xe9\xe2m/" +
+	"\xe7\x14\xe4\x02K\xe3nSc\xfa\xd3\xa1\xce[\xa7\\" +
+	"\xd8\x9ec\xe3\x88\xa5q\xc2\xd4\x98\xbf\xae\xee\xf9\xf0\x9a" +
+	"\xd9\xafx\xb7P'\xbdL\x0a\x8aT\x03x\xee[\x1b" +
+	"\x9e\x995\xfc\xe3W\x14\x09\x03\x9eL\x14P\xfc\x17K" +
+	"\x07\xe5\x15\x92Y[\xd2\x12\x010\xf3\xcb{\xa6w\x8c" +
+	"_u\xfd\x8e\x1c\x87\xd2\xfd\xccP/\xeeG\xcbM~" +
+	"\xef\xc7K\xff9\xa9j\x97w\xb9\xe3\xfdL\x7f>\xec" +
+	"G\x11[\x9ex\xf6\xaasC\xd7\xed\xf1*\x94\xf67" +
+	"\x03V\xd5\x9f\x14\x86\x8c\xbb\xb9fA\xc9]\xafv\xab" +
+	"$\xf3\x88\\\xdf\xd8\xbf\x12\xe59\xfd\xe9\xe7\xac\xfe\xcb" +
+	"\xa9\x94\x0eW\x9e::\xf5\xd7\xb7\x1c\xf0$\xef\xfc\x80" +
+	"e\x14\xdfG>\x9b\xb7\xe5\xf4\xdf\x0b\x0e\x83$y\xea" +
+	"\x97\x8ab\xc0\x19\xf9\xec\x00\xf3h\x0e\x10\x05\xd9_)" +
+	"\x02d\xfe\x98~u\xd6\xff\xbc\xd6q\xd8\xeb\xd7\x87\x03" +
+	"M\xc7\xcf\x0f$\xbf\x86\x17\x1c\xde\xd7\x94\xf9\xed\x91\x9c" +
+	"P\x0f\xab\xec \x8d\xb1\x95\xb4\xf7)\x1b\x86J/\xed" +
+	"\x8b\xbc\xed\xad\xc3\x15\x96\xc2\x9aJ2\xf1i\xc1]\xd1" +
+	"\x81\x9f\xfd\xe8\xed\x9c\xf0\xed\xaf47\x7f\xd44\xf1\xc1" +
+	"\xc6\xe9c\x06\x9e=\xf3N\x8e\xc6\xf8A\xabI\xa3a" +
+	"\x10i\xcc\\\xb0\xf1\xdd\xd2a3\x8ez\x17\xe9\x1a\xf4" +
+	"$)l\x1eD\x8bL\x9c\xd7\xb9\xe7\xf1\xad/\xe4(" +
+	"\x9c\x18d\x96\xfbiSax\xffP\x19\x9b\xd9\xf9\xb7" +
+	"\x9c\xa2\x1el\xe6p\xec`R\xe8l\x1c\x1b\xed|\xb8" +
+	"\xf4}OHc\x83\xcd\xf3P\xf1\xff\xea\xd8\x81\xe7>" +
+	"9e\xbbg\xe6d\xc6`s\x8b\xea`*\xf7%\xf7" +
+	"o\x19\xfd\xd2u\xc3>\xca\xd9\x00V\x99\xcb\x97V\xd1" +
+	"\x06>\x0e\xcf\xdc\xf5\x97w\xf6~\xe4\xb5^\xf5<Y" +
+	"\xdf\xb4e\xdd\x8e\x9am\x1f\x9f\xf3:6\xab\xcaL\x01" +
+	"\xaf\"\xc7Jc'K\x1f|\xfd\xd0\xbf\xbd\x0a\x0fU" +
+	"\x99\xc1\xe92\x15v\xb4\xbc?y\xf9Sw~\x9e\xb7" +
+	"g\x1d\xa9\xfa\x97|\xa2\xca,\xc8*\xb3t\x1eo\xbd" +
+	"\xef\xbb\xc7\x8f\x8d\xbf\xd0\xa3@:C\x07\xe5\x07B\xa4" +
+	"\xb94\xb4\x04\xe5\x87\xae\x14aDFM\xc5\xae\xd5#" +
+	"m\xbc\xa0]\x1d\x19QS\x89\xd4\x84z52?\x9d" +
+	"\x0as\xedv\xae\x8dLi<\xa5j|F*\x9eT" +
+	"\xa3\x13\xe31\x9e0\xaa\x9b\xb9\x9e\x8e\x1b\xa8+\x01\xc1" +
+	"\x07\xe0C\x00iX=\x80R-\xa02\x8a!b\x90" +
+	"b$]3\x1a@\x19*\xa02\x86\xe1\"=\x1d\x89" +
+	"p]G\x04\x86\x08\x18\xe2\x9a\x96\xd4\xb0\x04\x18\x96P" +
+	"S\xce:\xe1\xcb\xef\x84\x1a\x8d6q\xaeU7\xa9\xe5" +
+	"\x9a\xda\xae+>g\xddRZ7 \xa0\x12d\xb8H" +
+	"\x8dF5Z\xa3\xbbU\x7f~\xabQ\x1e\xe7\x06\xaf\x8f" +
+	"'[\xf4\xea&\x95\x0c\x03xM7\x03(%\x02*" +
+	"C\x19f\"m<2_O\xb7\x03\xeaX\x06\xd8$" +
+	" \x96\x02\xa3\x9f\xce*\xcc]%\x9el\x99\xa4\x1a\xa8" +
+	"6!zc4\xd9\x8d\x87d\x07\xe9\xba\xe1\x00\xca\x08" +
+	"\x01\x95q\xdeU\x00L\xf3\xa5\x80\xe5Q\xd5P\xed?" +
+	"z\xdbQ<\xa6\x1bu\xf1\xb8gK\xa8\xf7\xf6N:" +
+	"\x15U\x0d\x9e\x0d\xaf\x19\x04\xa5\xc4q\xf9\xa6J\x00\xa5" +
+	"V@e\xaa\x9b\xd6\x86\x09\x00\xca$\x01\x95&\x86\x12" +
+	"\xc3 \x0d\x08\xa9\xb1\x03@\x99*\xa0\xf2\x1d\x86B," +
+	"\x8a\x85\xc0\xb0\x10\xb0F7T#\xedf\xa4]\xbd3" +
+	"l$5\x15j\xe6\xf2p\xac\x83\xdbzy\x0a\x80<" +
+	"\x9a\x96\x8c\xf2\x91j\"\x91L'\"\xdc\xde\x90\xd7=" +
+	"\xcd\xe3\x8a\xed_c\x8b\xeb\x8a\xc4\x98\xe5\xdf\x0c\x8a\xfd" +
+	"-\x02*\xb71\xccP\x98x\xa2.\x0a\xa1\xdcz\x89" +
+	"$\x13\x86\x1a1\x1a@L\xb4&]\xa9\x1a\x8f\xb7\xa8" +
+	"\x91\xf9\x94\x14\xc9=\\\x80(\xf5\xd1q\xf3\xbc\x08\xc6" +
+	"E\xeb\xb6\xdb\xd9\xc8SQ\xd6\xc1k \xbf\xa8\xa6\xae" +
+	"p\xec<J\x09Z%\xa0\xf2\x84\x9b\xa05T\xb8\x8f" +
+	"\x09\xa8<\xedIP\x17e\xed\x09\x01\x95\x0d\x0c%\x81" +
+	"\x05Q\x00\x90\xd6ST\x9e\x16Py\x91\xa1\xe4\xc3 " +
+	"\xfa\x00\xa4M\x94\xca\xe7\x04T\xb63\x94\xfc,\x88~" +
+	"\x00i\xdbj\x00e\xbb\x80\xca\xde\x9c\xfcfR\xe9\x96" +
+	"x,2\x85\x03.\xb4\x03\xd6=\xe7qU7\xc2\x9c" +
+	"'(~\xbd\xd6A$\xadi<a\x84\x91\x9e\xd23" +
+	"!O\x91\x08N\\\xa6&#j\xdc*\xe4\xb0\xa1\x1a" +
+	"BZ\xef\x16\x1e*\x90G\x04T\x9e\xa2\x02aV|" +
+	"\xd6\xb6xB\xc1\x04+>\xeb\x9f\x07P6\x08\xa8l" +
+	"\xa5\xf8\xf8\xac\xf8l>\xe8\xeeZ\xf2\xf9\xad\xf8\xecY" +
+	"\x06\xa0\xec\x15Py\x93\xe2#X\xf19@6\xdf\x10" +
+	"Py\x87a&\x9d2b\xed<\xcc!\x14I&\xa2" +
+	"\xba\xe3\xbf\x914\xd4x\xb8M\x05Q\x8b\xea\x18\x00\x86" +
+	"\x01\xc0Lk:\x1e_\xd8\xccS\x18\x8fET\x83G" +
+	"\xc3\xa16\xd5\xfb<\xa5jFL\x8d\xc7\x19)\xd9:" +
+	"\xa4\x82\xaeN[R7x\xb4\x89#\xd7\xccG:\x80" +
+	"\xf3lA\x9a\xa7y\xb4~!\x88\x06\xd7{\xc42\xb7" +
+	"k5r#\xa4R\xc7\xa10z\xce\xd9d\xf7\x9c9" +
+	"\xc7\x8c\x1a\xd7\xcd\x02*\xb7P\x14k\xad(*\xf5\xee" +
+	"\xd9\xcb\xdb\xcdtO\xb2\x17\xe9)\x1e\x89\xa9\xf1\x1eu" +
+	"\x9f\xe7,%[[\xed\xad\xe5\x9b\x02\x13\xb2\xa7\xa9\x9a" +
+	"a\x8dn\x85/\xdb\xa5+\\\xe0\x05\x98\xd3\xaf\xfd=" +
+	"W\x89\xb4\xa9\xf18O\xcc\xe5M1n\x9f[\xa3\xdb" +
+	"T\x18\xee\x1e\xdc\xfc\xbd9\x8f\xf7\x1a\x8fsU\xcfZ" +
+	"m\x0a\xa9\xdd\xdd\xd7\xb2\x93\xe6\x0a\x86\x19\xd3\xfd\x89m" +
+	"T<\x14\xbc/0\xdf\xa3\xf5\xd3zzu\x8d\xd5\xc6" +
+	"/e\xb0\xe7\x9b\x82\xa3\xdd\xd0\x86Zh\xb0\xb8\x91u" +
+	"\xae;\x17\x8dl\x9eI\xe3]*\xb7\x99_\xeeY\x93" +
+	"\xa7\x00(\x8aa\xab*\xcddYSTh\xd7\xbfD" +
+	"\xd5\xd8S\xd43\xf85w\xf0;s\x7f\x82g\xee_" +
+	"$\xe75\xc9\xd6V\x9d\x1b_\xe0xw\x94\x94\x03\xd0" +
+	"r}\xf8j\x00Z\x9e\xed\xe7\x14\xd2eY\xbaG\xe1" +
+	"gSf\xe1\x9e\xe6\x1a\xcb\x05o\x11\xcf\xf3@\xb9l" +
+	"\xd7\xa9\x87\xf2\xbeU3\xcb\xd9rC\xa2\x15\xcd\x19\\" +
+	"k[\x977a%@x\x03\x0a\x18\xde\x8a\xce\x16\xe5" +
+	"\xcdX\x0f\x10~\x8e\xc4\xdb\xd1-_y\x1b6\x03\x84" +
+	"\xb7\x92|7\xba\xc3X\xde\x89\x13\x00\xc2\xdbI\xbe\x97" +
+	"\xe4>\xc1\x9c7\xf2\x1eS\x7f7\xc9\xdf \xb9\xdfg" +
+	"\x8e\x1cy?N\x06\x08\xbfN\xf2\xb7H^\x80A," +
+	"\x00\x90\x0fa\x07@\xf8M\x92\x1f#\xb9\xc8\x82&\xff" +
+	"p\x14W\x03\x84\x8f\x91\xfc\x14\xc9\x03B\x10\x03\x00\xf2" +
+	"I|\x12 |\x8a\xe4\x9f\x92\xbc0\x10\xc4B\x00\xf9" +
+	"\xaci\xe7\x13\x14\xb0\x991\x94\x8a\x0a\x83X\x04 \x7f" +
+	"\x8e\xcb\x00\x9a\x99\x80\xe1\x12\x12\x17\x17\x05\xb1\x18@." +
+	"d\x1a@8@\xf2 \xc9K\x8a\x83X\x02 Kl" +
+	"%@8H\xf2+I^\xea\x0fb)\x80\\\xc5Z" +
+	"\x00\xc2\x83I>\x94\xe4e\x05A,\x03\x90\xaf6\xe5" +
+	"\xd5$\x1fE\xf2r1\x88\xe5\x00\xf25\xa6\xfd\x11$" +
+	"\x1f\xc7r\xce}\x0f\xd8\xdf\x07L\xd2\x1a\xd3LP\x02" +
+	"\x98\xf8\x1apJ2m\xb4$\xd3\x89(\x86\xb3O\xc5" +
+	"\x9cW\xb3\xed\x02j\xb8\xde\xa8F\xb93\xa8\xed\x07\xc8" +
+	"\xf5&U\xd7y\xd43\xc4#\xc9D\x82G\x8c\x18\x84" +
+	"\x92\x09}\xfa|G\x1eK\x18|\xae\x163pa\x9d" +
+	"a\xf0\xf6\x94\xe1\x01\x05\xf9\xe1l.\x08\xe9\xbe\x1f\xc8" +
+	"\x82\x8f>\xb6\x1c\xcf\xe5\xc1\x1d\x96\x97\xeb\xe4\xcf\xe5F" +
+	"\xd8L\xab\xdbt\xf2@\x82 s\xb2_\xe1\xd2y\x80" +
+	"X\xd1\xb7\xdeb\xb5T\xdd\xbd\xf4\xe6\x01\xf1\xd5\x0c\x17" +
+	"E,=\xb7\x9f8Dc\xb7~\"\xe4\xf4\x13\x13\xd3" +
+	"4rC\x8d\xaa\x82\x05\xbb\x06;\xf67\x13\xeczQ" +
+	"@e\x87\x1b\xbeW\x08\x7fl\x15P\xd9\xed\x81];" +
+	"\x09\xf1\xef\x10Py\x9d\xfa\x89`\x81\xd7}\xb3=8" +
+	"\xd5\x06\xf7\x07\xeeuq\xaa\x03\xee\x8f\xd0@}K@" +
+	"\xe5\xaf\xd4F\x0a\xcc6\"\x1d'D{L@\xe5T" +
+	"\x1f\xa0\\&\xa6[=\x18\xd0\x85s)\x1a\x87\x0d\x89" +
+	"(\x08\xfcN/\x9a\xa5:kCU\x8b\xde\xac\xeam" +
+	"\x8e\xbd\x8c\xce\x17\xa4y\"\xc2\xa1fZ\xba\xbd\x85k" +
+	"\xb9\xb0\xb9)\xc6A\x8cp\xb7\xba\xbfD\xealX\x93" +
+	"\x0f\xf4Z\xef\x84\xcc\x97(\xfa\xa3\x04\xbf\x875C\x9b" +
+	"T\x92\x17\xe0l`r\x0cED\x87>E\x9bY\x97" +
+	"\xe7\xe0\x93\xc0\xe4Y(\"s\x88 \xb4)J\xb9\x11" +
+	"\x97\x01\x93\x1bPD\xc1!\xa1\xd0f\x14\xe5\x1b\xb1\x19" +
+	"\x98<\x16E\xf49<;\xda\x94\x9a<\x0c[\x80\xc9" +
+	"W\xa1\x88~\x878G\x9b0\x92\xfb\xe1<`r)" +
+	"\x8aX\xe0\x90\xf8hsU2b=0\xe9\xac\x88\xa2" +
+	"\xc3\xac\xa3MuJ'g\x03\x93\x8e\x8b\x18pxb" +
+	"\xb4\x89*\xe9P30i\xbf\x88\x85\x0e\x0d\x896\xbf" +
+	")\xedl\x01&m\x13\xb1\xc8!\x89\xd1f\xf7\xa4g" +
+	"\xe7\x01\x93\xbaD,v\x185\xb4\xb9^\xe9Q\xb2\xb9" +
+	"B\xcc\x98H\xbe>\x9e\x04\xa1E\xaf\xc5\x8c\x8d\x1e\xd0" +
+	"\xc6\xa1\"O\x18\xb5\xd6\x1d\x9dJ\x0a\xed\xb9\x0eP\x8b" +
+	"\x19\xfb\xc8\x03\xd2\xbb6\x81\x03b\xd2\xb4e\xd3\x1f\xd6" +
+	"d\xaf5'\x03\x9d\xb1Z\xba\x92Y\x8d\x0a\x04\xf3O" +
+	"\x1b-[v\xecZ\x011a\xe8\x8e\xf2\xc48\x94\xc7" +
+	",gld\x05h\xd4b\x13\xf6Z|\xf6\x1e]b" +
+	"\xe9\xbfD\xd4\xbd\xdd)\x1c\xcc\xf352r\x17\x01|" +
+	"\xd9\xeb\xc6Ww\x1b\xbb(G\xf7\xf5\xd1\x8e}\xb9\xb0" +
+	"8$\xce\xe5\xc0\xd4=\xef!\xb4\xbc\xd8\x0d\xd5^J" +
+	"\x9c{\xb9[7\xf3P\x0f\xf0\xacy\xc0s\x82\xf3(" +
+	"\x8f6$ \x14\x8dQ7\xce\xae\x17\xe8\xc6\x85\xf6~" +
+	".\xf2\xde\xad/a%_o\xd8\xa0\xfbu\xd8\xd7\xdb" +
+	"\xe5\xc9.h\xcf\xcd\xb49\x1f\xcd8\xc1\xe5?0\xcb" +
+	"2*4H\x9b\x04T\xbe\xc7\xfa\x04C\xbf\x04\x1d\x9a" +
+	"\x97\x0fw\xb2\xf5\x8d]\xb6\xb2dF_\xde\xb3\xd8\x89" +
+	"|P\xcd\xdb\x10S\xa4\xe5\x94\xb1\xfd\x15\xafo\xcd\"" +
+	"\x87\xfe\xceG\xba^2\xa3\x9fEj5Zt\x92\xfa" +
+	"E(M\xca\x07\xd3\xec\xea\xc8Ei\x98\x0f\xa5\xb1|" +
+	"(\x0d\xf3\xa14_\x1fQZ\x0eE\xf5\xcd\xa14\xd6" +
+	"\xbd\xed \xb7\x98ZB[\xf6\x97p\xb4\xbf\xf1I\x9b" +
+	"\x08d\xac'\xace\x7f|D\xfb\x93\xb0\xb4F\x03&" +
+	"=DH\xcb\xfe\xd2\x8c\xf6\x97rii\x070\xa9S" +
+	"D\xc1\xfe6\xee~\xde\x94\xd2\x04N\xda\x09e\xd9\xdf" +
+	"\xae\xd1\xfe\xe8(\xa9+\x81Is\x08c\xd9\xff`\x80" +
+	"\xf6?\x12H\xcad`RC\x16\xb8\xd8\x17'\x0fr" +
+	"\x81\x909\x08ksnvf\xd7\xae\xc5\x8c=\xa5\x09" +
+	"J\x98\x02/\xae1\x95L\x04b\x7f*\x00B9M" +
+	"\x88\xff\x09\x00\x00\xff\xffks\xb4\x11"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
@@ -5656,7 +5400,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xa555f1f20e76f387,
 			0xa5ad1743535d7600,
 			0xaa46602ae1eb5f0b,
-			0xab8516c2100e3de1,
 			0xac7e34ae1fe5a13b,
 			0xaf34818424bacdc6,
 			0xb84185b603d81424,
@@ -5666,7 +5409,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xbd5a9d53b241a36b,
 			0xbdf02a5900aaac37,
 			0xc03394397a4f7e9e,
-			0xc2050ba289c7cbe0,
 			0xc21d44f68983e24a,
 			0xc5a328f721ad6e8f,
 			0xc67b0c713f48381e,

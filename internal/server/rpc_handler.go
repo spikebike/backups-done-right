@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log"
 
 	"p2p-backup/internal/rpc" // this imports schema.capnp.go
 )
@@ -20,9 +21,11 @@ func NewRPCHandler(engine *Engine, clientPubKey string) *RPCHandler {
 // --- BackupServer Methods ---
 
 func (h *RPCHandler) OfferBlobs(ctx context.Context, call rpc.BackupServer_offerBlobs) error {
+	log.Printf("RPCHandler: Received OfferBlobs from %s...", h.clientPubKey[:16])
 	args := call.Args()
 	capnpBlobs, err := args.Blobs()
 	if err != nil {
+		log.Printf("RPCHandler: OfferBlobs args error: %v", err)
 		return err
 	}
 
@@ -37,16 +40,19 @@ func (h *RPCHandler) OfferBlobs(ctx context.Context, call rpc.BackupServer_offer
 		})
 	}
 
+	log.Printf("RPCHandler: Calling engine.OfferBlobs for %d blobs...", len(metaBlobs))
 	neededIndices, err := h.engine.OfferBlobs(ctx, h.clientPubKey, metaBlobs)
 	if err != nil {
+		log.Printf("RPCHandler: engine.OfferBlobs error: %v", err)
 		return err
 	}
 
+	log.Printf("RPCHandler: Returning %d needed indices to client.", len(neededIndices))
 	res, err := call.AllocResults()
 	if err != nil {
 		return err
 	}
-	
+
 	neededList, err := res.NewNeededIndices(int32(len(neededIndices)))
 	if err != nil {
 		return err
@@ -57,42 +63,34 @@ func (h *RPCHandler) OfferBlobs(ctx context.Context, call rpc.BackupServer_offer
 
 	return nil
 }
-
-func (h *RPCHandler) UploadBlobs(ctx context.Context, call rpc.BackupServer_uploadBlobs) error {
+func (h *RPCHandler) PrepareUploadClient(ctx context.Context, call rpc.BackupServer_prepareUploadClient) error {
 	args := call.Args()
 	capnpBlobs, err := args.Blobs()
 	if err != nil {
 		return err
 	}
 
-	var dataBlobs []rpc.LocalBlobData
 	for i := 0; i < capnpBlobs.Len(); i++ {
 		cb := capnpBlobs.At(i)
-		hashBytes, _ := cb.Checksum()
-		dataBytes, _ := cb.Data()
-		dataBlobs = append(dataBlobs, rpc.LocalBlobData{
-			Hash: hex.EncodeToString(hashBytes),
-			Data: dataBytes,
+		hashBytes, err := cb.Checksum()
+		if err != nil {
+			return fmt.Errorf("failed to read blob %d checksum: %w", i, err)
+		}
+		h.engine.pendingClientStreams.Store(hex.EncodeToString(hashBytes), rpc.BlobMeta{
+			Hash:    hex.EncodeToString(hashBytes),
+			Size:    int64(cb.Size()),
+			Special: cb.Special(),
 		})
 	}
 
-	err = h.engine.UploadBlobs(ctx, h.clientPubKey, dataBlobs)
-	
 	res, allocErr := call.AllocResults()
 	if allocErr != nil {
 		return allocErr
 	}
-	
-	if err != nil {
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
-	}
 
+	res.SetSuccess(true)
 	return nil
 }
-
 func (h *RPCHandler) ListSpecialBlobs(ctx context.Context, call rpc.BackupServer_listSpecialBlobs) error {
 	specialBlobs, err := h.engine.ListSpecialBlobs(ctx)
 	if err != nil {
@@ -115,56 +113,6 @@ func (h *RPCHandler) ListSpecialBlobs(ctx context.Context, call rpc.BackupServer
 		cb.SetChecksum(hashBytes)
 		cb.SetSize(uint64(sb.Size))
 		cb.SetSpecial(sb.Special)
-	}
-
-	return nil
-}
-
-func (h *RPCHandler) DownloadBlobs(ctx context.Context, call rpc.BackupServer_downloadBlobs) error {
-	args := call.Args()
-	capnpHashes, err := args.Checksums()
-	if err != nil {
-		return err
-	}
-
-	var hashes []string
-	for i := 0; i < capnpHashes.Len(); i++ {
-		hashBytes, _ := capnpHashes.At(i)
-		hashes = append(hashes, hex.EncodeToString(hashBytes))
-	}
-
-	foundBlobs, missingHashes, err := h.engine.GetBlobs(ctx, hashes)
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	resBlobs, err := res.NewBlobs(int32(len(foundBlobs)))
-	if err != nil {
-		return err
-	}
-	for i, b := range foundBlobs {
-		cb := resBlobs.At(i)
-		hashBytes, _ := hex.DecodeString(b.Hash)
-		if err := cb.SetChecksum(hashBytes); err != nil {
-			return fmt.Errorf("failed to set checksum for blob %d: %w", i, err)
-		}
-		if err := cb.SetData(b.Data); err != nil {
-			return fmt.Errorf("failed to set data for blob %d (len %d): %w", i, len(b.Data), err)
-		}
-	}
-
-	resMissing, err := res.NewMissing(int32(len(missingHashes)))
-	if err != nil {
-		return err
-	}
-	for i, mh := range missingHashes {
-		hashBytes, _ := hex.DecodeString(mh)
-		resMissing.Set(i, hashBytes)
 	}
 
 	return nil
@@ -457,7 +405,7 @@ func (h *RPCHandler) OfferShards(ctx context.Context, call rpc.PeerNode_offerSha
 	if err != nil {
 		return err
 	}
-	
+
 	neededList, err := res.NewNeededIndices(int32(len(neededIndices)))
 	if err != nil {
 		return err
@@ -539,7 +487,7 @@ func (h *RPCHandler) ChallengePiece(ctx context.Context, call rpc.PeerNode_chall
 	if err != nil {
 		return err
 	}
-	
+
 	err = res.SetData(data)
 	return err
 }
