@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -18,6 +19,18 @@ import (
 
 	"lukechampine.com/blake3"
 )
+
+type QueueJob struct {
+	ShardID         int64
+	PieceIndex      int
+	FilePath        string
+	Size            int64
+	HashHex         string
+	IsMirrored      bool
+	ParentShardHash string
+	Sequence        uint64
+	TotalPieces     int
+}
 
 // OutboundWorker periodically scans the queue directory for erasure-coded pieces
 // and uploads them to available peers.
@@ -76,7 +89,6 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 
 	for _, s := range mirrored {
 		// For each mirrored shard, find peers who don't have it yet.
-		// We exclude peers who already have an 'uploaded' or 'pending' record for Piece 0.
 		query := `
 			SELECT p.id, p.ip_address, p.public_key 
 			FROM peers p
@@ -90,29 +102,43 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 		}
 
 		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", s.id))
-		data, err := os.ReadFile(shardPath)
+		stat, err := os.Stat(shardPath)
 		if err != nil {
 			pRows.Close()
 			continue
 		}
 
-		// Ensure the data is padded to targetPieceSize to match the trade unit
+		// Ensure the padding is accounted for in the size sent over the wire
 		targetPieceSize := e.ShardSize / int64(e.DataShards)
-		if int64(len(data)) < targetPieceSize {
-			padded := make([]byte, targetPieceSize)
-			copy(padded, data)
-			data = padded
+		size := stat.Size()
+		if size < targetPieceSize {
+			size = targetPieceSize
 		}
 
+		var peers []int64
 		for pRows.Next() {
 			var peerID int64
 			var peerAddr, peerPubKey string
 			if err := pRows.Scan(&peerID, &peerAddr, &peerPubKey); err == nil {
-				// Use the existing performUpload logic
-				_ = e.performUpload(ctx, peerID, peerAddr, peerPubKey, s.id, 0, data, s.hash, true, s.hash, s.seq, s.total)
+				peers = append(peers, peerID)
 			}
 		}
 		pRows.Close()
+
+		for _, peerID := range peers {
+			job := QueueJob{
+				ShardID:         s.id,
+				PieceIndex:      0,
+				FilePath:        shardPath,
+				Size:            size,
+				HashHex:         s.hash,
+				IsMirrored:      true,
+				ParentShardHash: s.hash,
+				Sequence:        s.seq,
+				TotalPieces:     s.total,
+			}
+			e.performUploadBatch(ctx, peerID, []QueueJob{job})
+		}
 	}
 }
 
@@ -123,7 +149,7 @@ func (e *Engine) processQueue(ctx context.Context) {
 		return
 	}
 
-	var wg sync.WaitGroup
+	var jobs []QueueJob
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "shard_") {
@@ -142,64 +168,67 @@ func (e *Engine) processQueue(ctx context.Context) {
 		}
 
 		filePath := filepath.Join(e.QueueDir, entry.Name())
+		stat, err := os.Stat(filePath)
+		if err != nil {
+			continue
+		}
 
-		wg.Add(1)
-		// Launch each upload in a goroutine
-		go func(name, fPath string, sID int64, pIdx int) {
-			defer wg.Done()
+		var job QueueJob
+		job.ShardID = shardID
+		job.PieceIndex = pieceIndex
+		job.FilePath = filePath
+		job.Size = stat.Size()
 
-			// Acquire concurrency semaphore before attempting to upload
-			e.streamSemaphore <- struct{}{}
-			defer func() { <-e.streamSemaphore }()
+		err = e.DB.QueryRowContext(ctx, "SELECT mirrored, hash, sequence, total_pieces FROM shards WHERE id = ?", shardID).Scan(&job.IsMirrored, &job.ParentShardHash, &job.Sequence, &job.TotalPieces)
+		if err == sql.ErrNoRows {
+			log.Printf("OutboundWorker: shard %d no longer exists in DB. Deleting orphaned piece: %s", shardID, filePath)
+			os.Remove(filePath)
+			continue
+		} else if err != nil {
+			continue
+		}
 
-			err := e.uploadPiece(ctx, sID, pIdx, fPath)
-			if err != nil {
-				log.Printf("OutboundWorker: Failed to upload piece %s: %v", name, err)
-			} else {
-				os.Remove(fPath)
-				e.checkShardCompletion(ctx, sID)
-			}
-		}(entry.Name(), filePath, shardID, pieceIndex)
+		// Hash file efficiently using StreamBufferPool
+		f, err := os.Open(filePath)
+		if err != nil {
+			continue
+		}
+		hasher := blake3.New(32, nil)
+		buf := e.StreamBufferPool.Get().([]byte)
+		_, err = io.CopyBuffer(hasher, f, buf)
+		e.StreamBufferPool.Put(buf)
+		f.Close()
+
+		if err != nil {
+			log.Printf("OutboundWorker: failed to hash piece %s: %v", filePath, err)
+			continue
+		}
+		
+		job.HashHex = hex.EncodeToString(hasher.Sum(nil))
+		jobs = append(jobs, job)
 	}
 
-	// Wait for all uploads in this batch to finish before returning
-	wg.Wait()
-}
+	if len(jobs) == 0 {
+		return
+	}
 
-func (e *Engine) uploadPiece(ctx context.Context, shardID int64, pieceIndex int, filePath string) error {
-	data, err := os.ReadFile(filePath)
+	// Group jobs by target PeerID
+	peerBatches := make(map[int64][]QueueJob)
+	
+	// Transaction to map pieces to peers and track quotas
+	tx, err := e.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("read file: %w", err)
+		log.Printf("OutboundWorker: failed to start tx for assignment: %v", err)
+		return
 	}
 
-	hashBytes := blake3.Sum256(data)
-	hashHex := hex.EncodeToString(hashBytes[:])
-
-	// Check if this shard is mirrored and get its metadata
-	var isMirrored bool
-	var parentShardHash string
-	var sequence uint64
-	var totalPieces int
-	err = e.DB.QueryRowContext(ctx, "SELECT mirrored, hash, sequence, total_pieces FROM shards WHERE id = ?", shardID).Scan(&isMirrored, &parentShardHash, &sequence, &totalPieces)
-	if err == sql.ErrNoRows {
-		log.Printf("OutboundWorker: shard %d no longer exists in DB. Deleting orphaned piece: %s", shardID, filePath)
-		os.Remove(filePath)
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("query shard metadata: %w", err)
-	}
-
-	// For Mirrored Shards, we keep looping until we've tried all peers.
-	// For Standard Shards, we just do one upload per call.
-	for {
-		// Find a suitable peer
+	for _, job := range jobs {
 		query := `
-			SELECT p.id, p.ip_address, p.public_key 
+			SELECT p.id
 			FROM peers p
 			LEFT JOIN outbound_pieces op ON p.id = op.peer_id AND op.shard_id = ?
 		`
-		if isMirrored {
+		if job.IsMirrored {
 			query += " AND op.piece_index = ? "
 		}
 
@@ -212,137 +241,210 @@ func (e *Engine) uploadPiece(ctx context.Context, shardID int64, pieceIndex int,
 		ORDER BY p.last_seen DESC
 		LIMIT 1
 	`
-		var peerID int64
-		var peerAddr string
-		var peerPubKeyHex string
-
 		limitBytes := e.UntrustedPeerUploadLimitMB * 1024 * 1024
+		var peerID int64
+		var tErr error
 
-		var err error
-		if isMirrored {
-			err = e.DB.QueryRowContext(ctx, query, shardID, pieceIndex, int64(len(data)), limitBytes).Scan(&peerID, &peerAddr, &peerPubKeyHex)
+		if job.IsMirrored {
+			tErr = tx.QueryRowContext(ctx, query, job.ShardID, job.PieceIndex, job.Size, limitBytes).Scan(&peerID)
 		} else {
-			err = e.DB.QueryRowContext(ctx, query, shardID, int64(len(data)), limitBytes).Scan(&peerID, &peerAddr, &peerPubKeyHex)
+			tErr = tx.QueryRowContext(ctx, query, job.ShardID, job.Size, limitBytes).Scan(&peerID)
 		}
 
-		if err == sql.ErrNoRows {
-			if isMirrored {
-				return nil // Successfully tried all available peers
-			}
-			return fmt.Errorf("no suitable peer found for piece")
-		} else if err != nil {
-			return fmt.Errorf("find suitable peer: %w", err)
-		}
-
-		if err := e.performUpload(ctx, peerID, peerAddr, peerPubKeyHex, shardID, pieceIndex, data, hashHex, isMirrored, parentShardHash, sequence, totalPieces); err != nil {
-			log.Printf("OutboundWorker: upload to peer %d failed: %v", peerID, err)
-			if !isMirrored {
-				return err
-			}
-			// For mirrored shards, just continue to next peer
+		if tErr == sql.ErrNoRows {
+			continue
+		} else if tErr != nil {
+			log.Printf("OutboundWorker: peer assignment query failed: %v", tErr)
 			continue
 		}
 
-		if !isMirrored {
-			return nil // Finished one standard piece
+		_, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, ?, ?, 'pending')", job.ShardID, job.PieceIndex, peerID)
+		if err != nil {
+			continue
 		}
-		// For mirrored, loop again to find the next peer
+		
+		// Temporarily inflate constraint tracking map
+		_, err = tx.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = outbound_storage_size + ? WHERE id = ?", job.Size, peerID)
+		if err != nil {
+			continue
+		}
+
+		peerBatches[peerID] = append(peerBatches[peerID], job)
 	}
+
+	tx.Commit()
+
+	// Launch multiplexed batches!
+	var wg sync.WaitGroup
+	for peerID, batch := range peerBatches {
+		wg.Add(1)
+		go func(pID int64, b []QueueJob) {
+			defer wg.Done()
+			e.performUploadBatch(ctx, pID, b)
+		}(peerID, batch)
+	}
+	wg.Wait()
 }
 
-func (e *Engine) performUpload(ctx context.Context, peerID int64, peerAddr string, peerPubKeyHex string, shardID int64, pieceIndex int, data []byte, hashHex string, isMirrored bool, parentShardHash string, sequence uint64, totalPieces int) error {
+func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []QueueJob) {
 	client, err := e.GetOrDialPeer(ctx, peerID)
 	if err != nil {
-		return err
+		e.failJobs(ctx, peerID, jobs)
+		log.Printf("OutboundWorker: batch dial failed for peer %d", peerID)
+		return
 	}
 	defer client.Close()
 
-	meta := []rpc.PeerShardMeta{
-		{
-			Hash:            hashHex,
-			Size:            int64(len(data)),
-			IsSpecial:       isMirrored,
-			PieceIndex:      pieceIndex,
-			ParentShardHash: parentShardHash,
-			SequenceNumber:  sequence,
-			TotalPieces:     totalPieces,
-		},
+	var meta []rpc.PeerShardMeta
+	jobMap := make(map[string]QueueJob)
+	
+	for _, job := range jobs {
+		meta = append(meta, rpc.PeerShardMeta{
+			Hash:            job.HashHex,
+			Size:            job.Size,
+			IsSpecial:       job.IsMirrored,
+			PieceIndex:      job.PieceIndex,
+			ParentShardHash: job.ParentShardHash,
+			SequenceNumber:  job.Sequence,
+			TotalPieces:     job.TotalPieces,
+		})
+		jobMap[job.HashHex] = job
 	}
 
 	needed, err := client.OfferShards(ctx, meta)
 	if err != nil {
 		e.RemoveActivePeer(peerID)
-		return fmt.Errorf("offer shards (connection may have dropped): %w", err)
+		e.failJobs(ctx, peerID, jobs)
+		return
 	}
 
 	if len(needed) > 0 {
 		err = client.PrepareUpload(ctx, meta)
 		if err != nil {
 			e.RemoveActivePeer(peerID)
-			return fmt.Errorf("prepare upload: %w", err)
+			e.failJobs(ctx, peerID, jobs)
+			return
 		}
 
-		err = e.PushPiece(ctx, peerID, data, hashHex)
-		if err != nil {
-			e.RemoveActivePeer(peerID)
-			// Record failure
-			_, _ = e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", peerID, shardID, pieceIndex)
-			return fmt.Errorf("push piece: %w", err)
-		}
-		// Record success (counts as uptime)
-		_, _ = e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'ok')", peerID, shardID, pieceIndex)
-	}
+		var streamWg sync.WaitGroup
+		for _, idx := range needed {
+			streamWg.Add(1)
+			job := jobMap[meta[idx].Hash]
+			
+			go func(j QueueJob) {
+				defer streamWg.Done()
+				
+				e.streamSemaphore <- struct{}{}
+				defer func() { <-e.streamSemaphore }()
 
-	// Update our database
-	tx, err := e.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// Check if we already recorded this piece as uploaded to this peer
-	var alreadyUploaded bool
-	_ = tx.QueryRowContext(ctx, "SELECT 1 FROM outbound_pieces WHERE shard_id = ? AND piece_index = ? AND peer_id = ? AND status = 'uploaded'", shardID, pieceIndex, peerID).Scan(&alreadyUploaded)
-
-	_, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, ?, ?, 'uploaded')", shardID, pieceIndex, peerID)
-	if err != nil {
-		return err
-	}
-
-	if !alreadyUploaded {
-		_, err = tx.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = outbound_storage_size + ? WHERE id = ?", int64(len(data)), peerID)
-		if err != nil {
-			return err
-		}
-	}
-
-	if e.ChallengesPerPiece > 0 {
-		maxOffset := len(data) - 32
-		if maxOffset > 0 {
-			for i := 0; i < e.ChallengesPerPiece; i++ {
-				offset := rand.Intn(maxOffset)
-				expectedData := data[offset : offset+32]
-				_, err = tx.ExecContext(ctx, "INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, ?, ?)", shardID, pieceIndex, peerID, hashHex, offset, expectedData)
+				err := e.PushPieceDirectStreamed(ctx, peerID, j)
 				if err != nil {
-					log.Printf("OutboundWorker: failed to insert piece challenge natively: %v", err)
+					e.failJob(ctx, peerID, j)
+					// challenge result unavailable
+					e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", peerID, j.ShardID, j.PieceIndex)
+					log.Printf("OutboundWorker: stream push failed for %s: %v", j.HashHex, err)
+					return
+				}
+				
+				e.finalizeJobSuccess(ctx, peerID, j)
+				// Remove successfully uploaded piece file, except for mirrored shards 
+				// (which are actual storage files and should be kept intact, piece_index=0 represents the whole file).
+				// We actually don't want to delete original blobs for mirrored, just QueueDir ones.
+				if !j.IsMirrored || strings.Contains(j.FilePath, "server_queue") {
+				    os.Remove(j.FilePath)
+				}
+				e.checkShardCompletion(ctx, j.ShardID)
+			}(job)
+		}
+		streamWg.Wait()
+		
+		// Any pieces NOT needed were already possessed by the peer! We should mark them as success too.
+		neededMap := make(map[int]bool)
+		for _, idx := range needed {
+			neededMap[int(idx)] = true
+		}
+		for i, job := range jobs {
+			if !neededMap[i] {
+				e.finalizeJobSuccess(ctx, peerID, job)
+				if !job.IsMirrored || strings.Contains(job.FilePath, "server_queue") {
+				    os.Remove(job.FilePath)
+				}
+				e.checkShardCompletion(ctx, job.ShardID)
+			}
+		}
+	} else {
+		// All pieces accepted instantly (none needed transfer)
+		for _, j := range jobs {
+			e.finalizeJobSuccess(ctx, peerID, j)
+			if !j.IsMirrored || strings.Contains(j.FilePath, "server_queue") {
+			    os.Remove(j.FilePath)
+			}
+			e.checkShardCompletion(ctx, j.ShardID)
+		}
+	}
+}
+
+func (e *Engine) PushPieceDirectStreamed(ctx context.Context, peerID int64, job QueueJob) error {
+	f, err := os.Open(job.FilePath)
+	if err != nil {
+		return fmt.Errorf("open file stream: %w", err)
+	}
+	defer f.Close()
+	
+	// Handle special cases where padding to TargetPieceSize is required for Mirrored chunks
+	targetPieceSize := e.ShardSize / int64(e.DataShards)
+	
+	var reader io.Reader = f
+	if job.IsMirrored && int64(job.Size) == targetPieceSize {
+	    // If the file is physically smaller but job.Size is maxed (due to padding in syncMirrored), we must pad the stream.
+	    stat, _ := f.Stat()
+	    if stat.Size() < targetPieceSize {
+	        padding := make([]byte, targetPieceSize - stat.Size())
+	        // simple multi-reader to append zeros dynamically during stream to avoid allocations
+	        reader = io.MultiReader(f, strings.NewReader(string(padding)))
+	    }
+	}
+
+	return e.PushPiece(ctx, peerID, reader, job.Size, job.HashHex)
+}
+
+func (e *Engine) failJobs(ctx context.Context, peerID int64, jobs []QueueJob) {
+	for _, j := range jobs {
+		e.failJob(ctx, peerID, j)
+	}
+}
+
+func (e *Engine) failJob(ctx context.Context, peerID int64, job QueueJob) {
+	e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = outbound_storage_size - ? WHERE id = ?", job.Size, peerID)
+	e.DB.ExecContext(ctx, "DELETE FROM outbound_pieces WHERE shard_id = ? AND piece_index = ? AND peer_id = ?", job.ShardID, job.PieceIndex, peerID)
+}
+
+func (e *Engine) finalizeJobSuccess(ctx context.Context, peerID int64, job QueueJob) {
+	e.DB.ExecContext(ctx, "UPDATE outbound_pieces SET status = 'uploaded' WHERE shard_id = ? AND piece_index = ? AND peer_id = ?", job.ShardID, job.PieceIndex, peerID)
+	e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'ok')", peerID, job.ShardID, job.PieceIndex)
+	
+	if e.ChallengesPerPiece > 0 {
+		maxOffset := int(job.Size) - 32
+		if maxOffset > 0 {
+			f, err := os.Open(job.FilePath)
+			if err == nil {
+				defer f.Close()
+				for i := 0; i < e.ChallengesPerPiece; i++ {
+					offset := rand.Intn(maxOffset)
+					expectedData := make([]byte, 32)
+					f.ReadAt(expectedData, int64(offset))
+					e.DB.ExecContext(ctx, "INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, ?, ?)", job.ShardID, job.PieceIndex, peerID, job.HashHex, offset, expectedData)
 				}
 			}
 		}
 	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
+	
 	if e.Verbose {
-		log.Printf("OutboundWorker: Successfully uploaded piece %d of shard %d to peer %d (%s)", pieceIndex, shardID, peerID, peerAddr)
+		log.Printf("OutboundWorker: Successfully uploaded piece %d of shard %d to peer %d", job.PieceIndex, job.ShardID, peerID)
 	}
-
-	return nil
 }
 
 func (e *Engine) checkShardCompletion(ctx context.Context, shardID int64) {
-	// Check if this is a mirrored shard
 	var isMirrored bool
 	_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", shardID).Scan(&isMirrored)
 
@@ -350,7 +452,6 @@ func (e *Engine) checkShardCompletion(ctx context.Context, shardID int64) {
 		return
 	}
 
-	// Check if all pieces (DataShards + ParityShards) are successfully uploaded
 	var count int
 	err := e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE shard_id = ? AND status = 'uploaded'", shardID).Scan(&count)
 	if err != nil {

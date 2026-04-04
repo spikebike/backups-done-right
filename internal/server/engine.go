@@ -68,6 +68,7 @@ type Engine struct {
 	wg              sync.WaitGroup
 	streamSemaphore chan struct{}
 	pendingInboundStreams sync.Map
+	StreamBufferPool      sync.Pool
 }
 
 // NewEngine creates a new server Engine.
@@ -125,8 +126,6 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 	return &Engine{
 		DB:                         db,
 		SQLitePath:                 sqlitePath,
-		ChallengesPerPiece:         challengesPerPiece,
-		ContactInfo:                contactInfo,
 		BlobStoreDir:               blobStoreDir,
 		QueueDir:                   queueDir,
 		DataShards:                 dataShards,
@@ -145,6 +144,7 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		PeerEvictionHours:          peerEvictionHours,
 		MaxStorageBytes:            maxBytes,
 		BasePieceBuffer:            basePieceBuffer,
+		ChallengesPerPiece:         challengesPerPiece,
 		UploadLimiter:              uploadLimiter,
 		DownloadLimiter:            downloadLimiter,
 		UntrustedPeerUploadLimitMB: int64(untrustedLimitMB),
@@ -152,8 +152,14 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		StartTime:                  time.Now(),
 		MasterKey:                  masterKey,
 		AdminPublicKey:             adminPublicKey,
+		ContactInfo:                contactInfo,
 		pendingBlobs:               make(map[string]rpc.BlobMeta),
 		streamSemaphore:            make(chan struct{}, maxConcurrentStreams),
+		StreamBufferPool: sync.Pool{
+			New: func() any {
+				return make([]byte, 4*1024*1024) // 4MB buffer specifically for io.CopyBuffer
+			},
+		},
 	}
 }
 

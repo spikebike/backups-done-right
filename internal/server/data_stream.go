@@ -82,8 +82,10 @@ func (e *Engine) handleIncomingPush(s network.Stream, checksumHex string, size u
 	hasher := blake3.New(32, nil)
 	tee := io.TeeReader(s, hasher)
 
-	// Stream with a 4MB buffer to bound memory
-	buf := make([]byte, 4*1024*1024)
+	// Stream with a 4MB buffer pool to bound memory
+	buf := e.StreamBufferPool.Get().([]byte)
+	defer e.StreamBufferPool.Put(buf)
+	
 	written, err := io.CopyBuffer(f, io.LimitReader(tee, int64(size)), buf)
 	if err != nil {
 		log.Printf("DataStream: failed to stream data for %s: %v", checksumHex, err)
@@ -177,7 +179,9 @@ func (e *Engine) handleIncomingPull(s network.Stream, checksumHex string) {
 		return
 	}
 
-	buf := make([]byte, 4*1024*1024)
+	buf := e.StreamBufferPool.Get().([]byte)
+	defer e.StreamBufferPool.Put(buf)
+	
 	if _, err := io.CopyBuffer(s, f, buf); err != nil {
 		log.Printf("DataStream: failed to send file %s: %v", checksumHex, err)
 	} else if e.Verbose {
@@ -186,7 +190,7 @@ func (e *Engine) handleIncomingPull(s network.Stream, checksumHex string) {
 }
 
 // PushPiece opens a raw stream to a peer and pushes the file data.
-func (e *Engine) PushPiece(ctx context.Context, peerID int64, data []byte, checksumHex string) error {
+func (e *Engine) PushPiece(ctx context.Context, peerID int64, dataStream io.Reader, size int64, checksumHex string) error {
 	// In test/localtest mode (no libp2p host), skip the raw data stream.
 	// PrepareUpload already notified the peer via the Cap'n Proto callback.
 	if e.Host == nil {
@@ -225,13 +229,16 @@ func (e *Engine) PushPiece(ctx context.Context, peerID int64, data []byte, check
 	header := make([]byte, 41)
 	header[0] = OpCodePush
 	copy(header[1:33], checksumBytes)
-	binary.BigEndian.PutUint64(header[33:41], uint64(len(data)))
+	binary.BigEndian.PutUint64(header[33:41], uint64(size))
 
 	if _, err := throttledStream.Write(header); err != nil {
 		return fmt.Errorf("failed to write stream header: %w", err)
 	}
 
-	if _, err := throttledStream.Write(data); err != nil {
+	buf := e.StreamBufferPool.Get().([]byte)
+	defer e.StreamBufferPool.Put(buf)
+
+	if _, err := io.CopyBuffer(throttledStream, dataStream, buf); err != nil {
 		return fmt.Errorf("failed to stream data: %w", err)
 	}
 
@@ -362,6 +369,9 @@ func (e *Engine) PullPieceDirect(ctx context.Context, pid peer.ID, checksumHex s
 		return nil, fmt.Errorf("failed to read response size header: %w", err)
 	}
 	size := binary.BigEndian.Uint64(sizeBuf)
+
+	buf := e.StreamBufferPool.Get().([]byte)
+	defer e.StreamBufferPool.Put(buf)
 
 	data := make([]byte, size)
 	if _, err := io.ReadFull(throttledStream, data); err != nil {
