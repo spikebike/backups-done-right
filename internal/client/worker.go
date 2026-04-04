@@ -60,6 +60,7 @@ type CryptoPool struct {
 	UploadChan     chan<- UploadJob
 	ArchiveChan    chan<- FileArchive
 	Verbose        bool
+	Compress       bool
 	Stats          *BackupStats
 	wg             sync.WaitGroup
 	sessionUploads sync.Map    // Track hashes already queued in this session (plainHashHex -> encHashHex)
@@ -67,7 +68,7 @@ type CryptoPool struct {
 	rawChunkPool   sync.Pool   // Reusable raw chunk read buffers
 }
 
-func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool, stats *BackupStats) *CryptoPool {
+func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool, compress bool, stats *BackupStats) *CryptoPool {
 	poolSize := cap(uploadChan) + numWorkers
 	if poolSize <= 0 {
 		poolSize = 100
@@ -83,6 +84,7 @@ func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, arch
 		UploadChan:   uploadChan,
 		ArchiveChan:  archiveChan,
 		Verbose:      verbose,
+		Compress:     compress,
 		Stats:        stats,
 		cipherBufs:   cipherBufs,
 		rawChunkPool: sync.Pool{
@@ -193,9 +195,14 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 		if n > 0 {
 			rawChunk := chunkBuf[:n]
 			
-			// Compress with zstd (reuses worker-local buffer)
-			*compressBuf = zstdEncoder.EncodeAll(rawChunk, (*compressBuf)[:0])
-			chunk := *compressBuf
+			// Compress with zstd (reuses worker-local buffer) if enabled
+			var chunk []byte
+			if p.Compress {
+				*compressBuf = zstdEncoder.EncodeAll(rawChunk, (*compressBuf)[:0])
+				chunk = *compressBuf
+			} else {
+				chunk = rawChunk
+			}
 			
 			// Hash plaintext chunk (now compressed)
 			plainHash := crypto.Hash(chunk)

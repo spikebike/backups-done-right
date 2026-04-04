@@ -153,7 +153,7 @@ func main() {
 	
 	key := []byte("01234567890123456789012345678901")
 	archiveChan := make(chan client.FileArchive, 1000)
-	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, verbose, nil)
+	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, verbose, true, nil)
 	
 	// Connect the client to the local server engine
 	rpcClient := client.NewMockRPCClient(engine)

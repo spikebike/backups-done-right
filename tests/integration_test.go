@@ -31,7 +31,7 @@ func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpc
 
 	crawler := client.NewCrawler(clientDB, dbJobChan, backupDirs, jobChan, 4, false)
 	archiveChan := make(chan client.FileArchive, 1000)
-	cryptoPool := client.NewCryptoPool(key, 2, uploadChan, archiveChan, false, nil)
+	cryptoPool := client.NewCryptoPool(key, 2, uploadChan, archiveChan, false, true, nil)
 	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, 10, false, false, backupID, nil)
 	stateManager := client.NewStateManager(clientDB, dbJobChan, archiveChan, false)
 

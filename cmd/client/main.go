@@ -652,7 +652,11 @@ func main() {
 		if cryptoThreads <= 0 {
 			cryptoThreads = 4
 		}
-		cryptoPool := client.NewCryptoPool(key, cryptoThreads, uploadChan, archiveChan, verbose, stats)
+		enableCompression := true
+		if cfg.Crypto.EnableCompression != nil {
+			enableCompression = *cfg.Crypto.EnableCompression
+		}
+		cryptoPool := client.NewCryptoPool(key, cryptoThreads, uploadChan, archiveChan, verbose, enableCompression, stats)
 
 		batchSize := cfg.Pipeline.BatchUploadSize
 		if batchSize <= 0 {

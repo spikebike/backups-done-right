@@ -16,6 +16,7 @@
 |-----------|------|---------|-------------|
 | `password` | string | — | Password used to derive the AEAD encryption key (XChaCha20-Poly1305) |
 | `block_size_bytes` | int | 4194304 | Chunk size in bytes for file splitting (default 4MB) |
+| `enable_compression` | bool | true | Enable zstd compression before encryption. Set to false for pre-compressed data (videos, images, archives) |
 
 ## pipeline
 | Parameter | Type | Default | Description |
@@ -58,6 +59,7 @@ backup_directories:
 
 crypto:
   password: "my_encryption_password"
+  enable_compression: true
 
 pipeline:
   scan_threads: 4

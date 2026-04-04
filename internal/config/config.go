@@ -21,8 +21,9 @@ type ClientConfig struct {
 	} `yaml:"server"`
 
 	Crypto struct {
-		Password       string `yaml:"password"`
-		BlockSizeBytes int    `yaml:"block_size_bytes"`
+		Password          string `yaml:"password"`
+		BlockSizeBytes    int    `yaml:"block_size_bytes"`
+		EnableCompression *bool  `yaml:"enable_compression"` // Defaults to true if omitted
 	} `yaml:"crypto"`
 
 	Pipeline struct {
