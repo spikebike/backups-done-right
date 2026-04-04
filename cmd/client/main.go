@@ -646,11 +646,13 @@ func main() {
 		
 		archiveChan := make(chan client.FileArchive, 1000)
 
+		stats := client.NewBackupStats()
+
 		cryptoThreads := cfg.Pipeline.CryptoThreads
 		if cryptoThreads <= 0 {
 			cryptoThreads = 4
 		}
-		cryptoPool := client.NewCryptoPool(key, cryptoThreads, uploadChan, archiveChan, verbose)
+		cryptoPool := client.NewCryptoPool(key, cryptoThreads, uploadChan, archiveChan, verbose, stats)
 
 		batchSize := cfg.Pipeline.BatchUploadSize
 		if batchSize <= 0 {
@@ -662,7 +664,7 @@ func main() {
 			uploaderThreads = 2
 		}
 		
-		uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, uploaderThreads, batchSize, *fakeUpload, verbose, backupID)
+		uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, uploaderThreads, batchSize, *fakeUpload, verbose, backupID, stats)
 		stateManager := client.NewStateManager(database, dbJobChan, archiveChan, verbose)
 
 		if verbose {
@@ -696,6 +698,9 @@ func main() {
 		uploader.Wait()
 		
 		stateManager.Wait()
+
+		// Print performance summary
+		stats.PrintSummary()
 		
 		if verbose {
 			log.Println("Backup process completed successfully.")

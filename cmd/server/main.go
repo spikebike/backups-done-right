@@ -302,12 +302,16 @@ func main() {
 		cfg.AdminPublicKey,
 		cfg.ContactInfo,
 		cfg.Network.MaxConcurrentStreams,
+		cfg.Network.StandaloneMode,
 		)
 
 	if verbose {
 		log.Printf("Server engine initialized with identity: %s...", myPubKeyHex[:16])
 		log.Printf("Blob storage at: %s", cfg.Storage.BlobStoreDir)
 		log.Printf("GC Config: keep_deleted_minutes=%d, waste_threshold=%.2f, gc_interval_minutes=%d", keepDeletedMinutes, wasteThreshold, gcIntervalMinutes)
+		if cfg.Network.StandaloneMode {
+			log.Println("Running in STANDALONE MODE — no peers, no erasure coding, no challenges")
+		}
 	}
 
 	peerHandler := server.NewRPCHandler(engine, myPubKeyHex)
@@ -316,11 +320,13 @@ func main() {
 
 	// Start background workers
 	ctx := context.Background()
-	go engine.StartOutboundWorker(ctx)
-	go engine.StartChallengeWorker(ctx)
+	if !cfg.Network.StandaloneMode {
+		go engine.StartOutboundWorker(ctx)
+		go engine.StartChallengeWorker(ctx)
+		go engine.StartSelfBackupWorker(ctx)
+		go engine.StartRepairWorker(ctx)
+	}
 	go engine.StartGCWorker(ctx)
-	go engine.StartSelfBackupWorker(ctx)
-	go engine.StartRepairWorker(ctx)
 
 	if cfg.Discovery.Enabled {
 		go engine.StartDiscoveryWorker(ctx, cfg.Discovery.Mode)

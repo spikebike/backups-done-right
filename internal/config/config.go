@@ -59,6 +59,7 @@ type ServerConfig struct {
 	Network        struct {
 		ListenAddress        string `yaml:"listen_address"`
 		EnableUPnP           bool   `yaml:"enable_upnp"`
+		StandaloneMode       bool   `yaml:"standalone_mode"` // If true, no peers, no erasure coding, no challenges
 		MaxUploadKBPS        int    `yaml:"max_upload_kbps"`
 		MaxDownloadKBPS      int    `yaml:"max_download_kbps"`
 		MaxConcurrentStreams int    `yaml:"max_concurrent_streams"`

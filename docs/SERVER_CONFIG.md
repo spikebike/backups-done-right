@@ -11,6 +11,7 @@
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `listen_address` | string | Address and port to listen on (default `0.0.0.0:8080`) |
+| `standalone_mode` | bool | If true, disables all peer communication, erasure coding, challenges, and repair. Server acts as a simple upload target (default false) |
 | `max_concurrent_streams` | int | Max number of concurrent out-of-band piece transfers (default 4) |
 | `max_upload_kbps` | int | Maximum outbound bandwidth in KB/s (default 0, unlimited) |
 | `max_download_kbps` | int | Maximum inbound bandwidth in KB/s (default 0, unlimited) |

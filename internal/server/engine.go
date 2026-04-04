@@ -54,6 +54,7 @@ type Engine struct {
 	ChallengesPerPiece         int
 	AdminPublicKey             string
 	ContactInfo                string
+	StandaloneMode             bool
 	// Bandwidth Throttling
 	UploadLimiter   *rate.Limiter
 	DownloadLimiter *rate.Limiter
@@ -72,7 +73,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int) *Engine {
+func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -153,6 +154,7 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		MasterKey:                  masterKey,
 		AdminPublicKey:             adminPublicKey,
 		ContactInfo:                contactInfo,
+		StandaloneMode:             standaloneMode,
 		pendingBlobs:               make(map[string]rpc.BlobMeta),
 		streamSemaphore:            make(chan struct{}, maxConcurrentStreams),
 		StreamBufferPool: sync.Pool{
@@ -917,6 +919,14 @@ func (p *PadReader) Read(buf []byte) (int, error) {
 
 func (e *Engine) encodeShard(shardID int64) {
 	defer e.wg.Done()
+
+	// In standalone mode, skip erasure coding entirely
+	if e.StandaloneMode {
+		if e.Verbose {
+			log.Printf("encodeShard: skipping shard %d (standalone mode)", shardID)
+		}
+		return
+	}
 	if e.Verbose {
 		log.Printf("Starting erasure coding for shard %d", shardID)
 	}

@@ -20,6 +20,7 @@ type Uploader struct {
 	FakeUpload         bool
 	Verbose            bool
 	CurrentBackupID    int64
+	Stats              *BackupStats
 	wg                 sync.WaitGroup
 	uploadWg           sync.WaitGroup
 	uploadPipelineChan chan pendingUpload
@@ -31,7 +32,7 @@ type pendingUpload struct {
 }
 
 // NewUploader creates a new Uploader instance.
-func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64) *Uploader {
+func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64, stats *BackupStats) *Uploader {
 	if batchSize <= 0 {
 		batchSize = 10 // Default batch size
 	}
@@ -47,6 +48,7 @@ func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan UploadJob, rpcClie
 		FakeUpload:      fakeUpload,
 		Verbose:         verbose,
 		CurrentBackupID: currentBackupID,
+		Stats:           stats,
 	}
 }
 
@@ -105,6 +107,12 @@ func (u *Uploader) uploadWorker(workerID int) {
 					log.Printf("[Upload Pump %d] Failed to upload stream to server: %v", workerID, err)
 					// Note: On failure, we might lose DB sync status for this batch. Production versions should retry.
 				} else {
+					// Track upload stats
+					if u.Stats != nil {
+						for _, blob := range pending.Blobs {
+							u.Stats.AddFileUploaded(int64(len(blob.Data)))
+						}
+					}
 					// Update database with upload count
 					u.DBJobChan <- db.DBJob{
 						Query:      "UPDATE backups SET uploaded_files = uploaded_files + ? WHERE id = ?",

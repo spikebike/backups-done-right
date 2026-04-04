@@ -54,21 +54,20 @@ type ChunkArchive struct {
 	Size      int
 }
 
-// CryptoPool manages a pool of workers that encrypt files and send them to the uploader.
 type CryptoPool struct {
 	Key            []byte
 	NumWorkers     int
 	UploadChan     chan<- UploadJob
 	ArchiveChan    chan<- FileArchive
 	Verbose        bool
+	Stats          *BackupStats
 	wg             sync.WaitGroup
 	sessionUploads sync.Map    // Track hashes already queued in this session (plainHashHex -> encHashHex)
 	cipherBufs     chan []byte // Pre-allocated free-list of reusable ciphertext buffers
 	rawChunkPool   sync.Pool   // Reusable raw chunk read buffers
 }
 
-// NewCryptoPool initializes a new CryptoPool.
-func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool) *CryptoPool {
+func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool, stats *BackupStats) *CryptoPool {
 	poolSize := cap(uploadChan) + numWorkers
 	if poolSize <= 0 {
 		poolSize = 100
@@ -84,6 +83,7 @@ func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, arch
 		UploadChan:   uploadChan,
 		ArchiveChan:  archiveChan,
 		Verbose:      verbose,
+		Stats:        stats,
 		cipherBufs:   cipherBufs,
 		rawChunkPool: sync.Pool{
 			New: func() any {
@@ -272,6 +272,10 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 	// 5. Finalize full file metadata and send to StateManager
 	archive.PlainHash = hex.EncodeToString(fullPlainHasher.Sum(nil))
 	p.ArchiveChan <- archive
+
+	if p.Stats != nil {
+		p.Stats.AddFileRead(info.Size())
+	}
 
 	return nil
 }

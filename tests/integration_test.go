@@ -31,8 +31,8 @@ func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpc
 
 	crawler := client.NewCrawler(clientDB, dbJobChan, backupDirs, jobChan, 4, false)
 	archiveChan := make(chan client.FileArchive, 1000)
-	cryptoPool := client.NewCryptoPool(key, 2, uploadChan, archiveChan, false)
-	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, 10, false, false, backupID)
+	cryptoPool := client.NewCryptoPool(key, 2, uploadChan, archiveChan, false, nil)
+	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, 10, false, false, backupID, nil)
 	stateManager := client.NewStateManager(clientDB, dbJobChan, archiveChan, false)
 
 	go stateManager.Start()
@@ -70,7 +70,7 @@ func TestEndToEndBackup(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 	
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -117,7 +117,7 @@ func TestDeduplication(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -154,7 +154,7 @@ func TestLargeFile(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -194,7 +194,7 @@ func TestIncrementalBackup(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -234,7 +234,7 @@ func TestFileDeletion(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -273,7 +273,7 @@ func TestServerGC(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10, true, nil, "", 1024, false, false, 8, 0, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10, true, nil, "", 1024, false, false, 8, 0, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 	engine.KeepDeletedMinutes = 0
 	engine.KeepMetadataMinutes = 0
@@ -416,7 +416,7 @@ func TestOutboundWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	mh1 := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -464,7 +464,7 @@ func TestChallengeWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	mh := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -502,7 +502,7 @@ func TestRepairWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -545,7 +545,7 @@ func TestReedSolomonIntegration(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -611,7 +611,7 @@ func TestDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -655,7 +655,7 @@ func TestServerDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	masterKey := []byte("01234567890123456789012345678901")
-	engineA := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "", 4)
+	engineA := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "", 4, false)
 	defer engineA.Wait()
 	defer serverDB.Close()
 
@@ -731,7 +731,7 @@ func TestContactInfoPropagation(t *testing.T) {
 	defer serverDB.Close()
 	
 	myContact := "operator@server-a.com"
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", myContact, 4)
+	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", myContact, 4, false)
 	defer engine.Wait()
 
 	// 1. Verify Engine has contact info

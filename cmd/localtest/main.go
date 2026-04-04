@@ -131,6 +131,7 @@ func main() {
 		"",       // No admin key for localtest
 		"",       // No contact info for localtest
 		4,        // Default 4 concurrent streams
+		false,    // Not standalone mode
 	)
 	// ---------------------------
 
@@ -152,7 +153,7 @@ func main() {
 	
 	key := []byte("01234567890123456789012345678901")
 	archiveChan := make(chan client.FileArchive, 1000)
-	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, verbose)
+	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, verbose, nil)
 	
 	// Connect the client to the local server engine
 	rpcClient := client.NewMockRPCClient(engine)
@@ -174,7 +175,7 @@ func main() {
 	}
 	backupID := res.ID
 
-	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, batchSize, false, verbose, backupID)
+	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, batchSize, false, verbose, backupID, nil)
 	stateManager := client.NewStateManager(database, dbJobChan, archiveChan, verbose)
 
 	if verbose {
