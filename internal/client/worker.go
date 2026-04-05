@@ -11,9 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"p2p-backup/internal/crypto"
+	"p2p-backup/internal/rpc"
+
 	"github.com/klauspost/compress/zstd"
 	"lukechampine.com/blake3"
-	"p2p-backup/internal/crypto"
 )
 
 const (
@@ -23,15 +25,7 @@ const (
 	cipherOverhead = crypto.NonceSizeX + 16
 )
 
-// UploadJob represents a blob that is ready to be uploaded.
-type UploadJob struct {
-	Hash      string // Blob hash
-	Size      int64  // Blob size
-	Data      []byte // Encrypted data in memory
-	IsSpecial bool
-	Release   func() // Returns the Data buffer to the pool (nil if not pooled)
-}
-
+// rpc.UploadJob represents a blob that is ready to be uploaded.
 // FileArchive represents a completed file ready to be saved to local state.
 type FileArchive struct {
 	DirPath   string
@@ -57,7 +51,7 @@ type ChunkArchive struct {
 type CryptoPool struct {
 	Key            []byte
 	NumWorkers     int
-	UploadChan     chan<- UploadJob
+	UploadChan     chan<- rpc.UploadJob
 	ArchiveChan    chan<- FileArchive
 	Verbose        bool
 	Compress       bool
@@ -68,14 +62,14 @@ type CryptoPool struct {
 	rawChunkPool   sync.Pool   // Reusable raw chunk read buffers
 }
 
-func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool, compress bool, stats *BackupStats) *CryptoPool {
+func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- rpc.UploadJob, archiveChan chan<- FileArchive, verbose bool, compress bool, stats *BackupStats) *CryptoPool {
 	// The pool must be large enough to handle the uploader's batch size plus active worker buffers.
 	// We'll default to a safe multiplier.
 	poolSize := 250 // Sufficient for 2 uploader workers with batch size 100
 	if numWorkers*4 > poolSize {
 		poolSize = numWorkers * 4
 	}
-	
+
 	cipherBufs := make(chan []byte, poolSize)
 	for i := 0; i < poolSize; i++ {
 		cipherBufs <- make([]byte, 0, defaultBlockSize+cipherOverhead+1024)
@@ -86,14 +80,14 @@ func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, arch
 	}
 
 	return &CryptoPool{
-		Key:          key,
-		NumWorkers:   numWorkers,
-		UploadChan:   uploadChan,
-		ArchiveChan:  archiveChan,
-		Verbose:      verbose,
-		Compress:     compress,
-		Stats:        stats,
-		cipherBufs:   cipherBufs,
+		Key:         key,
+		NumWorkers:  numWorkers,
+		UploadChan:  uploadChan,
+		ArchiveChan: archiveChan,
+		Verbose:     verbose,
+		Compress:    compress,
+		Stats:       stats,
+		cipherBufs:  cipherBufs,
 		rawChunkPool: sync.Pool{
 			New: func() any {
 				return make([]byte, defaultBlockSize)
@@ -175,7 +169,7 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 		fileGID = stat.Gid
 	}
 	fileMode = info.Mode().Perm()
-	
+
 	// 2. Open file for streaming
 	inFile, err := os.Open(fullPath)
 	if err != nil {
@@ -185,7 +179,7 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 
 	// We'll compute the full file hash as we read it
 	fullPlainHasher := blake3.New(32, nil)
-	
+
 	archive := FileArchive{
 		DirPath:  job.DirPath,
 		FileName: job.FileName,
@@ -208,7 +202,7 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 		n, err := inFile.Read(chunkBuf)
 		if n > 0 {
 			rawChunk := chunkBuf[:n]
-			
+
 			// Compress with zstd (reuses worker-local buffer) if enabled
 			var chunk []byte
 			if p.Compress {
@@ -217,11 +211,11 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 			} else {
 				chunk = rawChunk
 			}
-			
+
 			// Hash plaintext chunk (now compressed)
 			plainHash := crypto.Hash(chunk)
 			plainHashHex := hex.EncodeToString(plainHash)
-			
+
 			fullPlainHasher.Write(rawChunk) // Full file hash uses raw data
 
 			// Check session deduplication — fast in-memory cache to prevent concurrent processing of the same chunk
@@ -261,13 +255,13 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 				// Hash ciphertext chunk
 				encHash := crypto.Hash(ciphertext)
 				encHashHex = hex.EncodeToString(encHash)
-				
+
 				// Update session cache with actual encHashHex so waiting workers can proceed
 				p.sessionUploads.Store(plainHashHex, encHashHex)
 
 				// Queue for upload (In-Memory) — uploader calls Release to return buffer
 				bufs := p.cipherBufs // capture for closure
-				p.UploadChan <- UploadJob{
+				p.UploadChan <- rpc.UploadJob{
 					Hash:      encHashHex,
 					Size:      int64(ciphertextSize),
 					Data:      ciphertext,

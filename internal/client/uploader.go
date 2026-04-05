@@ -13,7 +13,7 @@ import (
 // Uploader manages the syncing of encrypted files and deletions to the server.
 type Uploader struct {
 	DBJobChan          chan<- db.DBJob
-	UploadChan         <-chan UploadJob
+	UploadChan         <-chan rpc.UploadJob
 	RPCClient          RPCClient
 	NumWorkers         int
 	BatchUploadSize    int
@@ -28,11 +28,11 @@ type Uploader struct {
 
 type pendingUpload struct {
 	Blobs []rpc.LocalBlobData
-	Jobs  []UploadJob
+	Jobs  []rpc.UploadJob
 }
 
 // NewUploader creates a new Uploader instance.
-func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64, stats *BackupStats) *Uploader {
+func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan rpc.UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64, stats *BackupStats) *Uploader {
 	if batchSize <= 0 {
 		batchSize = 10 // Default batch size
 	}
@@ -72,7 +72,7 @@ func (u *Uploader) Start() {
 func (u *Uploader) offerWorker(workerID int) {
 	defer u.wg.Done()
 
-	var batch []UploadJob
+	var batch []rpc.UploadJob
 	ticker := time.NewTicker(2 * time.Second) // Flush partial batches every 2 seconds
 	defer ticker.Stop()
 
@@ -153,7 +153,7 @@ func (u *Uploader) uploadWorker(workerID int) {
 }
 
 // releaseBatch returns all pooled ciphertext buffers to the free-list
-func releaseBatch(batch []UploadJob) {
+func releaseBatch(batch []rpc.UploadJob) {
 	for i := range batch {
 		if batch[i].Release != nil {
 			batch[i].Release()
@@ -162,7 +162,7 @@ func releaseBatch(batch []UploadJob) {
 	}
 }
 
-func (u *Uploader) processOfferBatch(batch []UploadJob, workerID int) {
+func (u *Uploader) processOfferBatch(batch []rpc.UploadJob, workerID int) {
 	if u.Verbose {
 		log.Printf("[Offer Pipeline %d] Offering batch of %d jobs", workerID, len(batch))
 	}
@@ -219,9 +219,9 @@ func (u *Uploader) processOfferBatch(batch []UploadJob, workerID int) {
 		neededMap[idx] = true
 	}
 
-	var neededJobs []UploadJob
+	var neededJobs []rpc.UploadJob
 	var blobsToUpload []rpc.LocalBlobData
-	var unneededJobs []UploadJob
+	var unneededJobs []rpc.UploadJob
 
 	for i, job := range batch {
 		if neededMap[uint32(i)] {

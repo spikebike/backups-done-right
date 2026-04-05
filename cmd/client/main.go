@@ -610,7 +610,7 @@ func main() {
 		if uploadQueueSize <= 0 {
 			uploadQueueSize = 1
 		}
-		uploadChan := make(chan client.UploadJob, uploadQueueSize)
+		uploadChan := make(chan rpc.UploadJob, uploadQueueSize)
 		
 		// 3. DBWriter channel
 		dbJobChan := make(chan db.DBJob, 1000)
@@ -808,12 +808,13 @@ func uploadMetadata(ctx context.Context, filePaths []string, key []byte, rpcClie
 			return fmt.Errorf("prepare upload metadata: %w", err)
 		}
 
-		var finalJobs []client.UploadJob
+		var finalJobs []rpc.UploadJob
 		for _, idx := range needed {
 			b := blobsToUpload[idx]
-			finalJobs = append(finalJobs, client.UploadJob{
+			finalJobs = append(finalJobs, rpc.UploadJob{
 				Hash: b.Hash,
 				Data: b.Data,
+				Size: int64(len(b.Data)),
 			})
 		}
 

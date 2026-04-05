@@ -42,7 +42,7 @@ type RPCClient interface {
 	OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([]uint32, error)
 	PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error
 	PushBlob(ctx context.Context, hashHex string, data []byte) error
-	PushBlobBatch(ctx context.Context, jobs []UploadJob) error
+	PushBlobBatch(ctx context.Context, jobs []rpc.UploadJob) error
 	ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
 	GetStatus(ctx context.Context) (rpc.StatusInfo, error)
 	PullBlob(ctx context.Context, hashHex string) ([]byte, error)
@@ -58,10 +58,10 @@ type RPCClient interface {
 	Close() error
 }
 
-type MockRPCClient struct{
+type MockRPCClient struct {
 	engine interface {
 		OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error)
-		PrepareUpload(ctx context.Context, clientPubKey string, metas []server.PendingStreamMeta) error
+		PrepareUpload(ctx context.Context, clientPubKey string, metas []rpc.PendingStreamMeta) error
 		IngestBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData, isGC bool) error
 		ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
 		GetStatus(ctx context.Context) (rpc.StatusInfo, error)
@@ -79,7 +79,7 @@ type MockRPCClient struct{
 
 func NewMockRPCClient(engine interface {
 	OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error)
-	PrepareUpload(ctx context.Context, clientPubKey string, metas []server.PendingStreamMeta) error
+	PrepareUpload(ctx context.Context, clientPubKey string, metas []rpc.PendingStreamMeta) error
 	IngestBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData, isGC bool) error
 	ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
 	GetStatus(ctx context.Context) (rpc.StatusInfo, error)
@@ -110,7 +110,7 @@ func (m *MockRPCClient) OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([
 
 func (m *MockRPCClient) PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error {
 	if m.engine != nil {
-		var metas []server.PendingStreamMeta
+		var metas []rpc.PendingStreamMeta
 		// In mock, we can just pass the data directly in PushBlob
 		return m.engine.PrepareUpload(ctx, "insecure-local-client", metas)
 	}
@@ -125,7 +125,7 @@ func (m *MockRPCClient) PushBlob(ctx context.Context, hashHex string, data []byt
 	return nil
 }
 
-func (m *MockRPCClient) PushBlobBatch(ctx context.Context, jobs []UploadJob) error {
+func (m *MockRPCClient) PushBlobBatch(ctx context.Context, jobs []rpc.UploadJob) error {
 	if m.engine != nil {
 		var blobs []rpc.LocalBlobData
 		for _, j := range jobs {

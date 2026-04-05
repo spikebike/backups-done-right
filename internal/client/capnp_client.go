@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -8,15 +9,17 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/multiformats/go-multiaddr"
+	"p2p-backup/internal/crypto"
+	"p2p-backup/internal/rpc"
+
 	capnp "capnproto.org/go/capnp/v3"
 	capnprpc "capnproto.org/go/capnp/v3/rpc"
 	"capnproto.org/go/capnp/v3/rpc/transport"
-	"p2p-backup/internal/rpc"
-	"p2p-backup/internal/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 )
 
 type customCodec struct {
@@ -224,7 +227,7 @@ func (c *CapnpRPCClient) PrepareUploadClient(ctx context.Context, blobs []rpc.Bl
 	return nil
 }
 
-func (c *CapnpRPCClient) PushBlobBatch(ctx context.Context, jobs []UploadJob) error {
+func (c *CapnpRPCClient) PushBlobBatch(ctx context.Context, jobs []rpc.UploadJob) error {
 	if c.p2pHost == nil {
 		return fmt.Errorf("raw data stream unavailable (no libp2p host)")
 	}
@@ -236,26 +239,33 @@ func (c *CapnpRPCClient) PushBlobBatch(ctx context.Context, jobs []UploadJob) er
 	defer stream.Close()
 
 	// 1. Write Header: [OpCode (1b)][Count (4b)]
-	header := make([]byte, 5)
-	header[0] = 0x05 // OpCodePushBlobBatch
-	binary.BigEndian.PutUint32(header[1:5], uint32(len(jobs)))
-	if _, err := stream.Write(header); err != nil {
+	if err := rpc.WriteBatchHeader(stream, rpc.OpCodePushBatch, uint32(len(jobs))); err != nil {
 		return fmt.Errorf("failed to write batch header: %w", err)
 	}
 
-	// 2. Loop and write each item: [Checksum (32b)][Size (8b)][Data (Size b)]
-	itemHeader := make([]byte, 40)
-	for _, job := range jobs {
-		hashBytes, _ := hex.DecodeString(job.Hash)
-		copy(itemHeader[0:32], hashBytes)
-		binary.BigEndian.PutUint64(itemHeader[32:40], uint64(len(job.Data)))
+	// 2. Loop and write each item using unified framing
+	// Note: Client doesn't have an Engine, so we create a small temporary pool or pass nil if the helper handles it.
+	// Actually, let's just use a simple local buffer for the client since it's not a high-concurrency server.
+	tempPool := &sync.Pool{
+		New: func() any { return make([]byte, 4*1024*1024) },
+	}
 
-		if _, err := stream.Write(itemHeader); err != nil {
-			return fmt.Errorf("failed to write item header for %s: %w", job.Hash, err)
+	for _, job := range jobs {
+		err = rpc.WriteFrame(stream, job.Hash, job.Size, bytes.NewReader(job.Data), tempPool)
+		if err != nil {
+			return fmt.Errorf("failed to write item frame for %s: %w", job.Hash, err)
 		}
-		if _, err := stream.Write(job.Data); err != nil {
-			return fmt.Errorf("failed to write item data for %s: %w", job.Hash, err)
-		}
+	}
+
+	// 3. Read Acknowledgment: [uint32 successCount]
+	ackBuf := make([]byte, 4)
+	if _, err := io.ReadFull(stream, ackBuf); err != nil {
+		return fmt.Errorf("failed to read server batch acknowledgment: %w", err)
+	}
+	successCount := binary.BigEndian.Uint32(ackBuf)
+
+	if successCount != uint32(len(jobs)) {
+		return fmt.Errorf("server only ingested %d/%d blobs in batch", successCount, len(jobs))
 	}
 
 	return nil
@@ -376,7 +386,8 @@ func (c *CapnpRPCClient) ListPeers(ctx context.Context) ([]PeerMeta, error) {
 			ChallengesPassed:    cp.ChallengesPassed(),
 			ConnectionsOk:       cp.ConnectionsOk(),
 			IntegrityAttempts:   cp.IntegrityAttempts(),
-			})	}
+		})
+	}
 	return peers, nil
 }
 
@@ -384,7 +395,6 @@ func (c *CapnpRPCClient) ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, 
 	// Optional feature to implement fully later.
 	return nil, fmt.Errorf("ListSpecialBlobs not implemented on client yet")
 }
-
 
 func (c *CapnpRPCClient) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 	req, release := c.clientStub.GetStatus(ctx, func(p rpc.BackupServer_getStatus_Params) error {
@@ -424,10 +434,7 @@ func (c *CapnpRPCClient) PullBlobBatch(ctx context.Context, hashes []string) ([]
 	defer stream.Close()
 
 	// 1. Write Header: [OpCode (1b)][Count (4b)]
-	header := make([]byte, 5)
-	header[0] = 0x06 // OpCodePullBlobBatch
-	binary.BigEndian.PutUint32(header[1:5], uint32(len(hashes)))
-	if _, err := stream.Write(header); err != nil {
+	if err := rpc.WriteBatchHeader(stream, rpc.OpCodePullBatch, uint32(len(hashes))); err != nil {
 		return nil, fmt.Errorf("failed to write batch header: %w", err)
 	}
 
@@ -439,23 +446,26 @@ func (c *CapnpRPCClient) PullBlobBatch(ctx context.Context, hashes []string) ([]
 		}
 	}
 
-	// 3. Read Responses: [Size (8b)][Data]...
+	// 3. Read Responses: [Sync(2b)][Size (8b)][Data]... using unified framing
 	var results []rpc.LocalBlobData
-	for _, h := range hashes {
-		sizeBuf := make([]byte, 8)
-		if _, err := io.ReadFull(stream, sizeBuf); err != nil {
-			return nil, fmt.Errorf("failed to read response size for %s: %w", h, err)
-		}
-		size := binary.BigEndian.Uint64(sizeBuf)
-		if size == 0 {
-			continue // Skip missing
-		}
+	tempPool := &sync.Pool{
+		New: func() any { return make([]byte, 4*1024*1024) },
+	}
 
-		data := make([]byte, size)
-		if _, err := io.ReadFull(stream, data); err != nil {
-			return nil, fmt.Errorf("failed to read blob data for %s: %w", h, err)
+	for _, h := range hashes {
+		data, err := rpc.ReadFrame(stream, h, -1, tempPool)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read frame for %s: %w", h, err)
 		}
-		results = append(results, rpc.LocalBlobData{Hash: h, Data: data})
+		if len(data) > 0 {
+			results = append(results, rpc.LocalBlobData{Hash: h, Data: data})
+		}
+	}
+
+	// 4. Read final Acknowledgment: [uint32 successCount]
+	ackBuf := make([]byte, 4)
+	if _, err := io.ReadFull(stream, ackBuf); err != nil {
+		return nil, fmt.Errorf("failed to read server pull acknowledgment: %w", err)
 	}
 
 	return results, nil

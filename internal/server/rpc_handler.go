@@ -76,7 +76,7 @@ func (h *RPCHandler) PrepareUploadClient(ctx context.Context, call rpc.BackupSer
 		if err != nil {
 			return fmt.Errorf("failed to read blob %d checksum: %w", i, err)
 		}
-		h.engine.pendingClientStreams.Store(hex.EncodeToString(hashBytes), PendingClientBlob{
+		h.engine.pendingClientStreams.Store(hex.EncodeToString(hashBytes), rpc.PendingClientBlob{
 			BlobMeta: rpc.BlobMeta{
 				Hash:    hex.EncodeToString(hashBytes),
 				Size:    int64(cb.Size()),
@@ -427,7 +427,7 @@ func (h *RPCHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_prepar
 		return err
 	}
 
-	var metas []PendingStreamMeta
+	var metas []rpc.PendingStreamMeta
 	for i := 0; i < capnpShards.Len(); i++ {
 		cs := capnpShards.At(i)
 		hashBytes, err := cs.Checksum()
@@ -442,7 +442,7 @@ func (h *RPCHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_prepar
 			return fmt.Errorf("failed to get peer ID from DB: %w", err)
 		}
 
-		metas = append(metas, PendingStreamMeta{
+		metas = append(metas, rpc.PendingStreamMeta{
 			PeerID:          peerID,
 			IsSpecial:       cs.IsSpecial(),
 			PieceIndex:      int(cs.PieceIndex()),

@@ -1849,7 +1849,7 @@ func (e *Engine) GetOrDialPeer(ctx context.Context, peerID int64) (*CapnpPeerCli
 }
 
 // PrepareUpload validates quota and saves expected metadata for incoming streams.
-func (e *Engine) PrepareUpload(ctx context.Context, pubKeyHex string, metas []PendingStreamMeta) error {
+func (e *Engine) PrepareUpload(ctx context.Context, pubKeyHex string, metas []rpc.PendingStreamMeta) error {
 	if pubKeyHex != "" {
 		var status string
 		var currentSize, maxStorageBytes int64

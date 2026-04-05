@@ -10,11 +10,11 @@ import (
 
 // StateManager processes finalized FileArchives and commits them to the database.
 type StateManager struct {
-	DB              *sql.DB
-	DBJobChan       chan<- db.DBJob
-	ArchiveChan     <-chan FileArchive
-	Verbose         bool
-	wg              sync.WaitGroup
+	DB          *sql.DB
+	DBJobChan   chan<- db.DBJob
+	ArchiveChan <-chan FileArchive
+	Verbose     bool
+	wg          sync.WaitGroup
 
 	dirCache        map[string]int64 // fullPath -> dir_id
 	dirBackupsCache map[int64]bool   // dir_id -> true (already logged this run)
@@ -36,7 +36,7 @@ func NewStateManager(database *sql.DB, dbJobChan chan<- db.DBJob, archiveChan <-
 func (s *StateManager) Start() {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	
+
 	for archive := range s.ArchiveChan {
 		s.processArchive(archive)
 	}
@@ -102,7 +102,7 @@ func (s *StateManager) processArchive(archive FileArchive) {
 				UPDATE files SET deleted = 1 
 				WHERE dir_id = ? AND filename = ?
 			`,
-			Args: []interface{}{dirID, archive.FileName},
+			Args:       []interface{}{dirID, archive.FileName},
 			ResultChan: make(chan db.DBResult, 1),
 		}
 		if s.Verbose {

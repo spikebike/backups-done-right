@@ -4,10 +4,10 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"p2p-backup/internal/db"
 	"path/filepath"
 	"strings"
 	"sync"
-	"p2p-backup/internal/db"
 )
 
 // FileJob represents a file that needs to be processed (either backed up or marked deleted).
@@ -97,7 +97,7 @@ func (c *Crawler) Start(backupID int64) {
 
 	wg.Wait()
 	close(dirQueue)
-	
+
 	// Close the channel to signal workers that scanning is complete
 	close(c.JobChan)
 	log.Printf("Crawler backup indexing complete. Job channel closed.")
@@ -173,10 +173,10 @@ func (c *Crawler) syncDirectory(dirPath string) []string {
 		if err != nil {
 			continue // Skip files we can't stat
 		}
-		
+
 		dbMtime, exists := dbFiles[name]
 		fsMtime := info.ModTime().Unix()
-		
+
 		if !exists || fsMtime > dbMtime {
 			// File is new or has been modified since last backup
 			c.JobChan <- FileJob{
