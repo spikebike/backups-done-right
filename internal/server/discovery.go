@@ -45,6 +45,10 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context) {
 
 	// 4. Periodically Advertise ourselves and find others
 	go func() {
+		// Wait 30s initially to warm up the DHT routing table
+		// before we try to announce ourselves.
+		time.Sleep(30 * time.Second)
+
 		for {
 			// Advertise our presence
 			discoveryutil.Advertise(ctx, routingDiscovery, DiscoveryServiceTag)
