@@ -19,9 +19,10 @@ const DiscoveryServiceTag = "bdr-v1.0"
 func (e *Engine) StartDiscoveryWorker(ctx context.Context) {
 	var dhtOpts []dht.Option
 	// 1. Initialize DHT
-	// We run in Client Mode for now to avoid polluting the public DHT 
-	// while the project is in testing/intermittent use.
-	dhtOpts = append(dhtOpts, dht.Mode(dht.ModeClient))
+	// We use ModeAuto so that nodes with public IPs (like VPS) can become 
+	// DHT servers and participate in the routing table, making them much 
+	// easier to find. Nodes behind NAT will remain in client mode.
+	dhtOpts = append(dhtOpts, dht.Mode(dht.ModeAuto))
 	kademliaDHT, err := dht.New(ctx, e.Host, dhtOpts...)
 	if err != nil {
 		log.Printf("DiscoveryWorker: failed to create DHT: %v", err)
