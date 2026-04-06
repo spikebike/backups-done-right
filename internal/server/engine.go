@@ -382,8 +382,28 @@ func (e *Engine) OfferItems(ctx context.Context, pubKey string, items []rpc.Meta
 		if isClient {
 			exists = e.HasItem(ctx, item.Hash)
 		} else {
-			// Check hosted_shards for peers
-			e.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM hosted_shards WHERE hash = ?)", item.Hash).Scan(&exists)
+			// Peer existence and deduplication check
+			var existsGlobally bool
+			// Check if we have this hash anywhere in hosted_shards (from any peer)
+			e.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM hosted_shards WHERE hash = ?)", item.Hash).Scan(&existsGlobally)
+
+			if existsGlobally {
+				peerID, _ := e.GetPeerIDByPubKey(ctx, pubKey)
+				if peerID > 0 {
+					// Use UPSERT to increment ref_count if already exists for this peer,
+					// or insert a new record with ref_count=1 if it doesn't.
+					_, err := e.DB.ExecContext(ctx,
+						`INSERT INTO hosted_shards (hash, size, peer_id, is_special, piece_index, parent_shard_hash, sequence, total_pieces, ref_count)
+						 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+						 ON CONFLICT(hash, peer_id) DO UPDATE SET ref_count = ref_count + 1`,
+						item.Hash, item.Size, peerID, item.IsSpecial, item.PieceIndex, item.ParentShardHash, item.SequenceNumber, item.TotalPieces)
+					if err == nil {
+						// Update peer metrics
+						_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET current_storage_size = current_storage_size + ?, total_shards = total_shards + 1, current_shards = current_shards + 1 WHERE id = ?", item.Size, peerID)
+						exists = true
+					}
+				}
+			}
 		}
 
 		if !exists {
@@ -1352,8 +1372,11 @@ func (e *Engine) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 func (e *Engine) ChallengePiece(ctx context.Context, pubKeyHex string, checksum []byte, offset uint64) ([]byte, error) {
 	hashStr := hex.EncodeToString(checksum)
 
+	var peerID int64
+	_ = e.DB.QueryRowContext(ctx, "SELECT id FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID)
+
 	var count int
-	err := e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM hosted_shards WHERE hash = ? AND peer_id = (SELECT id FROM peers WHERE public_key = ?)", hashStr, pubKeyHex).Scan(&count)
+	err := e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM hosted_shards WHERE hash = ? AND peer_id = ?", hashStr, peerID).Scan(&count)
 	if err != nil || count == 0 {
 		return nil, fmt.Errorf("shard %s not actively tracked for this peer", hashStr)
 	}
@@ -1615,8 +1638,20 @@ func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex s
 	}
 	defer tx.Rollback()
 
-	// Delete from hosted_shards
-	_, err = tx.ExecContext(ctx, "DELETE FROM hosted_shards WHERE hash = ? AND peer_id = (SELECT id FROM peers WHERE public_key = ?)", hashStr, pubKeyHex)
+	// Decrement ref_count and delete only if it reaches 0
+	_, err = tx.ExecContext(ctx, `
+		UPDATE hosted_shards 
+		SET ref_count = MAX(0, ref_count - 1) 
+		WHERE hash = ? AND peer_id = (SELECT id FROM peers WHERE public_key = ?)
+	`, hashStr, pubKeyHex)
+	if err != nil {
+		return fmt.Errorf("failed to decrement ref_count: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		DELETE FROM hosted_shards 
+		WHERE hash = ? AND peer_id = (SELECT id FROM peers WHERE public_key = ?) AND ref_count <= 0
+	`, hashStr, pubKeyHex)
 	if err != nil {
 		return fmt.Errorf("failed to delete hosted shard record: %w", err)
 	}
@@ -1629,14 +1664,19 @@ func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex s
 		}
 	}
 
-	// 3. Commit and Delete File
+	// 3. Check if anyone else hosts this shard piece before deleting the physical file
+	var othersCount int
+	_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM hosted_shards WHERE hash = ?", hashStr).Scan(&othersCount)
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
-	shardPath := filepath.Join(e.BlobStoreDir, "peer_"+hashStr)
-	if err := os.Remove(shardPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Warning: failed to remove shard file %s: %v", shardPath, err)
+	if othersCount == 0 {
+		shardPath := filepath.Join(e.BlobStoreDir, "peer_"+hashStr)
+		if err := os.Remove(shardPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("Warning: failed to remove shard file %s: %v", shardPath, err)
+		}
 	}
 
 	if e.Verbose {

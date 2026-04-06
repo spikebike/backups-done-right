@@ -223,7 +223,9 @@ func (e *Engine) finalizePeerShard(checksumHex string, size uint64, tmpPath stri
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx,
-		"INSERT OR IGNORE INTO hosted_shards (hash, size, peer_id, is_special, piece_index, parent_shard_hash, sequence, total_pieces) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		`INSERT INTO hosted_shards (hash, size, peer_id, is_special, piece_index, parent_shard_hash, sequence, total_pieces, ref_count)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+		 ON CONFLICT(hash, peer_id) DO UPDATE SET ref_count = ref_count + 1`,
 		checksumHex, size, meta.PeerID, meta.IsSpecial, meta.PieceIndex, meta.ParentShardHash, meta.SequenceNumber, meta.TotalPieces)
 
 	if err != nil {

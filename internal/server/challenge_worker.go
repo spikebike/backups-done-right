@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -154,17 +153,48 @@ func (e *Engine) replenishPool(ctx context.Context) {
 			}
 		}
 
+		// 1. Get the existing hash from the database to ensure consistency with what the peer tracks.
+		var hashHex string
+		err = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = ? AND peer_id = ? LIMIT 1",
+			t.shardID, t.pieceIndex, t.peerID).Scan(&hashHex)
+		if err != nil {
+			// If we lost all challenges, fall back to calculation, but try to use hashPiece if possible
+			// For now, calculating it is better than nothing, but hashing mirrored shards needs care
+			var isMirrored bool
+			_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", t.shardID).Scan(&isMirrored)
+			
+			data, err := os.ReadFile(shardPath)
+			if err != nil {
+				continue
+			}
+
+			var pieceData []byte
+			if isMirrored {
+				targetPieceSize := e.ShardSize / int64(e.DataShards)
+				if int64(len(data)) < targetPieceSize {
+					padded := make([]byte, targetPieceSize)
+					copy(padded, data)
+					pieceData = padded
+				} else {
+					pieceData = data
+				}
+			} else {
+				pieceData = data
+			}
+			hashHex = hex.EncodeToString(e.Hash(pieceData))
+		}
+
+		// 2. Read piece bytes for generating new challenges (random offsets)
 		data, err := os.ReadFile(shardPath)
 		if err != nil {
 			continue
 		}
 
+		var pieceData []byte
 		var isMirrored bool
 		_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", t.shardID).Scan(&isMirrored)
 
-		var pieceData []byte
 		if isMirrored {
-			// Pad to target piece size to match the trade unit
 			targetPieceSize := e.ShardSize / int64(e.DataShards)
 			if int64(len(data)) < targetPieceSize {
 				padded := make([]byte, targetPieceSize)
@@ -174,9 +204,6 @@ func (e *Engine) replenishPool(ctx context.Context) {
 				pieceData = data
 			}
 		} else {
-			if !strings.Contains(shardPath, "piece_") {
-				continue
-			}
 			pieceData = data
 		}
 
@@ -184,9 +211,7 @@ func (e *Engine) replenishPool(ctx context.Context) {
 			continue
 		}
 
-		hashHex := hex.EncodeToString(e.Hash(pieceData))
 		maxOffset := len(pieceData) - 32
-
 		for i := 0; i < e.ChallengesPerPiece; i++ {
 			offset := rand.Intn(maxOffset)
 			expectedData := pieceData[offset : offset+32]

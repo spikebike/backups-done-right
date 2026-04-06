@@ -89,7 +89,7 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	);
 
 	CREATE TABLE IF NOT EXISTS hosted_shards (
-		hash TEXT PRIMARY KEY,
+		hash TEXT NOT NULL,
 		size INTEGER NOT NULL,
 		peer_id INTEGER NOT NULL DEFAULT 0,
 		is_special INTEGER NOT NULL DEFAULT 0,
@@ -97,7 +97,9 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		parent_shard_hash TEXT NOT NULL DEFAULT '',
 		sequence INTEGER NOT NULL DEFAULT 0,
 		total_pieces INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		ref_count INTEGER NOT NULL DEFAULT 1,
+		PRIMARY KEY (hash, peer_id)
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_hosted_shards_special ON hosted_shards(peer_id, is_special);
@@ -140,6 +142,41 @@ func InitDB(dbPath string) (*sql.DB, error) {
 
 	if _, err := db.Exec(query); err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)
+	}
+
+	// Migrate hosted_shards to composite primary key and/or add ref_count if needed
+	var hasRefCount int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('hosted_shards') WHERE name = 'ref_count'").Scan(&hasRefCount)
+	var pkCount int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('hosted_shards') WHERE pk > 0").Scan(&pkCount)
+	
+	if pkCount == 1 || hasRefCount == 0 {
+		log.Println("Migrating hosted_shards schema (Composite PK + RefCount)...")
+		migrationQuery := `
+			CREATE TABLE hosted_shards_new (
+				hash TEXT NOT NULL,
+				size INTEGER NOT NULL,
+				peer_id INTEGER NOT NULL DEFAULT 0,
+				is_special INTEGER NOT NULL DEFAULT 0,
+				piece_index INTEGER NOT NULL DEFAULT 0,
+				parent_shard_hash TEXT NOT NULL DEFAULT '',
+				sequence INTEGER NOT NULL DEFAULT 0,
+				total_pieces INTEGER NOT NULL DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				ref_count INTEGER NOT NULL DEFAULT 1,
+				PRIMARY KEY (hash, peer_id)
+			);
+			INSERT INTO hosted_shards_new (hash, size, peer_id, is_special, piece_index, parent_shard_hash, sequence, total_pieces, created_at)
+			SELECT hash, size, peer_id, is_special, piece_index, parent_shard_hash, sequence, total_pieces, created_at FROM hosted_shards;
+			DROP TABLE hosted_shards;
+			ALTER TABLE hosted_shards_new RENAME TO hosted_shards;
+			CREATE INDEX IF NOT EXISTS idx_hosted_shards_special ON hosted_shards(peer_id, is_special);
+		`
+		if _, err := db.Exec(migrationQuery); err != nil {
+			log.Printf("Migration failed: %v", err)
+		} else {
+			log.Println("Migration successful.")
+		}
 	}
 
 	// Ensure columns exist for legacy databases.

@@ -858,3 +858,170 @@ func TestContactInfoPropagation(t *testing.T) {
 	}
 	t.Log("Success! Contact info propagated correctly through the engine and DB.")
 }
+
+func TestMultiPeerDeduplicationAndChallenge(t *testing.T) {
+	baseDir := t.TempDir()
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	serverDBPath := filepath.Join(baseDir, "server.db")
+	os.MkdirAll(serverBlobDir, 0755)
+	os.MkdirAll(serverQueueDir, 0755)
+
+	serverDB, _ := server.InitDB(serverDBPath)
+	defer serverDB.Close()
+
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false)
+	defer engine.Wait()
+
+	peerA_PK := "peer-a-pk-32-chars-long-01234567"
+	peerB_PK := "peer-b-pk-32-chars-long-76543210"
+
+	// 1. Register Peers
+	engine.AnnouncePeer(context.Background(), peerA_PK, "1.1.1.1:8081", "")
+	engine.AnnouncePeer(context.Background(), peerB_PK, "2.2.2.2:8082", "")
+
+	// 2. Peer A offers and uploads Shard X
+	shardX_Data := []byte("This is the unique data for shard X - 32 bytes.")
+	shardX_Hash := hex.EncodeToString(crypto.Hash(shardX_Data))
+	metaA := []rpc.Metadata{{
+		Hash:      shardX_Hash,
+		Size:      int64(len(shardX_Data)),
+		IsSpecial: true,
+	}}
+
+	planA, _ := engine.OfferItems(context.Background(), peerA_PK, metaA)
+	if len(planA.NeededIndices) != 1 {
+		t.Fatal("A: Shard should be needed")
+	}
+
+	err := engine.UploadPeerItems(context.Background(), peerA_PK, []rpc.ItemData{{
+		Meta: metaA[0],
+		Data: shardX_Data,
+	}})
+	if err != nil {
+		t.Fatalf("A: Upload failed: %v", err)
+	}
+
+	// 3. Peer B offers the SAME Shard X
+	metaB := []rpc.Metadata{{
+		Hash:      shardX_Hash,
+		Size:      int64(len(shardX_Data)),
+		IsSpecial: true,
+	}}
+	planB, _ := engine.OfferItems(context.Background(), peerB_PK, metaB)
+	if len(planB.NeededIndices) != 0 {
+		t.Fatal("B: Shard should NOT be needed (deduplication should work)")
+	}
+
+	// 4. Verify DB has two ownership records
+	var count int
+	serverDB.QueryRow("SELECT COUNT(*) FROM hosted_shards WHERE hash = ?", shardX_Hash).Scan(&count)
+	if count != 2 {
+		t.Errorf("Expected 2 hosted_shards records, got %d", count)
+	}
+
+	// 5. Challenge both peers
+	resA, err := engine.ChallengePiece(context.Background(), peerA_PK, crypto.Hash(shardX_Data), 0)
+	if err != nil {
+		t.Errorf("A: Challenge failed: %v", err)
+	}
+	if !bytes.Equal(resA, shardX_Data[:32]) {
+		t.Errorf("A: Challenge data mismatch")
+	}
+
+	resB, err := engine.ChallengePiece(context.Background(), peerB_PK, crypto.Hash(shardX_Data), 0)
+	if err != nil {
+		t.Errorf("B: Challenge failed (THIS WAS THE BUG): %v", err)
+	}
+	if !bytes.Equal(resB, shardX_Data[:32]) {
+		t.Errorf("B: Challenge data mismatch")
+	}
+
+	// 6. Release A and ensure file stays
+	shardPath := filepath.Join(serverBlobDir, "peer_"+shardX_Hash)
+	_ = engine.ReleasePiece(context.Background(), crypto.Hash(shardX_Data), peerA_PK)
+	if _, err := os.Stat(shardPath); os.IsNotExist(err) {
+		t.Error("File deleted while Peer B still owns it!")
+	}
+
+	// 7. Release B and ensure file is gone
+	_ = engine.ReleasePiece(context.Background(), crypto.Hash(shardX_Data), peerB_PK)
+	if _, err := os.Stat(shardPath); !os.IsNotExist(err) {
+		t.Error("File NOT deleted after last owner released it!")
+	}
+}
+
+func TestDuplicateHashReferenceCounting(t *testing.T) {
+	baseDir := t.TempDir()
+	serverBlobDir := filepath.Join(baseDir, "server_blobs")
+	serverQueueDir := filepath.Join(baseDir, "server_queue")
+	serverDBPath := filepath.Join(baseDir, "server.db")
+	os.MkdirAll(serverBlobDir, 0755)
+	os.MkdirAll(serverQueueDir, 0755)
+
+	serverDB, _ := server.InitDB(serverDBPath)
+	defer serverDB.Close()
+
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false)
+	defer engine.Wait()
+
+	peerPK := "peer-ref-count-0123456789abcdef01"
+	engine.AnnouncePeer(context.Background(), peerPK, "1.1.1.1:8081", "")
+
+	shardData := []byte("Reference counted shard data - unique string.")
+	shardHash := hex.EncodeToString(crypto.Hash(shardData))
+	meta := rpc.Metadata{
+		Hash:      shardHash,
+		Size:      int64(len(shardData)),
+		IsSpecial: true,
+	}
+
+	// 1. First upload
+	_, _ = engine.OfferItems(context.Background(), peerPK, []rpc.Metadata{meta})
+	_ = engine.UploadPeerItems(context.Background(), peerPK, []rpc.ItemData{{Meta: meta, Data: shardData}})
+
+	// 2. Second upload (deduplicated)
+	plan2, _ := engine.OfferItems(context.Background(), peerPK, []rpc.Metadata{meta})
+	if len(plan2.NeededIndices) != 0 {
+		t.Fatal("Second offer should be deduplicated")
+	}
+
+	// 3. Verify ref_count is 2
+	var refCount int
+	serverDB.QueryRow("SELECT ref_count FROM hosted_shards WHERE hash = ?", shardHash).Scan(&refCount)
+	if refCount != 2 {
+		t.Errorf("Expected ref_count 2, got %d", refCount)
+	}
+
+	// 4. Release once
+	_ = engine.ReleasePiece(context.Background(), crypto.Hash(shardData), peerPK)
+
+	// 5. Verify still tracked and file exists
+	serverDB.QueryRow("SELECT ref_count FROM hosted_shards WHERE hash = ?", shardHash).Scan(&refCount)
+	if refCount != 1 {
+		t.Errorf("Expected ref_count 1 after first release, got %d", refCount)
+	}
+	shardPath := filepath.Join(serverBlobDir, "peer_"+shardHash)
+	if _, err := os.Stat(shardPath); os.IsNotExist(err) {
+		t.Fatal("File deleted after only one of two references released!")
+	}
+
+	// 6. Challenge should still work
+	res, err := engine.ChallengePiece(context.Background(), peerPK, crypto.Hash(shardData), 0)
+	if err != nil || !bytes.Equal(res, shardData[:32]) {
+		t.Errorf("Challenge failed after first release: %v", err)
+	}
+
+	// 7. Release again
+	_ = engine.ReleasePiece(context.Background(), crypto.Hash(shardData), peerPK)
+
+	// 8. Verify gone
+	var count int
+	serverDB.QueryRow("SELECT COUNT(*) FROM hosted_shards WHERE hash = ?", shardHash).Scan(&count)
+	if count != 0 {
+		t.Error("hosted_shards record still exists after final release")
+	}
+	if _, err := os.Stat(shardPath); !os.IsNotExist(err) {
+		t.Error("File NOT deleted after last reference released!")
+	}
+}
