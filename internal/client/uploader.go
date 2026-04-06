@@ -1,7 +1,9 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"log"
 	"sync"
 	"time"
@@ -13,7 +15,7 @@ import (
 // Uploader manages the syncing of encrypted files and deletions to the server.
 type Uploader struct {
 	DBJobChan          chan<- db.DBJob
-	UploadChan         <-chan rpc.UploadJob
+	UploadChan         <-chan UploadJob
 	RPCClient          RPCClient
 	NumWorkers         int
 	BatchUploadSize    int
@@ -27,12 +29,12 @@ type Uploader struct {
 }
 
 type pendingUpload struct {
-	Blobs []rpc.LocalBlobData
-	Jobs  []rpc.UploadJob
+	Items []rpc.ItemData
+	Jobs  []UploadJob
 }
 
 // NewUploader creates a new Uploader instance.
-func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan rpc.UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64, stats *BackupStats) *Uploader {
+func NewUploader(dbJobChan chan<- db.DBJob, uploadChan <-chan UploadJob, rpcClient RPCClient, numWorkers, batchSize int, fakeUpload, verbose bool, currentBackupID int64, stats *BackupStats) *Uploader {
 	if batchSize <= 0 {
 		batchSize = 10 // Default batch size
 	}
@@ -72,14 +74,15 @@ func (u *Uploader) Start() {
 func (u *Uploader) offerWorker(workerID int) {
 	defer u.wg.Done()
 
-	var batch []rpc.UploadJob
-	ticker := time.NewTicker(2 * time.Second) // Flush partial batches every 2 seconds
+	var batch []UploadJob
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case job, ok := <-u.UploadChan:
 			if !ok {
+				// Process remaining jobs in the final batch
 				if len(batch) > 0 {
 					u.processOfferBatch(batch, workerID)
 				}
@@ -93,7 +96,7 @@ func (u *Uploader) offerWorker(workerID int) {
 		case <-ticker.C:
 			if len(batch) > 0 {
 				if u.Verbose {
-					log.Printf("[Offer Pipeline %d] Periodic flush of %d jobs", workerID, len(batch))
+					log.Printf("[Offer Pipeline %d] Flushing partial batch of %d items due to timeout", workerID, len(batch))
 				}
 				u.processOfferBatch(batch, workerID)
 				batch = nil
@@ -106,45 +109,50 @@ func (u *Uploader) uploadWorker(workerID int) {
 	defer u.uploadWg.Done()
 
 	for pending := range u.uploadPipelineChan {
-		if u.FakeUpload {
-			if u.Verbose {
-				log.Printf("[Upload Pump %d] Fake upload: Pretending to stream %d blobs", workerID, len(pending.Blobs))
-			}
-		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // allow longer for stream
-
-			var blobsMeta []rpc.BlobMeta
-			for _, blob := range pending.Blobs {
-				blobsMeta = append(blobsMeta, rpc.BlobMeta{
-					Hash:    blob.Hash,
-					Size:    int64(len(blob.Data)),
-					Special: blob.IsSpecial,
-				})
-			}
-
-			err := u.RPCClient.PrepareUploadClient(ctx, blobsMeta)
-			if err != nil {
-				log.Printf("[Upload Pump %d] Failed to prepare upload: %v", workerID, err)
+		if len(pending.Items) > 0 {
+			if u.FakeUpload {
+				if u.Verbose {
+					log.Printf("[Upload Pump %d] Fake upload: Pretending to stream %d items", workerID, len(pending.Items))
+				}
 			} else {
-				err = u.RPCClient.PushBlobBatch(ctx, pending.Jobs)
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+
+				var items []rpc.StreamItem
+				for _, b := range pending.Items {
+					hashBytes, _ := hex.DecodeString(b.Meta.Hash)
+					item := rpc.StreamItem{
+						Header: rpc.StreamItemHeader{
+							OpCode: rpc.OpCodePush,
+							Flags:  rpc.FlagTypeClientBlob,
+							Size:   uint64(len(b.Data)),
+						},
+						Data: bytes.NewReader(b.Data),
+					}
+					copy(item.Header.Hash[:], hashBytes)
+					items = append(items, item)
+				}
+
+				err := u.RPCClient.UploadItemsStreamed(ctx, items)
+				cancel()
+
 				if err != nil {
-					log.Printf("[Upload Pump %d] Failed to push batch: %v", workerID, err)
+					log.Printf("[Upload Pump %d] Failed to upload stream to server: %v", workerID, err)
+					// Note: On failure, we might lose DB sync status for this batch. Production versions should retry.
 				} else {
 					// Track upload stats
 					if u.Stats != nil {
-						for _, blob := range pending.Blobs {
-							u.Stats.AddFileUploaded(int64(len(blob.Data)))
+						for _, item := range pending.Items {
+							u.Stats.AddFileUploaded(int64(len(item.Data)))
 						}
 					}
 					// Update database with upload count
 					u.DBJobChan <- db.DBJob{
 						Query:      "UPDATE backups SET uploaded_files = uploaded_files + ? WHERE id = ?",
-						Args:       []interface{}{len(pending.Blobs), u.CurrentBackupID},
+						Args:       []interface{}{len(pending.Items), u.CurrentBackupID},
 						ResultChan: make(chan db.DBResult, 1),
 					}
 				}
 			}
-			cancel()
 		}
 
 		// Always release buffers back to pool
@@ -153,7 +161,7 @@ func (u *Uploader) uploadWorker(workerID int) {
 }
 
 // releaseBatch returns all pooled ciphertext buffers to the free-list
-func releaseBatch(batch []rpc.UploadJob) {
+func releaseBatch(batch []UploadJob) {
 	for i := range batch {
 		if batch[i].Release != nil {
 			batch[i].Release()
@@ -162,17 +170,17 @@ func releaseBatch(batch []rpc.UploadJob) {
 	}
 }
 
-func (u *Uploader) processOfferBatch(batch []rpc.UploadJob, workerID int) {
+func (u *Uploader) processOfferBatch(batch []UploadJob, workerID int) {
 	if u.Verbose {
 		log.Printf("[Offer Pipeline %d] Offering batch of %d jobs", workerID, len(batch))
 	}
 
-	var blobsToOffer []rpc.BlobMeta
+	var itemsToOffer []rpc.Metadata
 	for _, job := range batch {
-		blobsToOffer = append(blobsToOffer, rpc.BlobMeta{
-			Hash:    job.Hash,
-			Size:    job.Size,
-			Special: job.IsSpecial,
+		itemsToOffer = append(itemsToOffer, rpc.Metadata{
+			Hash:      job.Hash,
+			Size:      job.Size,
+			IsSpecial: job.IsSpecial,
 		})
 	}
 
@@ -183,53 +191,46 @@ func (u *Uploader) processOfferBatch(batch []rpc.UploadJob, workerID int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var neededIndices []uint32
+	var plan rpc.UploadPlan
 	var err error
 
 	if u.FakeUpload {
 		if u.Verbose {
-			log.Printf("[Offer Pipeline %d] Fake upload: Pretending to offer %d blobs", workerID, len(blobsToOffer))
+			log.Printf("[Offer Pipeline %d] Fake upload: Pretending to offer %d items", workerID, len(itemsToOffer))
 		}
-		neededIndices = make([]uint32, len(blobsToOffer))
-		for i := range blobsToOffer {
-			neededIndices[i] = uint32(i)
+		for i := range itemsToOffer {
+			plan.NeededIndices = append(plan.NeededIndices, int32(i))
 		}
 	} else {
-		if u.Verbose {
-			log.Printf("[Offer Pipeline %d] Sending OfferBlobs RPC for %d blobs...", workerID, len(blobsToOffer))
-		}
-		neededIndices, err = u.RPCClient.OfferBlobs(ctx, blobsToOffer)
-		if u.Verbose {
-			log.Printf("[Offer Pipeline %d] OfferBlobs RPC returned (err=%v)", workerID, err)
-		}
+		plan, err = u.RPCClient.OfferItems(ctx, itemsToOffer)
 		if err != nil {
-			log.Printf("[Offer Pipeline %d] Failed to offer blobs to server: %v", workerID, err)
+			log.Printf("[Offer Pipeline %d] Failed to prepare upload: %v", workerID, err)
 			releaseBatch(batch) // Abort, release all back to pool.
 			return
 		}
 	}
+	neededIndices := plan.NeededIndices
 
 	if u.Verbose {
-		log.Printf("[Offer Pipeline %d] Server requested %d out of %d offered blobs", workerID, len(neededIndices), len(blobsToOffer))
+		log.Printf("[Offer Pipeline %d] Server requested %d out of %d offered items", workerID, len(neededIndices), len(itemsToOffer))
 	}
 
 	// Figure out which ones are needed vs not needed
-	neededMap := make(map[uint32]bool)
+	neededMap := make(map[int32]bool)
 	for _, idx := range neededIndices {
 		neededMap[idx] = true
 	}
 
-	var neededJobs []rpc.UploadJob
-	var blobsToUpload []rpc.LocalBlobData
-	var unneededJobs []rpc.UploadJob
+	var neededJobs []UploadJob
+	var itemsToUpload []rpc.ItemData
+	var unneededJobs []UploadJob
 
 	for i, job := range batch {
-		if neededMap[uint32(i)] {
+		if neededMap[int32(i)] {
 			neededJobs = append(neededJobs, job)
-			blobsToUpload = append(blobsToUpload, rpc.LocalBlobData{
-				Hash:      job.Hash,
-				Data:      job.Data,
-				IsSpecial: job.IsSpecial,
+			itemsToUpload = append(itemsToUpload, rpc.ItemData{
+				Meta: itemsToOffer[i],
+				Data: job.Data,
 			})
 		} else {
 			unneededJobs = append(unneededJobs, job)
@@ -241,14 +242,14 @@ func (u *Uploader) processOfferBatch(batch []rpc.UploadJob, workerID int) {
 
 	// Send to data pump pipeline for upload
 	u.uploadPipelineChan <- pendingUpload{
-		Blobs: blobsToUpload,
+		Items: itemsToUpload,
 		Jobs:  neededJobs,
 	}
 
 	// Update database with offered count
 	u.DBJobChan <- db.DBJob{
 		Query:      "UPDATE backups SET offered_files = offered_files + ? WHERE id = ?",
-		Args:       []interface{}{len(blobsToOffer), u.CurrentBackupID},
+		Args:       []interface{}{len(itemsToOffer), u.CurrentBackupID},
 		ResultChan: make(chan db.DBResult, 1),
 	}
 }

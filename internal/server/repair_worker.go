@@ -52,7 +52,7 @@ func (e *Engine) runRepairCycle(ctx context.Context) {
 	// 2. Identify shards that need repair.
 	// A shard needs repair if it has fewer than (DataShards + ParityShards) healthy uploaded pieces.
 	targetRedundancy := e.DataShards + e.ParityShards
-	
+
 	// We only repair 'sealed' shards. 'open' shards are still being filled.
 	rows, err := e.DB.QueryContext(ctx, `
 		SELECT s.id, s.mirrored, COUNT(op.shard_id) as healthy_pieces
@@ -77,7 +77,7 @@ func (e *Engine) runRepairCycle(ctx context.Context) {
 		var j repairJob
 		var healthyCount int
 		if err := rows.Scan(&j.id, &j.isMirrored, &healthyCount); err == nil {
-			// For mirrored shards, the target is "all peers". 
+			// For mirrored shards, the target is "all peers".
 			// We handle them slightly differently in the repair logic.
 			jobs = append(jobs, j)
 		}

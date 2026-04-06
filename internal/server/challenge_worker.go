@@ -67,11 +67,11 @@ func (e *Engine) runChallengeCycle(ctx context.Context) {
 		ORDER BY RANDOM()
 		LIMIT 1
 	`
-	
+
 	var ch pendingChallenge
 	err := e.DB.QueryRowContext(ctx, query).Scan(&ch.challengeID, &ch.shardID, &ch.pieceIndex, &ch.peerID,
 		&ch.offset, &ch.expectedData, &ch.hashHex, &ch.peerAddr, &ch.peerPubKeyHex)
-	
+
 	if err == sql.ErrNoRows {
 		if e.Verbose {
 			log.Println("ChallengeWorker: No pending challenges in the pool.")
@@ -175,7 +175,7 @@ func (e *Engine) replenishPool(ctx context.Context) {
 			}
 		} else {
 			if !strings.Contains(shardPath, "piece_") {
-				continue 
+				continue
 			}
 			pieceData = data
 		}
@@ -186,14 +186,14 @@ func (e *Engine) replenishPool(ctx context.Context) {
 
 		hashHex := hex.EncodeToString(e.Hash(pieceData))
 		maxOffset := len(pieceData) - 32
-		
+
 		for i := 0; i < e.ChallengesPerPiece; i++ {
 			offset := rand.Intn(maxOffset)
 			expectedData := pieceData[offset : offset+32]
-			_, _ = e.DB.ExecContext(ctx, "INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, ?, ?)", 
+			_, _ = e.DB.ExecContext(ctx, "INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, ?, ?)",
 				t.shardID, t.pieceIndex, t.peerID, hashHex, offset, expectedData)
 		}
-		
+
 		if e.Verbose {
 			log.Printf("ChallengeWorker: Replenished %d challenges for Peer %d Piece %d", e.ChallengesPerPiece, t.peerID, t.pieceIndex)
 		}

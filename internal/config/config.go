@@ -54,9 +54,9 @@ type PeerConfig struct {
 
 // ServerConfig represents the configuration for the zero-knowledge server node.
 type ServerConfig struct {
-	Mnemonic       string   `yaml:"mnemonic"` // 24-word recovery phrase
-	AdminPublicKey string   `yaml:"admin_public_key"` // Authorized client for management
-	ContactInfo    string   `yaml:"contact_info"` // Optional contact info (email, social, etc.)
+	Mnemonic       string `yaml:"mnemonic"`         // 24-word recovery phrase
+	AdminPublicKey string `yaml:"admin_public_key"` // Authorized client for management
+	ContactInfo    string `yaml:"contact_info"`     // Optional contact info (email, social, etc.)
 	Network        struct {
 		ListenAddress        string `yaml:"listen_address"`
 		EnableUPnP           bool   `yaml:"enable_upnp"`
@@ -78,15 +78,15 @@ type ServerConfig struct {
 		SpoolDir                   string  `yaml:"spool_dir"`
 		QueueDir                   string  `yaml:"queue_dir"`
 		BlobStoreDir               string  `yaml:"blob_store_dir"`
-		MasterPassword             string  `yaml:"master_password"` // Used to encrypt server's own database backups
-		KeepLocalCopy              bool    `yaml:"keep_local_copy"` // If false, deletes local 256MB shards after P2P sync
-		KeepDeletedMinutes         int     `yaml:"keep_deleted_minutes"` // Minutes to keep blobs after client deletes them
-		KeepMetadataMinutes        int     `yaml:"keep_metadata_minutes"` // Minutes to keep server rescue bundles after update
-		WasteThreshold             float64 `yaml:"waste_threshold"` // Percentage (0.0 to 1.0) of deleted bytes to trigger GC
-		MaxStorageGB               int     `yaml:"max_storage_gb"` // Maximum total disk space to use for all shards
-		GCIntervalMinutes          int     `yaml:"gc_interval_minutes"` // How often to run the GC worker
+		MasterPassword             string  `yaml:"master_password"`              // Used to encrypt server's own database backups
+		KeepLocalCopy              bool    `yaml:"keep_local_copy"`              // If false, deletes local 256MB shards after P2P sync
+		KeepDeletedMinutes         int     `yaml:"keep_deleted_minutes"`         // Minutes to keep blobs after client deletes them
+		KeepMetadataMinutes        int     `yaml:"keep_metadata_minutes"`        // Minutes to keep server rescue bundles after update
+		WasteThreshold             float64 `yaml:"waste_threshold"`              // Percentage (0.0 to 1.0) of deleted bytes to trigger GC
+		MaxStorageGB               int     `yaml:"max_storage_gb"`               // Maximum total disk space to use for all shards
+		GCIntervalMinutes          int     `yaml:"gc_interval_minutes"`          // How often to run the GC worker
 		SelfBackupIntervalMinutes  int     `yaml:"self_backup_interval_minutes"` // How often to backup the server's own database
-		PeerEvictionHours          int     `yaml:"peer_eviction_hours"` // Hours before a peer is considered dead and its data migrated
+		PeerEvictionHours          int     `yaml:"peer_eviction_hours"`          // Hours before a peer is considered dead and its data migrated
 		UntrustedPeerUploadLimitMB int     `yaml:"untrusted_peer_upload_limit_mb"`
 		BasePieceBuffer            int     `yaml:"base_piece_buffer"`
 	} `yaml:"storage"`

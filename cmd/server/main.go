@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/tls"
 	"crypto/x509"
 	"flag"
 	"fmt"
@@ -20,7 +19,6 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 	capnprpc "capnproto.org/go/capnp/v3/rpc"
 	"capnproto.org/go/capnp/v3/rpc/transport"
-	capnpserver "capnproto.org/go/capnp/v3/server"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -49,7 +47,6 @@ func (v *verbosity) IsBoolFlag() bool {
 
 func main() {
 	configPath := flag.String("config", "server.yaml", "Path to the server configuration file")
-	rescue := flag.Bool("rescue", false, "Attempt to recover the server database from peers")
 	var v verbosity
 	flag.Var(&v, "v", "Enable verbose logging (use -v -v for extra verbosity)")
 	flag.Parse()
@@ -99,11 +96,27 @@ func main() {
 			fmt.Printf("Server Public Key (Hex): %x\n", pubKeyBytes)
 			return
 
+		case "recover":
+			recoverFlags := flag.NewFlagSet("recover", flag.ExitOnError)
+			mnemonicStr := recoverFlags.String("mnemonic", "", "The 24-word recovery mnemonic")
+			recoverFlags.Parse(flag.Args()[1:])
+
+			if *mnemonicStr == "" {
+				log.Fatal("recover command requires --mnemonic")
+			}
+			destDir := ""
+			if recoverFlags.NArg() > 0 {
+				destDir = recoverFlags.Arg(0)
+			}
+			runRecover(*mnemonicStr, destDir, v > 0)
+			return
+
 		case "help":
 			fmt.Println("Usage: server [options] [command]")
 			fmt.Println("\nCommands:")
 			fmt.Println("  keygen      Generate a new 24-word recovery mnemonic and public key")
 			fmt.Println("  identity    Show public key derived from mnemonic in config")
+			fmt.Println("  recover     Recover server state from P2P peers")
 			fmt.Println("  help        Show this help message")
 			fmt.Println("\nOptions:")
 			flag.PrintDefaults()
@@ -133,13 +146,6 @@ func main() {
 	id, err := crypto.DeriveIdentity(cfg.Mnemonic, true)
 	if err != nil {
 		log.Fatalf("Failed to derive identity from mnemonic: %v", err)
-	}
-	masterKey := id.MasterKey
-	serverCert := &id.TLSCert
-
-	if *rescue {
-		runRescue(cfg, masterKey, *serverCert, verbose)
-		return
 	}
 
 	queueDir := cfg.Storage.QueueDir
@@ -212,8 +218,9 @@ func main() {
 	}
 
 	// Convert Ed25519 identity to Libp2p Key
-	_, err = crypto.Libp2pKeyFromEd25519(id.MasterKey) // Assuming MasterKey or a specific field holds the ed25519.PrivateKey. Actually DeriveIdentity returns an Identity struct. Let's look at crypto.go in a second. Wait, DerivIdentity returns id which has MasterKey and TLSCert. The TLS cert has the private key inside it.
-	// We will get the raw ed25519.PrivateKey from the parsed crypto.go. Wait, better to construct it from the mnemonic in main.go or crypto.go.
+	_, err = crypto.Libp2pKeyFromEd25519(id.MasterKey) 
+	// Assuming MasterKey holds the ed25519.PrivateKey.
+	// I'll leave the initialization to use standard libp2p.New().
 	// I'll leave the initialization to use standard libp2p.New().
 
 	// Parse listen port
@@ -275,6 +282,7 @@ func main() {
 
 	engine := server.NewEngine(
 		db,
+		*configPath,
 		cfg.Storage.SQLitePath,
 		cfg.Storage.BlobStoreDir,
 		queueDir,
@@ -303,7 +311,7 @@ func main() {
 		cfg.ContactInfo,
 		cfg.Network.MaxConcurrentStreams,
 		cfg.Network.StandaloneMode,
-		)
+	)
 
 	if verbose {
 		log.Printf("Server engine initialized with identity: %s...", myPubKeyHex[:16])
@@ -315,8 +323,8 @@ func main() {
 	}
 
 	peerHandler := server.NewRPCHandler(engine, myPubKeyHex)
-	peerServerClient := internalrpc.PeerNode_ServerToClient(peerHandler)
-	engine.LocalPeerNode = peerServerClient
+	// Create a bootstrap client from the handler that satisfies both interfaces
+	engine.LocalPeerNode = internalrpc.PeerNode(capnp.NewClient(peerHandler.NewServer()))
 
 	// Start background workers
 	ctx := context.Background()
@@ -338,8 +346,6 @@ func main() {
 		defer throttledStream.Close()
 
 		peerID := s.Conn().RemotePeer()
-		peerAddr := s.Conn().RemoteMultiaddr().String()
-
 		pubKeyHex, err := crypto.PubKeyHexFromPeerID(peerID)
 		if err != nil {
 			log.Printf("Failed to extract pubkey from peer %s: %v", peerID, err)
@@ -353,16 +359,12 @@ func main() {
 		// Identification is lazy: peer registration happens on Announce or OfferShards
 		combinedHandler := server.NewRPCHandler(engine, pubKeyHex)
 
-		// Combine methods from both interfaces
-		methods := internalrpc.BackupServer_Methods(nil, combinedHandler)
-		methods = internalrpc.PeerNode_Methods(methods, combinedHandler)
-
-		// Create a single bootstrap client that implements both
-		bootstrapClient := capnp.NewClient(capnpserver.New(methods, combinedHandler, nil))
+		// Create a single bootstrap client that implements both via NewServer() helper
+		bootstrapClient := capnp.NewClient(combinedHandler.NewServer())
 
 		if verbose {
-			log.Printf("Identified Connection: %s... from %s (client_status=%s, quota=%d/%d MB)",
-				pubKeyHex[:16], peerAddr, status, current/(1024*1024), quota/(1024*1024))
+			log.Printf("Identified %s stream from %s... (client_status=%s, quota=%d/%d MB)",
+				s.Protocol(), pubKeyHex[:16], status, current/(1024*1024), quota/(1024*1024))
 		}
 
 		if extraVerbose {
@@ -388,8 +390,8 @@ func main() {
 		<-rpcConn.Done()
 	})
 
-	p2pHost.SetStreamHandler("/bdr/data/1.0.0", func(s network.Stream) {
-		engine.HandleDataStream(s)
+	p2pHost.SetStreamHandler("/bdr/stream/1.0.0", func(s network.Stream) {
+		engine.HandleUnifiedStream(s)
 	})
 
 	// Keep main thread alive
@@ -418,6 +420,66 @@ func (c *customCodec) Close() error {
 	return c.closer()
 }
 
-func runRescue(cfg *config.ServerConfig, masterKey []byte, myCert tls.Certificate, verbose bool) {
-	log.Fatal("RESCUE: Disaster recovery not yet ported to out-of-band streaming.")
+func runRecover(mnemonic, destDir string, verbose bool) {
+	if destDir == "" {
+		homeDir, _ := os.UserHomeDir()
+		destDir = filepath.Join(homeDir, "recovered")
+	}
+
+	id, err := crypto.DeriveIdentity(mnemonic, true)
+	if err != nil {
+		log.Fatalf("Failed to derive identity: %v", err)
+	}
+
+	edPrivKey := id.TLSCert.PrivateKey.(ed25519.PrivateKey)
+	p2pPrivKey, err := crypto.Libp2pKeyFromEd25519(edPrivKey)
+	if err != nil {
+		log.Fatalf("Failed to convert identity to libp2p key: %v", err)
+	}
+
+	p2pOpts := []libp2p.Option{
+		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/8080", "/ip4/0.0.0.0/udp/8080/quic-v1"),
+		libp2p.Identity(p2pPrivKey),
+		libp2p.EnableRelay(),
+		libp2p.EnableHolePunching(),
+	}
+
+	p2pHost, err := libp2p.New(p2pOpts...)
+	if err != nil {
+		log.Fatalf("Failed to start libp2p host: %v", err)
+	}
+
+	fmt.Printf("Started recover mode. P2P Host listening on:\n")
+	for _, addr := range p2pHost.Addrs() {
+		fmt.Printf("  - %s/p2p/%s\n", addr.String(), p2pHost.ID().String())
+	}
+	fmt.Println("Waiting for a peer to connect to provide the rescue shard...")
+
+	db, _ := server.InitDB(":memory:")
+	defer db.Close()
+	engine := server.NewEngine(db, "", "", "", "", 10, 4, 1024, false, p2pHost, "", 1024, verbose, false, 8, 30, 30, 0.5, 30, 0, 30, 4, -1, -1, -1, id.MasterKey, "", "", 4, false)
+
+	done := make(chan struct{})
+	p2pHost.SetStreamHandler("/bdr/rpc/1.0.0", func(s network.Stream) {
+		log.Printf("Peer %s connected!", s.Conn().RemotePeer())
+
+		decoder := capnp.NewDecoder(s)
+		decoder.MaxMessageSize = 512 * 1024 * 1024
+		encoder := capnp.NewEncoder(s)
+		codec := &customCodec{decoder: decoder, encoder: encoder, closer: s.Close}
+		rpcConn := capnprpc.NewConn(transport.New(codec), nil)
+		peerNode := internalrpc.PeerNode(rpcConn.Bootstrap(context.Background()))
+
+		err := engine.AttemptRescue(context.Background(), peerNode, s.Conn().RemotePeer(), destDir)
+		if err != nil {
+			log.Printf("Rescue from peer failed: %v", err)
+			return
+		}
+
+		log.Printf("Successfully recovered server state! See %s for details.", destDir)
+		close(done)
+	})
+
+	<-done
+	os.Exit(0)
 }

@@ -13,12 +13,34 @@ import (
 
 	"github.com/tyler-smith/go-bip39"
 	"golang.org/x/crypto/hkdf"
-	"lukechampine.com/blake3"
 	"hash"
+	"lukechampine.com/blake3"
 )
 
 func blake3Wrapper() hash.Hash {
 	return blake3.New(32, nil)
+}
+
+// DeriveSigningKey deterministically derives an Ed25519 signing key pair from the MasterKey
+// to be used for signing and verifying recovery shards.
+func DeriveSigningKey(masterKey []byte) ed25519.PrivateKey {
+	signingSeedReader := hkdf.New(blake3Wrapper, masterKey, nil, []byte("p2p-backup-signing-key"))
+	signingSeed := make([]byte, 32)
+	signingSeedReader.Read(signingSeed)
+	return ed25519.NewKeyFromSeed(signingSeed)
+}
+
+// SignRecoveryShard signs the data using an Ed25519 private key derived from the MasterKey.
+func SignRecoveryShard(masterKey, data []byte) []byte {
+	privKey := DeriveSigningKey(masterKey)
+	return ed25519.Sign(privKey, data)
+}
+
+// VerifyRecoveryShard verifies the data using an Ed25519 public key derived from the MasterKey.
+func VerifyRecoveryShard(masterKey, signature, data []byte) bool {
+	privKey := DeriveSigningKey(masterKey)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+	return ed25519.Verify(pubKey, data, signature)
 }
 
 // GenerateMnemonic creates a new 24-word recovery phrase.
@@ -86,7 +108,7 @@ func DeriveIdentity(mnemonic string, isServer bool) (*DerivedIdentity, error) {
 
 	// Create PEM blocks
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
-	
+
 	// For Ed25519, we need to marshal the private key to PKCS8
 	privBytes, err := x509.MarshalPKCS8PrivateKey(privKey)
 	if err != nil {

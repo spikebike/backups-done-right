@@ -74,7 +74,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to resolve absolute path for %s: %v", dir, err)
 		}
-		
+
 		info, err := os.Stat(absPath)
 		if err != nil {
 			log.Fatalf("Failed to access directory %s: %v", absPath, err)
@@ -88,22 +88,23 @@ func main() {
 	// --- SETUP SERVER ENGINE ---
 	serverDBPath := "server_state.db"
 	serverBlobDir := "server_blobs"
-	
+
 	if err := os.MkdirAll(serverBlobDir, 0755); err != nil {
 		log.Fatalf("Failed to create server blob dir: %v", err)
 	}
-	
+
 	serverDB, err := server.InitDB(serverDBPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize server DB: %v", err)
 	}
 	defer serverDB.Close()
-	
+
 	pieceSize := int64(256 * 1024 * 1024) // 256MB per distributed piece
 	shardSize := int64(10) * pieceSize    // 10 data shards
 	serverQueueDir := "server_queue"
 	engine := server.NewEngine(
 		serverDB,
+		"", // No server config path for local testing
 		serverDBPath,
 		serverBlobDir,
 		serverQueueDir,
@@ -146,23 +147,23 @@ func main() {
 	jobChan := make(chan client.FileJob, 1000)
 	uploadChan := make(chan client.UploadJob, 1000)
 	dbJobChan := make(chan db.DBJob, 1000)
-	
+
 	db.StartDBWriter(database, dbJobChan)
 
 	crawler := client.NewCrawler(database, dbJobChan, backupDirs, jobChan, 4, verbose)
-	
+
 	key := []byte("01234567890123456789012345678901")
 	archiveChan := make(chan client.FileArchive, 1000)
-	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, verbose, true, nil)
-	
+	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, false, true, nil, 10, 1)
+
 	// Connect the client to the local server engine
 	rpcClient := client.NewMockRPCClient(engine)
-	
+
 	batchSize := cfg.Pipeline.BatchUploadSize
 	if batchSize <= 0 {
 		batchSize = 100
 	}
-	
+
 	// Create dummy backup record for localtest
 	resChan := make(chan db.DBResult)
 	dbJobChan <- db.DBJob{
@@ -175,7 +176,7 @@ func main() {
 	}
 	backupID := res.ID
 
-	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, batchSize, false, verbose, backupID, nil)
+	uploader := client.NewUploader((chan<- db.DBJob)(dbJobChan), uploadChan, rpcClient, 2, batchSize, false, verbose, backupID, nil)
 	stateManager := client.NewStateManager(database, dbJobChan, archiveChan, verbose)
 
 	if verbose {

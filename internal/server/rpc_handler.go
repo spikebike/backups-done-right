@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
-	"log"
 
-	"p2p-backup/internal/rpc" // this imports schema.capnp.go
+	"capnproto.org/go/capnp/v3"
+	capnpserver "capnproto.org/go/capnp/v3/server"
+	"p2p-backup/internal/rpc"
 )
 
+// RPCHandler manages RPC calls from both clients (BackupServer) and other nodes (PeerNode).
 type RPCHandler struct {
 	engine       *Engine
 	clientPubKey string
@@ -18,257 +19,196 @@ func NewRPCHandler(engine *Engine, clientPubKey string) *RPCHandler {
 	return &RPCHandler{engine: engine, clientPubKey: clientPubKey}
 }
 
-// --- BackupServer Methods ---
-
-func (h *RPCHandler) OfferBlobs(ctx context.Context, call rpc.BackupServer_offerBlobs) error {
-	log.Printf("RPCHandler: Received OfferBlobs from %s...", h.clientPubKey[:16])
-	args := call.Args()
-	capnpBlobs, err := args.Blobs()
-	if err != nil {
-		log.Printf("RPCHandler: OfferBlobs args error: %v", err)
-		return err
-	}
-
-	var metaBlobs []rpc.BlobMeta
-	for i := 0; i < capnpBlobs.Len(); i++ {
-		cb := capnpBlobs.At(i)
-		hashBytes, _ := cb.Checksum()
-		metaBlobs = append(metaBlobs, rpc.BlobMeta{
-			Hash:    hex.EncodeToString(hashBytes),
-			Size:    int64(cb.Size()),
-			Special: cb.Special(),
-		})
-	}
-
-	log.Printf("RPCHandler: Calling engine.OfferBlobs for %d blobs...", len(metaBlobs))
-	neededIndices, err := h.engine.OfferBlobs(ctx, h.clientPubKey, metaBlobs)
-	if err != nil {
-		log.Printf("RPCHandler: engine.OfferBlobs error: %v", err)
-		return err
-	}
-
-	log.Printf("RPCHandler: Returning %d needed indices to client.", len(neededIndices))
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	neededList, err := res.NewNeededIndices(int32(len(neededIndices)))
-	if err != nil {
-		return err
-	}
-	for i, idx := range neededIndices {
-		neededList.Set(i, idx)
-	}
-
-	return nil
+func (h *RPCHandler) NewServer() *capnpserver.Server {
+	methods := rpc.BackupServer_Methods(nil, &backupServerAdapter{h})
+	methods = rpc.PeerNode_Methods(methods, &peerNodeAdapter{h})
+	return capnpserver.New(methods, h, nil)
 }
-func (h *RPCHandler) PrepareUploadClient(ctx context.Context, call rpc.BackupServer_prepareUploadClient) error {
-	args := call.Args()
-	capnpBlobs, err := args.Blobs()
-	if err != nil {
-		return err
-	}
 
-	for i := 0; i < capnpBlobs.Len(); i++ {
-		cb := capnpBlobs.At(i)
-		hashBytes, err := cb.Checksum()
+// --- Internal Helpers for Code Weight Reduction ---
+
+func (h *RPCHandler) decodeMetadataList(list rpc.TransferMetadata_List) []rpc.Metadata {
+	var metas []rpc.Metadata
+	for i := 0; i < list.Len(); i++ {
+		metas = append(metas, rpc.MetadataFromCapnp(list.At(i)))
+	}
+	return metas
+}
+
+func (h *RPCHandler) encodeMetadataList(seg *capnp.Segment, items []rpc.Metadata) (rpc.TransferMetadata_List, error) {
+	list, err := rpc.NewTransferMetadata_List(seg, int32(len(items)))
+	if err != nil {
+		return rpc.TransferMetadata_List{}, err
+	}
+	for i, item := range items {
+		cm, err := rpc.MetadataToCapnp(seg, item)
 		if err != nil {
-			return fmt.Errorf("failed to read blob %d checksum: %w", i, err)
+			return rpc.TransferMetadata_List{}, err
 		}
-		h.engine.pendingClientStreams.Store(hex.EncodeToString(hashBytes), rpc.PendingClientBlob{
-			BlobMeta: rpc.BlobMeta{
-				Hash:    hex.EncodeToString(hashBytes),
-				Size:    int64(cb.Size()),
-				Special: cb.Special(),
-			},
-			ClientPubKey: h.clientPubKey,
-		})
+		if err := list.Set(i, cm); err != nil {
+			return rpc.TransferMetadata_List{}, err
+		}
 	}
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
-	res.SetSuccess(true)
-	return nil
-}
-func (h *RPCHandler) ListSpecialBlobs(ctx context.Context, call rpc.BackupServer_listSpecialBlobs) error {
-	specialBlobs, err := h.engine.ListSpecialBlobs(ctx)
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	blobList, err := res.NewSpecialBlobs(int32(len(specialBlobs)))
-	if err != nil {
-		return err
-	}
-
-	for i, sb := range specialBlobs {
-		cb := blobList.At(i)
-		hashBytes, _ := hex.DecodeString(sb.Hash)
-		cb.SetChecksum(hashBytes)
-		cb.SetSize(uint64(sb.Size))
-		cb.SetSpecial(sb.Special)
-	}
-
-	return nil
+	return list, nil
 }
 
-func (h *RPCHandler) GetStatus(ctx context.Context, call rpc.BackupServer_getStatus) error {
-	status, err := h.engine.GetStatus(ctx)
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	resStatus, err := res.NewStatus()
-	if err != nil {
-		return err
-	}
-
-	resStatus.SetUptimeSeconds(status.UptimeSeconds)
-	resStatus.SetTotalShards(status.TotalShards)
-	resStatus.SetFullyReplicatedShards(status.FullyReplicatedShards)
-	resStatus.SetPartiallyReplicatedShards(status.PartiallyReplicatedShards)
-	resStatus.SetHostedPeerShards(status.HostedPeerShards)
-	resStatus.SetQueuedBytes(status.QueuedBytes)
-
-	return nil
-}
-
-func (h *RPCHandler) DeleteBlobs(ctx context.Context, call rpc.BackupServer_deleteBlobs) error {
-	args := call.Args()
-	capnpHashes, err := args.Checksums()
-	if err != nil {
-		return err
-	}
-
+func (h *RPCHandler) decodeChecksumList(list capnp.DataList) []string {
 	var hashes []string
-	for i := 0; i < capnpHashes.Len(); i++ {
-		hashBytes, _ := capnpHashes.At(i)
+	for i := 0; i < list.Len(); i++ {
+		hashBytes, _ := list.At(i)
 		hashes = append(hashes, hex.EncodeToString(hashBytes))
 	}
+	return hashes
+}
 
-	err = h.engine.DeleteBlobs(ctx, hashes)
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
+func (h *RPCHandler) encodeChecksumList(seg *capnp.Segment, hashes []string) (capnp.DataList, error) {
+	list, err := capnp.NewDataList(seg, int32(len(hashes)))
 	if err != nil {
-		res.SetSuccess(false)
+		return capnp.DataList{}, err
+	}
+	for i, hash := range hashes {
+		hashBytes, _ := hex.DecodeString(hash)
+		list.Set(i, hashBytes)
+	}
+	return list, nil
+}
+
+// --- Adapters ---
+
+type backupServerAdapter struct{ *RPCHandler }
+type peerNodeAdapter struct{ *RPCHandler }
+
+// --- BackupServer Implementation ---
+
+func (a *backupServerAdapter) OfferItems(ctx context.Context, call rpc.BackupServer_offerItems) error {
+	list, _ := call.Args().Items()
+	plan, err := a.engine.OfferItems(ctx, a.clientPubKey, a.decodeMetadataList(list))
+	if err != nil {
+		return err
+	}
+	res, _ := call.AllocResults()
+	indices, _ := res.NewNeededIndices(int32(len(plan.NeededIndices)))
+	for i, idx := range plan.NeededIndices {
+		indices.Set(i, uint32(idx))
+	}
+	return nil
+}
+
+func (a *backupServerAdapter) UploadItems(ctx context.Context, call rpc.BackupServer_uploadItems) error {
+	capnpItems, _ := call.Args().Items()
+	var items []rpc.ItemData
+	for i := 0; i < capnpItems.Len(); i++ {
+		ci := capnpItems.At(i)
+		meta, _ := ci.Meta()
+		data, _ := ci.Data()
+		items = append(items, rpc.ItemData{Meta: rpc.MetadataFromCapnp(meta), Data: data})
+	}
+	err := a.engine.UploadItems(ctx, a.clientPubKey, items)
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
+	if err != nil {
 		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
 	}
-
 	return nil
 }
 
-func (h *RPCHandler) ListAllBlobs(ctx context.Context, call rpc.BackupServer_listAllBlobs) error {
-	hashes, err := h.engine.ListAllBlobs(ctx)
+func (a *backupServerAdapter) ListSpecialItems(ctx context.Context, call rpc.BackupServer_listSpecialItems) error {
+	items, err := a.engine.ListSpecialItems(ctx, a.clientPubKey)
 	if err != nil {
 		return err
 	}
+	res, _ := call.AllocResults()
+	list, err := a.encodeMetadataList(res.Segment(), items)
+	if err == nil {
+		res.SetItems(list)
+	}
+	return err
+}
 
-	res, err := call.AllocResults()
+func (a *backupServerAdapter) DownloadItems(ctx context.Context, call rpc.BackupServer_downloadItems) error {
+	list, _ := call.Args().Checksums()
+	hashes := a.decodeChecksumList(list)
+	found, missing, err := a.engine.GetItems(ctx, hashes)
 	if err != nil {
 		return err
 	}
-
-	checksumList, err := res.NewChecksums(int32(len(hashes)))
-	if err != nil {
-		return err
+	res, _ := call.AllocResults()
+	itemList, _ := res.NewItems(int32(len(found)))
+	for i, item := range found {
+		ci := itemList.At(i)
+		cm, _ := rpc.MetadataToCapnp(ci.Segment(), item.Meta)
+		ci.SetMeta(cm)
+		ci.SetData(item.Data)
 	}
-
-	for i, h := range hashes {
-		hashBytes, _ := hex.DecodeString(h)
-		checksumList.Set(i, hashBytes)
-	}
-
+	missingList, _ := a.encodeChecksumList(res.Segment(), missing)
+	res.SetMissing(missingList)
 	return nil
 }
 
-func (h *RPCHandler) AddPeer(ctx context.Context, call rpc.BackupServer_addPeer) error {
+func (a *backupServerAdapter) GetStatus(ctx context.Context, call rpc.BackupServer_getStatus) error {
+	status, err := a.engine.GetStatus(ctx)
+	if err != nil {
+		return err
+	}
+	res, _ := call.AllocResults()
+	s, _ := res.NewStatus()
+	s.SetUptimeSeconds(status.UptimeSeconds)
+	s.SetTotalShards(status.TotalShards)
+	s.SetFullyReplicatedShards(status.FullyReplicatedShards)
+	s.SetPartiallyReplicatedShards(status.PartiallyReplicatedShards)
+	s.SetHostedPeerShards(status.HostedPeerShards)
+	s.SetQueuedBytes(status.QueuedBytes)
+	return nil
+}
+
+func (a *backupServerAdapter) DeleteItems(ctx context.Context, call rpc.BackupServer_deleteItems) error {
+	list, _ := call.Args().Checksums()
+	hashes := a.decodeChecksumList(list)
+	err := a.engine.DeleteItems(ctx, hashes)
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
+	return nil
+}
+
+func (a *backupServerAdapter) ListAllItems(ctx context.Context, call rpc.BackupServer_listAllItems) error {
+	hashes, err := a.engine.ListAllItems(ctx)
+	if err != nil {
+		return err
+	}
+	res, _ := call.AllocResults()
+	list, err := a.encodeChecksumList(res.Segment(), hashes)
+	if err == nil {
+		res.SetChecksums(list)
+	}
+	return err
+}
+
+func (a *backupServerAdapter) AddPeer(ctx context.Context, call rpc.BackupServer_addPeer) error {
+	addr, _ := call.Args().Address()
+	err := a.engine.AddPeer(ctx, addr)
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
+	return nil
+}
+
+func (a *backupServerAdapter) UpdatePeer(ctx context.Context, call rpc.BackupServer_updatePeer) error {
 	args := call.Args()
-	address, err := args.Address()
-	if err != nil {
-		return err
-	}
-
-	err = h.engine.AddPeer(ctx, address)
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
-	if err != nil {
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
-	}
-
+	status, _ := args.Status()
+	err := a.engine.UpdatePeer(ctx, int64(args.Id()), status, int64(args.MaxStorageSize()))
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
 	return nil
 }
 
-func (h *RPCHandler) UpdatePeer(ctx context.Context, call rpc.BackupServer_updatePeer) error {
-	args := call.Args()
-	id := args.Id()
-	status, err := args.Status()
+func (a *backupServerAdapter) ListPeers(ctx context.Context, call rpc.BackupServer_listPeers) error {
+	peers, err := a.engine.ListPeers(ctx)
 	if err != nil {
 		return err
 	}
-	maxSize := args.MaxStorageSize()
-
-	err = h.engine.UpdatePeer(ctx, int64(id), status, int64(maxSize))
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
-	if err != nil {
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
-	}
-
-	return nil
-}
-
-func (h *RPCHandler) ListPeers(ctx context.Context, call rpc.BackupServer_listPeers) error {
-	peers, err := h.engine.ListPeers(ctx)
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	peerList, err := res.NewPeers(int32(len(peers)))
-	if err != nil {
-		return err
-	}
-
+	res, _ := call.AllocResults()
+	list, _ := res.NewPeers(int32(len(peers)))
 	for i, p := range peers {
-		cp := peerList.At(i)
+		cp := list.At(i)
 		cp.SetId(uint64(p.ID))
 		cp.SetAddress(p.Address)
 		cp.SetPublicKey(p.PublicKey)
@@ -278,36 +218,26 @@ func (h *RPCHandler) ListPeers(ctx context.Context, call rpc.BackupServer_listPe
 		cp.SetMaxStorageSize(uint64(p.MaxStorageSize))
 		cp.SetCurrentStorageSize(uint64(p.CurrentStorageSize))
 		cp.SetOutboundStorageSize(uint64(p.OutboundStorageSize))
+		cp.SetContactInfo(p.ContactInfo)
 		cp.SetChallengesMade(p.ChallengesMade)
 		cp.SetChallengesPassed(p.ChallengesPassed)
 		cp.SetConnectionsOk(p.ConnectionsOk)
 		cp.SetIntegrityAttempts(p.IntegrityAttempts)
-		cp.SetContactInfo(p.ContactInfo)
 		cp.SetTotalShards(p.TotalShards)
 		cp.SetCurrentShards(p.CurrentShards)
 	}
-
 	return nil
 }
 
-func (h *RPCHandler) ListClients(ctx context.Context, call rpc.BackupServer_listClients) error {
-	clients, err := h.engine.ListClients(ctx)
+func (a *backupServerAdapter) ListClients(ctx context.Context, call rpc.BackupServer_listClients) error {
+	clients, err := a.engine.ListClients(ctx)
 	if err != nil {
 		return err
 	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	clientList, err := res.NewClients(int32(len(clients)))
-	if err != nil {
-		return err
-	}
-
+	res, _ := call.AllocResults()
+	list, _ := res.NewClients(int32(len(clients)))
 	for i, c := range clients {
-		cc := clientList.At(i)
+		cc := list.At(i)
 		cc.SetId(c.ID)
 		cc.SetPublicKey(c.PublicKey)
 		cc.SetStatus(c.Status)
@@ -315,265 +245,94 @@ func (h *RPCHandler) ListClients(ctx context.Context, call rpc.BackupServer_list
 		cc.SetMaxStorageSize(c.MaxStorageSize)
 		cc.SetCurrentStorageSize(c.CurrentStorageSize)
 	}
-
 	return nil
 }
 
-func (h *RPCHandler) UpdateClient(ctx context.Context, call rpc.BackupServer_updateClient) error {
-	args := call.Args()
-	id := args.Id()
-	status, err := args.Status()
-	if err != nil {
-		return err
-	}
-	maxSize := args.MaxStorageSize()
-
-	err = h.engine.UpdateClient(ctx, h.clientPubKey, id, status, maxSize)
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
-	if err != nil {
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
-	}
-
+func (a *backupServerAdapter) UpdateClient(ctx context.Context, call rpc.BackupServer_updateClient) error {
+	status, _ := call.Args().Status()
+	err := a.engine.UpdateClient(ctx, a.clientPubKey, call.Args().Id(), status, call.Args().MaxStorageSize())
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
 	return nil
 }
 
-func (h *RPCHandler) AddClient(ctx context.Context, call rpc.BackupServer_addClient) error {
-	args := call.Args()
-	pk, err := args.PublicKey()
-	if err != nil {
-		return err
-	}
-	status, err := args.Status()
-	if err != nil {
-		return err
-	}
-	maxSize := args.MaxStorageSize()
-
-	err = h.engine.AddClient(ctx, h.clientPubKey, pk, status, maxSize)
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
-	if err != nil {
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
-	}
-
+func (a *backupServerAdapter) AddClient(ctx context.Context, call rpc.BackupServer_addClient) error {
+	pk, _ := call.Args().PublicKey()
+	status, _ := call.Args().Status()
+	err := a.engine.AddClient(ctx, a.clientPubKey, pk, status, call.Args().MaxStorageSize())
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
 	return nil
 }
 
-// --- PeerNode Methods ---
+// --- PeerNode Implementation ---
 
-func (h *RPCHandler) OfferShards(ctx context.Context, call rpc.PeerNode_offerShards) error {
-	args := call.Args()
-	capnpShards, err := args.Shards()
+func (a *peerNodeAdapter) OfferItems(ctx context.Context, call rpc.PeerNode_offerItems) error {
+	list, _ := call.Args().Items()
+	plan, err := a.engine.OfferItems(ctx, a.clientPubKey, a.decodeMetadataList(list))
 	if err != nil {
 		return err
 	}
-
-	var metaShards []rpc.PeerShardMeta
-	for i := 0; i < capnpShards.Len(); i++ {
-		cs := capnpShards.At(i)
-		hashBytes, _ := cs.Checksum()
-		parentHash, _ := cs.ParentShardHash()
-		metaShards = append(metaShards, rpc.PeerShardMeta{
-			Hash:            hex.EncodeToString(hashBytes),
-			Size:            int64(cs.Size()),
-			IsSpecial:       cs.IsSpecial(),
-			PieceIndex:      int(cs.PieceIndex()),
-			ParentShardHash: hex.EncodeToString(parentHash),
-			SequenceNumber:  cs.SequenceNumber(),
-			TotalPieces:     int(cs.TotalPieces()),
-		})
+	res, _ := call.AllocResults()
+	neededList, _ := res.NewNeededIndices(int32(len(plan.NeededIndices)))
+	for i, idx := range plan.NeededIndices {
+		neededList.Set(i, uint32(idx))
 	}
-
-	neededIndices, err := h.engine.OfferShards(ctx, h.clientPubKey, metaShards)
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	neededList, err := res.NewNeededIndices(int32(len(neededIndices)))
-	if err != nil {
-		return err
-	}
-	for i, idx := range neededIndices {
-		neededList.Set(i, idx)
-	}
-
 	return nil
 }
 
-func (h *RPCHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_prepareUpload) error {
-	args := call.Args()
-	capnpShards, err := args.Shards()
-	if err != nil {
-		return err
-	}
-
-	var metas []rpc.PendingStreamMeta
-	for i := 0; i < capnpShards.Len(); i++ {
-		cs := capnpShards.At(i)
-		hashBytes, err := cs.Checksum()
-		if err != nil {
-			return fmt.Errorf("failed to read shard %d checksum: %w", i, err)
-		}
-		parentHash, _ := cs.ParentShardHash()
-
-		var peerID int64
-		err = h.engine.DB.QueryRowContext(ctx, "SELECT id FROM peers WHERE public_key = ?", h.clientPubKey).Scan(&peerID)
-		if err != nil {
-			return fmt.Errorf("failed to get peer ID from DB: %w", err)
-		}
-
-		metas = append(metas, rpc.PendingStreamMeta{
-			PeerID:          peerID,
-			IsSpecial:       cs.IsSpecial(),
-			PieceIndex:      int(cs.PieceIndex()),
-			ParentShardHash: hex.EncodeToString(parentHash),
-			SequenceNumber:  cs.SequenceNumber(),
-			TotalPieces:     int(cs.TotalPieces()),
-			Size:            cs.Size(),
-		})
-
-		h.engine.pendingInboundStreams.Store(hex.EncodeToString(hashBytes), metas[len(metas)-1])
-	}
-
-	if err := h.engine.PrepareUpload(ctx, h.clientPubKey, metas); err != nil {
-		res, allocErr := call.AllocResults()
-		if allocErr != nil {
-			return allocErr
-		}
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-		return nil
-	}
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
-	res.SetSuccess(true)
+func (a *peerNodeAdapter) PrepareUpload(ctx context.Context, call rpc.PeerNode_prepareUpload) error {
+	list, _ := call.Args().Items()
+	err := a.engine.PreparePeerUpload(ctx, a.clientPubKey, a.decodeMetadataList(list))
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
 	return nil
 }
-func (h *RPCHandler) ChallengePiece(ctx context.Context, call rpc.PeerNode_challengePiece) error {
-	args := call.Args()
-	checksum, err := args.ShardChecksum()
+
+func (a *peerNodeAdapter) ChallengePiece(ctx context.Context, call rpc.PeerNode_challengePiece) error {
+	checksum, _ := call.Args().Checksum()
+	data, err := a.engine.ChallengePiece(ctx, a.clientPubKey, checksum, call.Args().Offset())
 	if err != nil {
 		return err
 	}
-	offset := args.Offset()
+	res, _ := call.AllocResults()
+	res.SetData(data)
+	return nil
+}
 
-	data, err := h.engine.ChallengePiece(ctx, h.clientPubKey, checksum, offset)
+func (a *peerNodeAdapter) ReleasePiece(ctx context.Context, call rpc.PeerNode_releasePiece) error {
+	checksum, _ := call.Args().Checksum()
+	err := a.engine.ReleasePiece(ctx, checksum, a.clientPubKey)
+	res, _ := call.AllocResults()
+	res.SetSuccess(err == nil)
+	return nil
+}
+
+func (a *peerNodeAdapter) ListSpecialItems(ctx context.Context, call rpc.PeerNode_listSpecialItems) error {
+	items, err := a.engine.ListSpecialItems(ctx, a.clientPubKey)
 	if err != nil {
 		return err
 	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
+	res, _ := call.AllocResults()
+	list, err := a.encodeMetadataList(res.Segment(), items)
+	if err == nil {
+		res.SetItems(list)
 	}
-
-	err = res.SetData(data)
 	return err
 }
 
-func (h *RPCHandler) ReleasePiece(ctx context.Context, call rpc.PeerNode_releasePiece) error {
+func (a *peerNodeAdapter) Announce(ctx context.Context, call rpc.PeerNode_announce) error {
 	args := call.Args()
-	checksum, err := args.ShardChecksum()
-	if err != nil {
-		return err
-	}
-
-	err = h.engine.ReleasePiece(ctx, checksum, h.clientPubKey)
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
-
-	if err != nil {
-		res.SetSuccess(false)
-		res.SetError(err.Error())
-	} else {
-		res.SetSuccess(true)
-	}
-
-	return nil
-}
-
-func (h *RPCHandler) ListSpecialPieces(ctx context.Context, call rpc.PeerNode_listSpecialPieces) error {
-	pieces, err := h.engine.ListSpecialPieces(ctx, h.clientPubKey)
-	if err != nil {
-		return err
-	}
-
-	res, err := call.AllocResults()
-	if err != nil {
-		return err
-	}
-
-	capnpShards, err := res.NewShards(int32(len(pieces)))
-	if err != nil {
-		return err
-	}
-
-	for i, p := range pieces {
-		cs := capnpShards.At(i)
-		hashBytes, _ := hex.DecodeString(p.Hash)
-		_ = cs.SetChecksum(hashBytes)
-		cs.SetSize(uint64(p.Size))
-		cs.SetIsSpecial(true)
-		cs.SetPieceIndex(uint32(p.PieceIndex))
-		cs.SetSequenceNumber(p.SequenceNumber)
-		cs.SetTotalPieces(uint32(p.TotalPieces))
-		parentHashBytes, _ := hex.DecodeString(p.ParentShardHash)
-		_ = cs.SetParentShardHash(parentHashBytes)
-	}
-
-	return nil
-}
-
-func (h *RPCHandler) Announce(ctx context.Context, call rpc.PeerNode_announce) error {
-	args := call.Args()
-	addr, err := args.ListenAddress()
-	if err != nil {
-		return err
-	}
+	addr, _ := args.ListenAddress()
 	contact, _ := args.ContactInfo()
-
-	peerID, err := h.engine.AnnouncePeer(ctx, h.clientPubKey, addr, contact)
+	peerID, err := a.engine.AnnouncePeer(ctx, a.clientPubKey, addr, contact)
 	if err == nil && peerID > 0 {
 		callback := args.Callback()
 		if callback.IsValid() {
-			// Register this active connection so our OutboundWorker can dial back immediately
-			// without needing to establish a new TCP connection (solves NAT issues).
-			// We need to add a ref to it so it doesn't get released when the handler returns.
-			h.engine.RegisterActivePeer(peerID, callback.AddRef())
+			a.engine.RegisterActivePeer(peerID, callback.AddRef())
 		}
 	}
-
-	res, allocErr := call.AllocResults()
-	if allocErr != nil {
-		return allocErr
-	}
+	res, _ := call.AllocResults()
 	res.SetSuccess(err == nil)
 	return nil
 }

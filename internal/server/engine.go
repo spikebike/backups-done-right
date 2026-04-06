@@ -1,11 +1,13 @@
 package server
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/x509"
 	"database/sql"
-	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -25,6 +27,7 @@ import (
 	"lukechampine.com/blake3"
 	"p2p-backup/internal/config"
 	"p2p-backup/internal/crypto"
+	capnp "capnproto.org/go/capnp/v3"
 	"p2p-backup/internal/rpc"
 )
 
@@ -55,26 +58,28 @@ type Engine struct {
 	AdminPublicKey             string
 	ContactInfo                string
 	StandaloneMode             bool
+	ConfigPath                 string
 	// Bandwidth Throttling
 	UploadLimiter   *rate.Limiter
 	DownloadLimiter *rate.Limiter
 	// Peer Management
-	LocalPeerNode   rpc.PeerNode
-	ActivePeers     map[int64]rpc.PeerNode
-	ActivePeersMu   sync.RWMutex
-	StartTime       time.Time
-	MasterKey                  []byte
-	mu                         sync.Mutex // Protects pendingBlobs and shard writing
-	pendingBlobs    map[string]rpc.BlobMeta
-	wg              sync.WaitGroup
-	streamSemaphore chan struct{}
+	LocalPeerNode         rpc.PeerNode
+	ActivePeers           map[int64]rpc.PeerNode
+	ActivePeersMu         sync.RWMutex
+	StartTime             time.Time
+	MasterKey             []byte
+	mu                    sync.Mutex // Protects pendingItems and shard reservation
+	pendingItems          map[string]rpc.Metadata
+	activeShardID         int64
+	activeShardSize       int64
+	wg                    sync.WaitGroup
+	streamSemaphore       chan struct{}
 	pendingInboundStreams sync.Map
-	pendingClientStreams  sync.Map
 	StreamBufferPool      sync.Pool
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool) *Engine {
+func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -156,7 +161,8 @@ func NewEngine(db *sql.DB, sqlitePath string, blobStoreDir, queueDir string, dat
 		AdminPublicKey:             adminPublicKey,
 		ContactInfo:                contactInfo,
 		StandaloneMode:             standaloneMode,
-		pendingBlobs:               make(map[string]rpc.BlobMeta),
+		ConfigPath:                 configPath,
+		pendingItems:               make(map[string]rpc.Metadata),
 		streamSemaphore:            make(chan struct{}, maxConcurrentStreams),
 		StreamBufferPool: sync.Pool{
 			New: func() any {
@@ -172,43 +178,44 @@ func (e *Engine) Wait() {
 }
 
 // AttemptRescue attempts to recover the server database from a peer that has a mirrored copy of the special metadata shard.
-func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode, pid peer.ID) error {
+func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode, pid peer.ID, destDir string) error {
 	if e.Verbose {
 		log.Println("RESCUE: Attempting to recover database from peer...")
 	}
 
 	// 1. Get special pieces from peer
-	req, release := peer.ListSpecialPieces(ctx, nil)
+	req, release := peer.ListSpecialItems(ctx, nil)
 	defer release()
 	res, err := req.Struct()
 	if err != nil {
-		return fmt.Errorf("list special pieces: %w", err)
+		return fmt.Errorf("list special items: %w", err)
 	}
-	shards, _ := res.Shards()
-	if shards.Len() == 0 {
+	items, _ := res.Items()
+	if items.Len() == 0 {
 		return fmt.Errorf("no special pieces found on peer")
 	}
 
 	// 2. Identify the newest mirrored shard
 	var highestSeq uint64
-	var targetPiece rpc.PeerShardMetadata
-	for i := 0; i < shards.Len(); i++ {
-		s := shards.At(i)
-		if s.IsSpecial() && s.SequenceNumber() > highestSeq {
-			highestSeq = s.SequenceNumber()
+	var targetPiece rpc.Metadata
+	found := false
+	for i := 0; i < items.Len(); i++ {
+		s := rpc.MetadataFromCapnp(items.At(i))
+		if s.IsSpecial && (s.SequenceNumber > highestSeq || !found) {
+			highestSeq = s.SequenceNumber
 			targetPiece = s
+			found = true
 		}
 	}
 
-	if highestSeq == 0 {
+	if !found {
 		return fmt.Errorf("no special mirrored shards found")
 	}
 
 	// 3. Download the piece
-	hashBytes, _ := targetPiece.Checksum()
-	hashHex := hex.EncodeToString(hashBytes)
+	hashHex := targetPiece.Hash
 
-	data, err := e.PullPieceDirect(ctx, pid, hashHex)
+	data, err := e.PullPieceRaw(ctx, pid, hashHex)
 	if err != nil {
 		return fmt.Errorf("pull piece direct: %w", err)
 	}
@@ -228,57 +235,87 @@ func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode, pid peer.
 		log.Printf("RESCUE: Trimmed data length: %d", len(actualData))
 	}
 
+	// 3.5 Verify Signature (first 64 bytes)
+	if len(actualData) < 64 {
+		return fmt.Errorf("recovery shard is too small to contain signature")
+	}
+	signature := actualData[:64]
+	ciphertext := actualData[64:]
+
+	if !crypto.VerifyRecoveryShard(e.MasterKey, signature, ciphertext) {
+		return fmt.Errorf("recovery shard signature verification failed (corruption or malicious peer)")
+	}
+
 	// 4. Decrypt Bundle
-	decryptedBundle, err := crypto.Decrypt(e.MasterKey, actualData)
+	decryptedBundle, err := crypto.Decrypt(e.MasterKey, ciphertext)
 	if err != nil {
 		return fmt.Errorf("bundle decryption failed (wrong mnemonic or corruption): %w", err)
 	}
 
 	// 5. Unpack Bundle
-	if len(decryptedBundle) < 8 {
-		return fmt.Errorf("invalid bundle size")
+	decoder, err := zstd.NewReader(bytes.NewReader(decryptedBundle))
+	if err != nil {
+		return fmt.Errorf("zstd init failed: %w", err)
 	}
-	jsonLen := binary.BigEndian.Uint32(decryptedBundle[0:4])
-	dbLen := binary.BigEndian.Uint32(decryptedBundle[4:8])
-	
-	if uint32(len(decryptedBundle)) < 8+jsonLen+dbLen {
-		return fmt.Errorf("bundle truncated (len=%d, expected %d)", len(decryptedBundle), 8+jsonLen+dbLen)
-	}
-	
-	// peerJSON := decryptedBundle[8 : 8+jsonLen]
-	compressedDB := decryptedBundle[8+jsonLen : 8+jsonLen+dbLen]
-
-	// 6. Decompress and Save DB
-	decoder, _ := zstd.NewReader(nil)
 	defer decoder.Close()
-	
-	dbData, err := decoder.DecodeAll(compressedDB, nil)
-	if err != nil {
-		return fmt.Errorf("decompression failed: %w", err)
+
+	tr := tar.NewReader(decoder)
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination dir: %w", err)
 	}
 
-	// Close current DB handle before overwriting
-	if e.DB != nil {
-		e.DB.Close()
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("tar read error: %w", err)
+		}
+
+		outPath := filepath.Join(destDir, hdr.Name)
+		outFile, err := os.Create(outPath)
+		if err != nil {
+			return fmt.Errorf("failed to create recovered file %s: %w", outPath, err)
+		}
+		
+		if _, err := io.Copy(outFile, tr); err != nil {
+			outFile.Close()
+			return fmt.Errorf("failed to write data to %s: %w", outPath, err)
+		}
+		outFile.Close()
+		
+		if e.Verbose {
+			log.Printf("RESCUE: Recovered file: %s", outPath)
+		}
 	}
 
-	if err := os.WriteFile(e.SQLitePath, dbData, 0644); err != nil {
-		return fmt.Errorf("failed to write recovered database: %w", err)
+	// Generate add_recovered_peers.sh script
+	peersJSONPath := filepath.Join(destDir, "peers.json")
+	if peersData, err := os.ReadFile(peersJSONPath); err == nil {
+		scriptPath := filepath.Join(destDir, "add_recovered_peers.sh")
+		scriptContent := "#!/bin/bash\necho 'Adding recovered peers...'\n"
+		
+		var discoveryList []PeerDiscoveryInfo
+		if err := json.Unmarshal(peersData, &discoveryList); err == nil {
+			for _, p := range discoveryList {
+				if len(p.Endpoints) > 0 {
+					scriptContent += fmt.Sprintf("./client addpeer %s\n", p.Endpoints[0])
+				}
+			}
+			os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+			if e.Verbose {
+				log.Printf("RESCUE: Generated peer recovery script at %s", scriptPath)
+			}
+		}
 	}
-
-	// Re-open DB
-	newDB, err := InitDB(e.SQLitePath)
-	if err != nil {
-		return fmt.Errorf("failed to re-open database after recovery: %w", err)
-	}
-	e.DB = newDB
 
 	if e.Verbose {
-		log.Printf("RESCUE: SUCCESS! Recovered database to %s", e.SQLitePath)
+		log.Printf("RESCUE: SUCCESS! Recovered bundle to %s", destDir)
 	}
 	return nil
 }
-
 
 // AuthorizeAndCheckQuota verifies that a client is trusted and has enough quota.
 func (e *Engine) AuthorizeAndCheckQuota(ctx context.Context, pubKeyHex string, incomingBytes int64) error {
@@ -309,99 +346,90 @@ func (e *Engine) AuthorizeAndCheckQuota(ctx context.Context, pubKeyHex string, i
 	return nil
 }
 
-// OfferBlobs checks which of the offered blobs the server already has.
-// It returns a list of indices of the blobs that are missing and need to be uploaded.
-func (e *Engine) OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error) {
-	if e.Verbose {
-		log.Printf("Engine: Offering %d blobs for client %s...", len(blobs), clientPubKey[:16])
-	}
+// PrepareUpload checks which of the offered blobs the server already has.
+// It returns an UploadPlan containing indices of blobs that need to be uploaded.
+// OfferItems checks which of the offered items the server already has.
+func (e *Engine) OfferItems(ctx context.Context, pubKey string, items []rpc.Metadata) (rpc.UploadPlan, error) {
 	var totalSize int64
-	for _, b := range blobs {
+	for _, b := range items {
 		totalSize += b.Size
 	}
 
-	if err := e.AuthorizeAndCheckQuota(ctx, clientPubKey, totalSize); err != nil {
-		if e.Verbose {
-			log.Printf("Engine: Offer rejected - quota error: %v", err)
+	// 1. Quota Check
+	isClient, _ := e.isClient(ctx, pubKey)
+	if isClient {
+		if err := e.AuthorizeAndCheckQuota(ctx, pubKey, totalSize); err != nil {
+			return rpc.UploadPlan{}, err
 		}
-		return nil, err
-	}
-
-	var neededIndices []uint32
-	if len(blobs) == 0 {
-		return neededIndices, nil
-	}
-
-	// 1. Batch SELECT to find which blobs already exist
-	args := make([]interface{}, len(blobs))
-	placeholders := make([]string, len(blobs))
-	for i, b := range blobs {
-		args[i] = b.Hash
-		placeholders[i] = "?"
-	}
-
-	query := fmt.Sprintf("SELECT hash FROM blobs WHERE hash IN (%s)", strings.Join(placeholders, ","))
-	rows, err := e.DB.QueryContext(ctx, query, args...)
-	if err != nil {
-		log.Printf("Batch SELECT error in OfferBlobs: %v", err)
-		// On error, request all of them as a fallback
-		for i := range blobs {
-			neededIndices = append(neededIndices, uint32(i))
-		}
-		
-		e.mu.Lock()
-		for _, b := range blobs {
-			e.pendingBlobs[b.Hash] = b
-		}
-		e.mu.Unlock()
-		return neededIndices, nil
-	}
-
-	existingHashes := make(map[string]bool)
-	for rows.Next() {
-		var h string
-		if err := rows.Scan(&h); err == nil {
-			existingHashes[h] = true
+	} else if pubKey != "" {
+		// Peer reciprocity check if not client
+		if err := e.checkPeerQuota(ctx, pubKey, totalSize); err != nil {
+			return rpc.UploadPlan{}, err
 		}
 	}
-	rows.Close()
 
-	// 2. Identify missing blobs (need upload) and existing blobs (need ref bump)
-	var existingArgs []interface{}
+	var plan rpc.UploadPlan
+	if len(items) == 0 {
+		return plan, nil
+	}
+
+	// 2. Existence Check (LOCKED for pendingItems update)
 	e.mu.Lock()
-	for i, blob := range blobs {
-		// Check both database and currently pending uploads
-		_, isPending := e.pendingBlobs[blob.Hash]
-		
-		if !existingHashes[blob.Hash] && !isPending {
-			neededIndices = append(neededIndices, uint32(i))
-			e.pendingBlobs[blob.Hash] = blob
-		} else if existingHashes[blob.Hash] {
-			existingArgs = append(existingArgs, blob.Hash)
-		}
-		// If it's already pending, we don't add to neededIndices (already being uploaded)
-		// and we don't add to existingArgs (don't bump ref_count yet, IngestBlobs will do it)
-	}
-	e.mu.Unlock()
+	defer e.mu.Unlock()
 
-	// 3. Batch UPDATE reference counts for existing blobs
-	if len(existingArgs) > 0 {
-		updatePlaceholders := make([]string, len(existingArgs))
-		for i := range existingArgs {
-			updatePlaceholders[i] = "?"
+	for i, item := range items {
+		exists := false
+		if isClient {
+			exists = e.HasItem(ctx, item.Hash)
+		} else {
+			// Check hosted_shards for peers
+			e.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM hosted_shards WHERE hash = ?)", item.Hash).Scan(&exists)
 		}
-		
-		updateQuery := fmt.Sprintf("UPDATE blobs SET ref_count = ref_count + 1, deleted_at = NULL WHERE hash IN (%s)", strings.Join(updatePlaceholders, ","))
-		if _, err := e.DB.ExecContext(ctx, updateQuery, existingArgs...); err != nil {
-			log.Printf("Failed to increment ref_count for batch (len %d): %v", len(existingArgs), err)
+
+		if !exists {
+			plan.NeededIndices = append(plan.NeededIndices, int32(i))
+			e.pendingItems[item.Hash] = item
+		} else if isClient {
+			// Ref count bump for existing client blobs
+			e.DB.ExecContext(ctx, "UPDATE blobs SET ref_count = ref_count + 1, deleted_at = NULL WHERE hash = ?", item.Hash)
 		}
 	}
 
 	if e.Verbose {
-		log.Printf("Engine: Offered %d blobs, requesting %d missing blobs", len(blobs), len(neededIndices))
+		log.Printf("Offered %d items, requesting %d missing items from %s", len(items), len(plan.NeededIndices), pubKey)
 	}
 
-	return neededIndices, nil
+	return plan, nil
+}
+
+func (e *Engine) isClient(ctx context.Context, pubKey string) (bool, error) {
+	if pubKey == "insecure-local-client" {
+		return true, nil
+	}
+	var exists bool
+	err := e.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM clients WHERE public_key = ?)", pubKey).Scan(&exists)
+	return exists, err
+}
+
+func (e *Engine) checkPeerQuota(ctx context.Context, pubKeyHex string, incomingSize int64) error {
+	var peerID int64
+	var status string
+	var currentSize int64
+	err := e.DB.QueryRowContext(ctx, "SELECT id, status, current_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID, &status, &currentSize)
+	if err != nil {
+		return fmt.Errorf("unregistered peer rejected: %w", err)
+	}
+
+	if status == "untrusted" {
+		var myPiecesOnPeer int
+		_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
+		pieceSize := e.ShardSize / int64(e.DataShards)
+		limitBytes := (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
+		if currentSize+incomingSize > limitBytes {
+			return fmt.Errorf("peer upload quota exceeded: %d bytes over limit", (currentSize+incomingSize)-limitBytes)
+		}
+	}
+	return nil
 }
 
 // Hash returns a BLAKE3 hash of the data.
@@ -413,7 +441,7 @@ func (e *Engine) Hash(data []byte) []byte {
 // If the file is missing, it attempts to reconstruct it from the swarm.
 func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
-	
+
 	// 1. Check if already local
 	if _, err := os.Stat(shardPath); err == nil {
 		return nil
@@ -453,10 +481,10 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			if p.index != 0 {
 				continue
 			}
-			
+
 			var pieceHash string
 			_ = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = 0 AND peer_id = ? LIMIT 1", shardID, p.peerID).Scan(&pieceHash)
-			
+
 			data, err := e.PullPiece(ctx, p.peerID, pieceHash)
 			if err != nil {
 				continue
@@ -536,10 +564,16 @@ func hexToBytes(h string) []byte {
 	return b
 }
 
-// UploadBlobs receives the actual blob data and saves it to disk within shards.
-func (e *Engine) UploadBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData) error {
+func (e *Engine) HasItem(ctx context.Context, hash string) bool {
+	var exists bool
+	_ = e.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM blobs WHERE hash = ?)", hash).Scan(&exists)
+	return exists
+}
+
+// UploadItems saves the provided items to the blob store (client-server data path).
+func (e *Engine) UploadItems(ctx context.Context, clientPubKey string, items []rpc.ItemData) error {
 	var totalSize int64
-	for _, b := range blobs {
+	for _, b := range items {
 		totalSize += int64(len(b.Data))
 	}
 
@@ -547,352 +581,347 @@ func (e *Engine) UploadBlobs(ctx context.Context, clientPubKey string, blobs []r
 		return err
 	}
 
-	return e.IngestBlobs(ctx, clientPubKey, blobs, false)
+	return e.IngestItems(ctx, clientPubKey, items, false)
 }
 
-// IngestBlobs handles the actual saving of blob data into shards.
-// If isGC is true, it skips checksum verification and pendingBlobs cleanup.
-func (e *Engine) IngestBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData, isGC bool) error {
+// IngestItems handles the saving of multiple items by wrapping IngestItemsStreamed.
+// If isGC is true, it skips checksum verification.
+func (e *Engine) IngestItems(ctx context.Context, clientPubKey string, items []rpc.ItemData, isGC bool) error {
+	for _, b := range items {
+		if !isGC {
+			calculatedHash := hex.EncodeToString(crypto.Hash(b.Data))
+			if calculatedHash != b.Meta.Hash {
+				log.Printf("WARNING: Checksum mismatch for item! claimed=%s, actual=%s", b.Meta.Hash, calculatedHash)
+				continue
+			}
+		}
+
+		err := e.IngestItemsStreamed(ctx, clientPubKey, b.Meta.Hash, uint64(len(b.Data)), bytes.NewReader(b.Data))
+		if err != nil {
+			return fmt.Errorf("failed to ingest item %s: %w", b.Meta.Hash, err)
+		}
+	}
+	return nil
+}
+
+// ShardReservation tracks a pre-allocated segment in a shard file.
+type ShardReservation struct {
+	ShardID int64
+	Offset  int64
+	Length  int64
+}
+
+// IngestItemsStreamed saves a single item from a stream directly into shards.
+func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, hash string, size uint64, r io.Reader) error {
+	// 1. PHASE 1: Validation & Space Reservation (LOCKED)
+	e.mu.Lock()
+
+	// Check if already ingested (using DB)
+	var exists int
+	err := e.DB.QueryRowContext(ctx, "SELECT 1 FROM blobs WHERE hash = ?", hash).Scan(&exists)
+	if err == nil {
+		e.mu.Unlock()
+		return nil // Already exists
+	}
+
+	// Quota Check
+	var localTotal, peerTotal int64
+	_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
+	_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
+	if e.MaxStorageBytes > 0 && (localTotal+peerTotal+int64(size)) > e.MaxStorageBytes {
+		e.mu.Unlock()
+		return fmt.Errorf("global server storage limit exceeded")
+	}
+
+	// Initialize in-memory shard state if needed
+	if e.activeShardID == 0 {
+		err = e.DB.QueryRowContext(ctx, "SELECT id, size FROM shards WHERE status = 'open' ORDER BY id ASC LIMIT 1").Scan(&e.activeShardID, &e.activeShardSize)
+		if err == sql.ErrNoRows {
+			res, err := e.DB.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
+			if err != nil {
+				e.mu.Unlock()
+				return err
+			}
+			e.activeShardID, _ = res.LastInsertId()
+			e.activeShardSize = 0
+		} else if err != nil {
+			e.mu.Unlock()
+			return err
+		}
+	}
+
+	isSpecial := false
+	if meta, ok := e.pendingItems[hash]; ok {
+		isSpecial = meta.IsSpecial
+	}
+
+	// Perform reservations
+	remaining := int64(size)
+	var reservations []ShardReservation
+	var sealedShards []int64
+
+	for remaining > 0 {
+		if e.activeShardSize >= e.ShardSize {
+			// Seal current shard in DB
+			totalPieces := e.DataShards + e.ParityShards
+			e.DB.ExecContext(ctx, "UPDATE shards SET size = ?, status = 'sealed', total_pieces = ? WHERE id = ?", e.activeShardSize, totalPieces, e.activeShardID)
+			sealedShards = append(sealedShards, e.activeShardID)
+
+			// Create new shard
+			res, _ := e.DB.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
+			e.activeShardID, _ = res.LastInsertId()
+			e.activeShardSize = 0
+		}
+
+		spaceInShard := e.ShardSize - e.activeShardSize
+		toWrite := remaining
+		if toWrite > spaceInShard {
+			toWrite = spaceInShard
+		}
+
+		reservations = append(reservations, ShardReservation{
+			ShardID: e.activeShardID,
+			Offset:  e.activeShardSize,
+			Length:  toWrite,
+		})
+
+		e.activeShardSize += toWrite
+		remaining -= toWrite
+	}
+
+	// Important: Immediately update the current open shard size in DB so other engine instances (if any) see it
+	e.DB.ExecContext(ctx, "UPDATE shards SET size = ? WHERE id = ?", e.activeShardSize, e.activeShardID)
+
+	e.mu.Unlock() // <<< RELEASE LOCK FOR STREAMING >>>
+
+	// 2. PHASE 2: Data Streaming (UNLOCKED)
+	for _, res := range reservations {
+		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", res.ShardID))
+		f, err := os.OpenFile(shardPath, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		// Phase 2: Unlocked Streaming
+		// We write to the reserved segment using WriteAt to ensure concurrency safety.
+		// Multiple streams can safely write to different parts of the same file concurrently.
+		buf := e.StreamBufferPool.Get().([]byte)
+		
+		var written int64
+		for written < res.Length {
+			toRead := int64(len(buf))
+			if toRead > res.Length-written {
+				toRead = res.Length - written
+			}
+			
+			nr, er := r.Read(buf[:toRead])
+			if nr > 0 {
+				nw, ew := f.WriteAt(buf[:nr], res.Offset+written)
+				if nw > 0 {
+					written += int64(nw)
+				}
+				if ew != nil {
+					e.StreamBufferPool.Put(buf)
+					return fmt.Errorf("shard write failed at offset %d: %w", res.Offset+written, ew)
+				}
+			}
+			if er != nil {
+				if er == io.EOF && written < res.Length {
+					e.StreamBufferPool.Put(buf)
+					return fmt.Errorf("unexpected EOF: got %d, expected %d", written, res.Length)
+				}
+				if er != io.EOF {
+					e.StreamBufferPool.Put(buf)
+					return er
+				}
+				break
+			}
+		}
+		e.StreamBufferPool.Put(buf)
+		f.Close()
+	}
+
+	// 3. PHASE 3: DB Finalization (Re-Lock)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	tx, err := e.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return err
 	}
 	defer tx.Rollback()
 
-	// Get the current total disk usage (local shards + peer shards)
-	var localTotal, peerTotal int64
-	_ = tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
-	_ = tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
-	
-	incomingSize := int64(0)
-	for _, b := range blobs {
-		incomingSize += int64(len(b.Data))
-	}
-
-	if e.MaxStorageBytes > 0 && (localTotal + peerTotal + incomingSize) > e.MaxStorageBytes {
-		return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes / (1024*1024*1024))
-	}
-
-	// Get the current open shard, or create one
-	var activeShardID int64
-	var activeShardSize int64
-	err = tx.QueryRowContext(ctx, "SELECT id, size FROM shards WHERE status = 'open' ORDER BY id ASC LIMIT 1").Scan(&activeShardID, &activeShardSize)
-	if err == sql.ErrNoRows {
-		res, err := tx.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
-		if err != nil {
-			return fmt.Errorf("failed to create initial shard: %w", err)
-		}
-		activeShardID, _ = res.LastInsertId()
-		activeShardSize = 0
-	} else if err != nil {
-		return fmt.Errorf("failed to query open shards: %w", err)
-	}
-
-	stmtInsertBlob, err := tx.PrepareContext(ctx, "INSERT OR IGNORE INTO blobs (hash, size, special) VALUES (?, ?, ?)")
+	_, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO blobs (hash, size, special) VALUES (?, ?, ?)", hash, size, isSpecial)
 	if err != nil {
-		return fmt.Errorf("failed to prepare insert blob statement: %w", err)
-	}
-	defer stmtInsertBlob.Close()
-
-	stmtInsertLoc, err := tx.PrepareContext(ctx, "INSERT INTO blob_locations (blob_hash, shard_id, offset, length, sequence) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("failed to prepare insert location statement: %w", err)
-	}
-	defer stmtInsertLoc.Close()
-
-	stmtUpdateShard, err := tx.PrepareContext(ctx, "UPDATE shards SET size = ?, status = ? WHERE id = ?")
-	if err != nil {
-		return fmt.Errorf("failed to prepare update shard statement: %w", err)
-	}
-	defer stmtUpdateShard.Close()
-
-	anySpecial := false
-	// Track shards sealed during this ingest to trigger encoding after commit
-	var sealedShards []int64
-
-	// 1. Detect if this batch contains any Special blobs
-	batchMetas := make([]rpc.BlobMeta, 0, len(blobs))
-	var ingestBlobs []rpc.LocalBlobData
-
-	for _, blob := range blobs {
-		if !isGC {
-			// Check if already ingested (race condition protection)
-			var exists int
-			err := tx.QueryRowContext(ctx, "SELECT 1 FROM blobs WHERE hash = ?", blob.Hash).Scan(&exists)
-			if err == nil {
-				// Blob already exists, skip ingestion but update metadata if needed
-				if e.Verbose {
-					log.Printf("IngestBlobs: skipping blob %s, already ingested", blob.Hash)
-				}
-				continue
-			}
-
-			calculatedHash := hex.EncodeToString(crypto.Hash(blob.Data))
-			if calculatedHash != blob.Hash {
-				log.Printf("WARNING: Checksum mismatch for blob! claimed=%s, actual=%s", blob.Hash, calculatedHash)
-				continue
-			} else if e.Verbose {
-				log.Printf("Successfully verified checksum for blob %s", blob.Hash)
-			}
-		}
-
-		// Retrieve metadata from pendingBlobs
-		meta, ok := e.pendingBlobs[blob.Hash]
-		if !ok {
-			var special bool
-			err := tx.QueryRowContext(ctx, "SELECT special FROM blobs WHERE hash = ?", blob.Hash).Scan(&special)
-			if err == nil {
-				meta = rpc.BlobMeta{Hash: blob.Hash, Size: int64(len(blob.Data)), Special: special}
-			} else {
-				meta = rpc.BlobMeta{Hash: blob.Hash, Size: int64(len(blob.Data)), Special: blob.IsSpecial}
-			}
-		}
-		
-		batchMetas = append(batchMetas, meta)
-		ingestBlobs = append(ingestBlobs, blob)
-		if meta.Special {
-			anySpecial = true
-		}
+		return err
 	}
 
-	isSystemMirrored := (clientPubKey == "system-self-backup")
-
-	// 2. If this is a SYSTEM special batch (Rescue Bundle), isolate it by sealing the current shard
-	if isSystemMirrored && anySpecial && activeShardSize > 0 {
-		totalPieces := e.DataShards + e.ParityShards
-		if _, err := tx.ExecContext(ctx, "UPDATE shards SET size = ?, status = 'sealed', total_pieces = ? WHERE id = ?", activeShardSize, totalPieces, activeShardID); err != nil {
-			return fmt.Errorf("failed to seal previous shard for system rescue: %w", err)
-		}
-		sealedShards = append(sealedShards, activeShardID)
-
-		// Open a new shard for the system rescue bundle
-		res, err := tx.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
-		if err != nil {
-			return fmt.Errorf("failed to create new shard for system rescue: %w", err)
-		}
-		activeShardID, _ = res.LastInsertId()
-		activeShardSize = 0
-	}
-
-	for i, blob := range ingestBlobs {
-		meta := batchMetas[i]
-
-		// Update DB blobs table
-		_, err = stmtInsertBlob.ExecContext(ctx, blob.Hash, len(blob.Data), meta.Special)
-		if err != nil {
-			return fmt.Errorf("failed to insert blob %s into db: %w", blob.Hash, err)
-		}
-
-		remaining := int64(len(blob.Data))
-		dataOffset := int64(0)
-		sequence := 0
-
-		for remaining > 0 {
-			if activeShardSize >= e.ShardSize {
-				// Mark current shard as sealed
-				totalPieces := e.DataShards + e.ParityShards
-				if _, err := tx.ExecContext(ctx, "UPDATE shards SET size = ?, status = 'sealed', total_pieces = ? WHERE id = ?", activeShardSize, totalPieces, activeShardID); err != nil {
-					return fmt.Errorf("failed to seal shard %d: %w", activeShardID, err)
-				}
-				sealedShards = append(sealedShards, activeShardID)
-
-				// Open a new shard
-				res, err := tx.ExecContext(ctx, "INSERT INTO shards (status, size, sequence) VALUES ('open', 0, ?)", time.Now().Unix())
-				if err != nil {
-					return fmt.Errorf("failed to create new shard: %w", err)
-				}
-				activeShardID, _ = res.LastInsertId()
-				activeShardSize = 0
-			}
-
-			spaceInShard := e.ShardSize - activeShardSize
-			toWrite := remaining
-			if toWrite > spaceInShard {
-				toWrite = spaceInShard
-			}
-
-			// Open shard file, seek to end, write
-			shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", activeShardID))
-			f, err := os.OpenFile(shardPath, os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				return fmt.Errorf("failed to open shard file %s: %w", shardPath, err)
-			}
-
-			if _, err := f.Seek(activeShardSize, 0); err != nil {
-				f.Close()
-				return fmt.Errorf("failed to seek shard file %s: %w", shardPath, err)
-			}
-
-			if _, err := f.Write(blob.Data[dataOffset : dataOffset+toWrite]); err != nil {
-				f.Close()
-				return fmt.Errorf("failed to write to shard file %s: %w", shardPath, err)
-			}
-			f.Close()
-
-			// Insert location
-			if _, err := stmtInsertLoc.ExecContext(ctx, blob.Hash, activeShardID, activeShardSize, toWrite, sequence); err != nil {
-				return fmt.Errorf("failed to insert blob location for %s: %w", blob.Hash, err)
-			}
-
-			activeShardSize += toWrite
-			remaining -= toWrite
-			dataOffset += toWrite
-			sequence++
-		}
-
-		// Update active shard size in DB
-		if _, err := stmtUpdateShard.ExecContext(ctx, activeShardSize, "open", activeShardID); err != nil {
-			return fmt.Errorf("failed to update open shard size %d: %w", activeShardID, err)
-		}
-
-		// Remove from pending
-		if !isGC {
-			delete(e.pendingBlobs, blob.Hash)
-		}
-	}
-
-	// 3. If this was a SYSTEM special batch, seal it immediately for mirroring
-	if isSystemMirrored && anySpecial {
-		if e.Verbose {
-			log.Printf("IngestBlobs: Sealing system rescue shard %d (mirrored=true).", activeShardID)
-		}
-		
-		// For mirrored shards, we always use 1 piece (the full shard)
-		totalPieces := 1
-
-		// Update status to sealed and set mirrored flag
-		if _, err := tx.ExecContext(ctx, "UPDATE shards SET status = 'sealed', mirrored = 1, total_pieces = ?, size = ? WHERE id = ?", totalPieces, activeShardSize, activeShardID); err != nil {
-			return fmt.Errorf("failed to force seal system rescue shard %d: %w", activeShardID, err)
-		}
-		sealedShards = append(sealedShards, activeShardID)
+	for i, res := range reservations {
+		tx.ExecContext(ctx, "INSERT INTO blob_locations (blob_hash, shard_id, offset, length, sequence) VALUES (?, ?, ?, ?, ?)", hash, res.ShardID, res.Offset, res.Length, i)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return err
 	}
 
-	// 7. Post-commit: Trigger Encoders
+	// Trigger async encoding for any shards we sealed
 	for _, sid := range sealedShards {
 		e.wg.Add(1)
 		go e.encodeShard(sid)
 	}
 
-	// Update client storage usage
-	if !isGC && clientPubKey != "" && clientPubKey != "insecure-local-client" {
-		var totalUploaded int64
-		for i := range ingestBlobs {
-			totalUploaded += int64(len(ingestBlobs[i].Data))
-		}
-		_, _ = e.DB.ExecContext(ctx, "UPDATE clients SET current_storage_size = current_storage_size + ? WHERE public_key = ?", totalUploaded, clientPubKey)
+	if clientPubKey != "" && clientPubKey != "insecure-local-client" {
+		e.DB.ExecContext(ctx, "UPDATE clients SET current_storage_size = current_storage_size + ? WHERE public_key = ?", size, clientPubKey)
 	}
 
-	if e.Verbose {
-		log.Printf("Successfully saved %d blobs to shards (isGC=%v)", len(blobs), isGC)
-	}
-
+	delete(e.pendingItems, hash)
 	return nil
 }
 
-// GetBlobs retrieves requested blobs by checksum from the shard files.
-func (e *Engine) GetBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, []string, error) {
-	var foundBlobs []rpc.LocalBlobData
-	var missingBlobs []string
+// GetItems retrieves the requested items. Returns found items, missing hashes, and error.
+func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error) {
+	var found []rpc.ItemData
+	var missing []string
 
-	// Prepared statement to find all locations for a blob
-	stmt, err := e.DB.PrepareContext(ctx, "SELECT shard_id, offset, length FROM blob_locations WHERE blob_hash = ? ORDER BY sequence ASC")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to prepare blob location query: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, hash := range hashes {
-		rows, err := stmt.QueryContext(ctx, hash)
+	for _, h := range hashes {
+		var isSpecial bool
+		err := e.DB.QueryRowContext(ctx, "SELECT special FROM blobs WHERE hash = ?", h).Scan(&isSpecial)
 		if err != nil {
-			missingBlobs = append(missingBlobs, hash)
+			missing = append(missing, h)
 			continue
 		}
 
-		var blobData []byte
-		var foundParts int
+		// Find shard locations
+		rows, err := e.DB.QueryContext(ctx, "SELECT shard_id, offset, length FROM blob_locations WHERE blob_hash = ? ORDER BY sequence ASC", h)
+		if err != nil {
+			log.Printf("GetItems error: failed to query locations for %s: %v", h, err)
+			missing = append(missing, h)
+			continue
+		}
 
+		var fullData []byte
+		foundLocations := false
 		for rows.Next() {
-			var shardID int64
-			var offset, length int64
+			var shardID, offset, length int64
 			if err := rows.Scan(&shardID, &offset, &length); err != nil {
 				continue
 			}
-
-			// Ensure shard is local (reconstruct if missing)
-			if err := e.EnsureShardLocal(ctx, shardID); err != nil {
-				log.Printf("GetBlobs: failed to ensure shard %d is local: %v", shardID, err)
-				continue
-			}
+			foundLocations = true
 
 			shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
 			f, err := os.Open(shardPath)
 			if err != nil {
-				log.Printf("Error opening shard %d: %v", shardID, err)
-				continue
+				log.Printf("GetItems error: failed to open shard %d: %v", shardID, err)
+				break
 			}
-
-			buf := make([]byte, length)
-			_, err = f.ReadAt(buf, offset)
+			data := make([]byte, length)
+			_, err = f.ReadAt(data, offset)
 			f.Close()
-
 			if err != nil {
-				log.Printf("CRITICAL DEBUG: Error reading from shard %d (offset %d, requested %d): %v", shardID, offset, length, err)
-				continue
+				log.Printf("GetItems error: failed to read from shard %d: %v", shardID, err)
+				break
 			}
-
-			blobData = append(blobData, buf...)
-			foundParts++
+			fullData = append(fullData, data...)
 		}
 		rows.Close()
 
-		if foundParts > 0 {
-			foundBlobs = append(foundBlobs, rpc.LocalBlobData{
-				Hash: hash,
-				Data: blobData,
-			})
-		} else {
-			missingBlobs = append(missingBlobs, hash)
+		if !foundLocations {
+			// Fallback to direct file if no locations (legacy or standalone)
+			path := filepath.Join(e.BlobStoreDir, h)
+			var err error
+			fullData, err = os.ReadFile(path)
+			if err != nil {
+				missing = append(missing, h)
+				continue
+			}
 		}
+
+		found = append(found, rpc.ItemData{
+			Meta: rpc.Metadata{
+				Hash:      h,
+				Size:      int64(len(fullData)),
+				IsSpecial: isSpecial,
+			},
+			Data: fullData,
+		})
 	}
 
-	return foundBlobs, missingBlobs, nil
+	return found, missing, nil
 }
 
-// ListSpecialBlobs returns a list of all special blobs (e.g., encrypted SQLite DBs) for disaster recovery.
-func (e *Engine) ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error) {
-	query := `
-		SELECT b.hash, b.size, MAX(s.sequence)
-		FROM blobs b
-		JOIN blob_locations bl ON b.hash = bl.blob_hash
-		JOIN shards s ON bl.shard_id = s.id
-		WHERE b.special = 1
-		GROUP BY b.hash, b.size
-		ORDER BY MAX(s.sequence) DESC
-	`
-	rows, err := e.DB.QueryContext(ctx, query)
+// DeleteItems marks blobs as deleted in the database.
+func (e *Engine) DeleteItems(ctx context.Context, hashes []string) error {
+	if len(hashes) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(hashes))
+	args := make([]interface{}, len(hashes))
+	for i, h := range hashes {
+		placeholders[i] = "?"
+		args[i] = h
+	}
+	query := fmt.Sprintf("UPDATE blobs SET deleted_at = CURRENT_TIMESTAMP WHERE hash IN (%s)", strings.Join(placeholders, ","))
+	_, err := e.DB.ExecContext(ctx, query, args...)
+	return err
+}
+
+// ListAllItems returns hashes of all non-deleted blobs.
+func (e *Engine) ListAllItems(ctx context.Context) ([]string, error) {
+	rows, err := e.DB.QueryContext(ctx, "SELECT hash FROM blobs WHERE deleted_at IS NULL")
 	if err != nil {
-		return nil, fmt.Errorf("failed to query special blobs: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
-	var specialBlobs []rpc.BlobMeta
+	var hashes []string
 	for rows.Next() {
-		var b rpc.BlobMeta
-		if err := rows.Scan(&b.Hash, &b.Size, &b.SequenceNumber); err != nil {
-			return nil, fmt.Errorf("failed to scan special blob: %w", err)
+		var h string
+		if err := rows.Scan(&h); err == nil {
+			hashes = append(hashes, h)
 		}
-		b.Special = true
-		specialBlobs = append(specialBlobs, b)
+	}
+	return hashes, nil
+}
+
+// ListSpecialItems returns metadata for all special items (client-server data path).
+func (e *Engine) ListSpecialItems(ctx context.Context, pubKey string) ([]rpc.Metadata, error) {
+	// First check if it's a client
+	var isClient bool
+	e.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM clients WHERE public_key = ?)", pubKey).Scan(&isClient)
+
+	if isClient || pubKey == "insecure-local-client" {
+		rows, err := e.DB.QueryContext(ctx, "SELECT hash, size, special FROM blobs WHERE special = 1 AND deleted_at IS NULL")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var items []rpc.Metadata
+		for rows.Next() {
+			var m rpc.Metadata
+			if err := rows.Scan(&m.Hash, &m.Size, &m.IsSpecial); err == nil {
+				m.Type = 0 // ClientBlob
+				items = append(items, m)
+			}
+		}
+		return items, nil
 	}
 
-	return specialBlobs, nil
+	// Otherwise treat as a peer
+	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size, piece_index, parent_shard_hash, sequence, total_pieces FROM hosted_shards WHERE peer_id = (SELECT id FROM peers WHERE public_key = ?) AND is_special = 1", pubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query special pieces: %w", err)
+	}
+	defer rows.Close()
+
+	var items []rpc.Metadata
+	for rows.Next() {
+		var m rpc.Metadata
+		if err := rows.Scan(&m.Hash, &m.Size, &m.PieceIndex, &m.ParentShardHash, &m.SequenceNumber, &m.TotalPieces); err == nil {
+			m.IsSpecial = true
+			m.Type = 1 // PeerShard
+			items = append(items, m)
+		}
+	}
+	return items, nil
 }
 
 // encodeShard applies Reed-Solomon erasure coding to a sealed shard.
@@ -974,7 +1003,7 @@ func (e *Engine) encodeShard(shardID int64) {
 		if e.Verbose {
 			log.Printf("encodeShard: Shard %d is MIRRORED. Padded to %d MB piece.", shardID, targetPieceSize/(1024*1024))
 		}
-		
+
 		// For special shards, Piece 0 is just a copy of the shard itself, padded to targetPieceSize.
 		piecePath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_0", shardID))
 		dst, err := os.Create(piecePath)
@@ -1010,7 +1039,7 @@ func (e *Engine) encodeShard(shardID int64) {
 	}
 
 	// --- Standard RS Encoding for Data Shards ---
-	
+
 	enc, err := reedsolomon.NewStream(e.DataShards, e.ParityShards)
 	if err != nil {
 		log.Printf("encodeShard error: failed to create stream encoder: %v", err)
@@ -1084,7 +1113,7 @@ func (e *Engine) encodeShard(shardID int64) {
 	// 3. Finalize all pieces: Close and rename to remove .tmp suffix
 	for i := 0; i < e.DataShards+e.ParityShards; i++ {
 		outFiles[i].Close()
-		
+
 		// If encoding succeeded, rename to final path so OutboundWorker sees them
 		if err == nil {
 			tmpPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, i))
@@ -1145,92 +1174,39 @@ func (e *Engine) SyncPeers(peers []config.PeerConfig) error {
 			return fmt.Errorf("failed to sync peer %s to DB: %w", p.Name, err)
 		}
 	}
-	
+
 	if e.Verbose {
 		log.Printf("Successfully synchronized %d peers to database", len(peers))
 	}
 	return nil
 }
 
-// OfferShards checks which of the offered peer shards the server already has.
-func (e *Engine) OfferShards(ctx context.Context, pubKeyHex string, shards []rpc.PeerShardMeta) ([]uint32, error) {
-	var neededIndices []uint32
 
-	if pubKeyHex != "" {
-		// 1. Auto-register peer if they are calling this API
-		_, err := e.DB.ExecContext(ctx, `
-			INSERT INTO peers (ip_address, public_key, status)
-			VALUES ('unknown', ?, 'untrusted')
-			ON CONFLICT(public_key) DO UPDATE SET last_seen = CURRENT_TIMESTAMP
-		`, pubKeyHex)
-		if err != nil {
-			log.Printf("Warning: failed to auto-register peer: %v", err)
-		}
-
-		// 2. Quota check
-		var status string
-		var currentSize int64
-		var maxStorageBytes int64
-		var peerID int64
-		err = e.DB.QueryRowContext(ctx, "SELECT id, status, current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID, &status, &currentSize, &maxStorageBytes)
-		if err == nil && status == "untrusted" {
-			var incomingSize int64
-			for _, shard := range shards {
-				incomingSize += shard.Size
-			}
-
-			// Dynamic Reciprocity: Limit = (MyPiecesOnPeer + BasePieceBuffer) * PieceSize
-			var myPiecesOnPeer int
-			_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
-			
-			pieceSize := e.ShardSize / int64(e.DataShards)
-			limitBytes := (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
-
-			if currentSize+incomingSize > limitBytes {
-				return nil, fmt.Errorf("peer upload quota exceeded: %d bytes over limit (stored %d pieces for us, allowed %d pieces total)", (currentSize+incomingSize)-limitBytes, myPiecesOnPeer, myPiecesOnPeer+e.BasePieceBuffer)
-			}
-		} else if err == nil && status == "trusted" && maxStorageBytes > 0 {
-			// Trusted peer with explicit quota
-			var incomingSize int64
-			for _, shard := range shards {
-				incomingSize += shard.Size
-			}
-			if currentSize+incomingSize > maxStorageBytes {
-				return nil, fmt.Errorf("trusted peer upload quota exceeded")
-			}
-		}
-	} else {
-		return nil, fmt.Errorf("unidentified peer rejected")
-	}
-
-	stmt, err := e.DB.PrepareContext(ctx, "SELECT 1 FROM hosted_shards WHERE hash = ?")
+// PreparePeerUpload records metadata for shards that a peer is about to push via a stream.
+func (e *Engine) PreparePeerUpload(ctx context.Context, pubKeyHex string, items []rpc.Metadata) error {
+	var peerID int64
+	err := e.DB.QueryRowContext(ctx, "SELECT id FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for i, shard := range shards {
-		var exists int
-		err := stmt.QueryRowContext(ctx, shard.Hash).Scan(&exists)
-		if err == sql.ErrNoRows {
-			// We don't have this shard, request it
-			neededIndices = append(neededIndices, uint32(i))
-		} else if err != nil {
-			log.Printf("Error checking hosted shard existence %s: %v", shard.Hash, err)
-			// Safest to request it if there's an error
-			neededIndices = append(neededIndices, uint32(i))
-		}
+		return fmt.Errorf("unregistered peer rejected: %w", err)
 	}
 
-	if e.Verbose {
-		log.Printf("Peer offered %d shards, requesting %d missing shards", len(shards), len(neededIndices))
+	for _, m := range items {
+		// Record metadata for subsequent push streams
+		e.pendingInboundStreams.Store(m.Hash, PendingStreamMeta{
+			PeerID:          peerID,
+			IsSpecial:       m.IsSpecial,
+			PieceIndex:      m.PieceIndex,
+			ParentShardHash: m.ParentShardHash,
+			SequenceNumber:  m.SequenceNumber,
+			TotalPieces:     m.TotalPieces,
+			Size:            uint64(m.Size),
+		})
 	}
-
-	return neededIndices, nil
+	return nil
 }
 
-// UploadShards receives the actual peer shard data and saves it to disk.
-func (e *Engine) UploadShards(ctx context.Context, pubKeyHex string, shards []rpc.LocalBlobData) error {
+// UploadPeerItems receives the actual peer shard data and saves it to disk (peer-to-peer data path).
+func (e *Engine) UploadPeerItems(ctx context.Context, pubKeyHex string, items []rpc.ItemData) error {
 	if pubKeyHex != "" {
 		// Re-verify quota
 		var status string
@@ -1239,15 +1215,15 @@ func (e *Engine) UploadShards(ctx context.Context, pubKeyHex string, shards []rp
 		err := e.DB.QueryRowContext(ctx, "SELECT id, status, current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID, &status, &currentSize, &maxStorageBytes)
 		if err == nil {
 			var incomingSize int64
-			for _, shard := range shards {
-				incomingSize += int64(len(shard.Data))
+			for _, item := range items {
+				incomingSize += int64(len(item.Data))
 			}
 
 			limitBytes := maxStorageBytes
 			if status == "untrusted" {
 				var myPiecesOnPeer int
 				_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
-				
+
 				pieceSize := e.ShardSize / int64(e.DataShards)
 				limitBytes = (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
 			}
@@ -1262,7 +1238,7 @@ func (e *Engine) UploadShards(ctx context.Context, pubKeyHex string, shards []rp
 				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
 				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
 				if (localTotal + peerTotal + incomingSize) > e.MaxStorageBytes {
-					return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes / (1024*1024*1024))
+					return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes/(1024*1024*1024))
 				}
 			}
 		}
@@ -1280,23 +1256,23 @@ func (e *Engine) UploadShards(ctx context.Context, pubKeyHex string, shards []rp
 	}
 	defer stmt.Close()
 
-	for _, shard := range shards {
-		shardPath := filepath.Join(e.BlobStoreDir, "peer_"+shard.Hash)
-		
+	for _, item := range items {
+		shardPath := filepath.Join(e.BlobStoreDir, "peer_"+item.Meta.Hash)
+
 		// Write to disk
-		if err := os.WriteFile(shardPath, shard.Data, 0644); err != nil {
-			return fmt.Errorf("failed to write peer shard %s to disk: %w", shard.Hash, err)
+		if err := os.WriteFile(shardPath, item.Data, 0644); err != nil {
+			return fmt.Errorf("failed to write peer shard %s to disk: %w", item.Meta.Hash, err)
 		}
 
 		// Update DB
-		res, err := stmt.ExecContext(ctx, shard.Hash, len(shard.Data), pubKeyHex, shard.IsSpecial, shard.PieceIndex, shard.ParentShardHash, shard.SequenceNumber, shard.TotalPieces)
+		res, err := stmt.ExecContext(ctx, item.Meta.Hash, len(item.Data), pubKeyHex, item.Meta.IsSpecial, item.Meta.PieceIndex, item.Meta.ParentShardHash, item.Meta.SequenceNumber, item.Meta.TotalPieces)
 		if err != nil {
-			return fmt.Errorf("failed to insert peer shard %s into db: %w", shard.Hash, err)
+			return fmt.Errorf("failed to insert peer shard %s into db: %w", item.Meta.Hash, err)
 		}
 
 		rowsAffected, _ := res.RowsAffected()
 		if rowsAffected > 0 && pubKeyHex != "" && pubKeyHex != "insecure-local-client" {
-			_, err = tx.ExecContext(ctx, "UPDATE peers SET current_storage_size = current_storage_size + ?, total_shards = total_shards + 1, current_shards = current_shards + 1 WHERE public_key = ?", int64(len(shard.Data)), pubKeyHex)
+			_, err = tx.ExecContext(ctx, "UPDATE peers SET current_storage_size = current_storage_size + ?, total_shards = total_shards + 1, current_shards = current_shards + 1 WHERE public_key = ?", int64(len(item.Data)), pubKeyHex)
 			if err != nil {
 				return fmt.Errorf("failed to update peer storage size: %w", err)
 			}
@@ -1308,7 +1284,7 @@ func (e *Engine) UploadShards(ctx context.Context, pubKeyHex string, shards []rp
 	}
 
 	if e.Verbose {
-		log.Printf("Successfully saved %d peer shards to storage", len(shards))
+		log.Printf("Successfully saved %d peer shards to storage", len(items))
 	}
 
 	return nil
@@ -1350,7 +1326,7 @@ func (e *Engine) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 	`
 	requiredPieces := e.DataShards + e.ParityShards
 	err = e.DB.QueryRowContext(ctx, query, requiredPieces).Scan(
-		&status.FullyReplicatedShards, 
+		&status.FullyReplicatedShards,
 		&status.PartiallyReplicatedShards,
 	)
 	if err != nil && err != sql.ErrNoRows {
@@ -1375,7 +1351,7 @@ func (e *Engine) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 // ChallengePiece natively streams exactly 32 byte sequences from a specifically identified offset inherently testing active disk persistence.
 func (e *Engine) ChallengePiece(ctx context.Context, pubKeyHex string, checksum []byte, offset uint64) ([]byte, error) {
 	hashStr := hex.EncodeToString(checksum)
-	
+
 	var count int
 	err := e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM hosted_shards WHERE hash = ? AND peer_id = (SELECT id FROM peers WHERE public_key = ?)", hashStr, pubKeyHex).Scan(&count)
 	if err != nil || count == 0 {
@@ -1407,49 +1383,6 @@ func (e *Engine) ChallengePiece(ctx context.Context, pubKeyHex string, checksum 
 	}
 
 	return buf, nil
-}
-
-// DeleteBlobs marks blobs as deleted by decrementing their reference count.
-// If the count reaches 0, it sets the deleted_at timestamp.
-// Actual removal happens later via a garbage collection process.
-func (e *Engine) DeleteBlobs(ctx context.Context, hashes []string) error {
-	tx, err := e.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Update ref_count, preventing it from dropping below 0
-	stmtDec, err := tx.PrepareContext(ctx, "UPDATE blobs SET ref_count = MAX(0, ref_count - 1) WHERE hash = ?")
-	if err != nil {
-		return fmt.Errorf("failed to prepare decrement statement: %w", err)
-	}
-	defer stmtDec.Close()
-
-	// Mark deleted_at if ref_count is 0
-	stmtDel, err := tx.PrepareContext(ctx, "UPDATE blobs SET deleted_at = CURRENT_TIMESTAMP WHERE hash = ? AND ref_count = 0 AND deleted_at IS NULL")
-	if err != nil {
-		return fmt.Errorf("failed to prepare delete statement: %w", err)
-	}
-	defer stmtDel.Close()
-
-	for _, hash := range hashes {
-		if _, err := stmtDec.ExecContext(ctx, hash); err != nil {
-			return fmt.Errorf("failed to decrement ref count for %s: %w", hash, err)
-		}
-		if _, err := stmtDel.ExecContext(ctx, hash); err != nil {
-			return fmt.Errorf("failed to set deleted_at for %s: %w", hash, err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	if e.Verbose {
-		log.Printf("Marked %d blobs for potential deletion (decremented ref counts)", len(hashes))
-	}
-	return nil
 }
 
 // ListAllBlobs returns a list of all blob hashes currently tracked by the server.
@@ -1503,7 +1436,7 @@ func (e *Engine) AddPeer(ctx context.Context, address string) error {
 	baseAddr, _ := multiaddr.SplitFunc(maddr, func(c multiaddr.Component) bool {
 		return c.Protocol().Code == multiaddr.P_P2P
 	})
-	
+
 	_, err = e.DB.ExecContext(ctx, query, baseAddr.String(), pubKeyHex)
 	return err
 }
@@ -1515,7 +1448,7 @@ func (e *Engine) AddOrUpdatePeer(ctx context.Context, address, pubKeyHex string)
 	var id int64
 	var existingAddr string
 	err := e.DB.QueryRowContext(ctx, "SELECT id, ip_address FROM peers WHERE public_key = ?", pubKeyHex).Scan(&id, &existingAddr)
-	
+
 	if err == sql.ErrNoRows {
 		// New peer, we have to use what we have (even if the port is ephemeral)
 		res, err := e.DB.ExecContext(ctx, "INSERT INTO peers (ip_address, public_key, status) VALUES (?, ?, 'untrusted')", address, pubKeyHex)
@@ -1560,7 +1493,7 @@ func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress, con
 			contact_info=excluded.contact_info,
 			last_seen=CURRENT_TIMESTAMP
 	`, listenAddress, pubKeyHex, contactInfo)
-	
+
 	if err != nil {
 		return 0, fmt.Errorf("failed to announce peer: %w", err)
 	}
@@ -1570,8 +1503,15 @@ func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress, con
 
 // AuthorizeClient registers a client connection and returns its status and quota.
 func (e *Engine) AuthorizeClient(ctx context.Context, pubKeyHex string) (status string, quotaBytes int64, currentSize int64, err error) {
-	// Auto-register if new
-	_, err = e.DB.ExecContext(ctx, "INSERT OR IGNORE INTO clients (public_key, status) VALUES (?, 'pending')", pubKeyHex)
+	// Auto-register if new. If it's the admin, trust it immediately.
+	defaultStatus := "pending"
+	defaultQuota := int64(0)
+	if e.AdminPublicKey != "" && pubKeyHex == e.AdminPublicKey {
+		defaultStatus = "trusted"
+		defaultQuota = 100 * 1024 * 1024 * 1024 // 100GB default for admin
+	}
+
+	_, err = e.DB.ExecContext(ctx, "INSERT OR IGNORE INTO clients (public_key, status, max_storage_size) VALUES (?, ?, ?)", pubKeyHex, defaultStatus, defaultQuota)
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("failed to register client: %w", err)
 	}
@@ -1652,25 +1592,8 @@ func (e *Engine) ListClients(ctx context.Context) ([]ClientDBInfo, error) {
 	return clients, nil
 }
 
-// ListSpecialPieces returns a list of all shard pieces tagged as special for a peer.
-func (e *Engine) ListSpecialPieces(ctx context.Context, pubKeyHex string) ([]rpc.PeerShardMeta, error) {
-	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size, piece_index, parent_shard_hash, sequence, total_pieces FROM hosted_shards WHERE peer_id = (SELECT id FROM peers WHERE public_key = ?) AND is_special = 1", pubKeyHex)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query special pieces: %w", err)
-	}
-	defer rows.Close()
+// ListPeerSpecialItems returns a list of all shard pieces tagged as special for a peer (peer-to-peer data path).
 
-	var pieces []rpc.PeerShardMeta
-	for rows.Next() {
-		var p rpc.PeerShardMeta
-		if err := rows.Scan(&p.Hash, &p.Size, &p.PieceIndex, &p.ParentShardHash, &p.SequenceNumber, &p.TotalPieces); err != nil {
-			return nil, err
-		}
-		p.IsSpecial = true
-		pieces = append(pieces, p)
-	}
-	return pieces, nil
-}
 
 // ReleasePiece deletes a hosted shard piece from storage and updates the peer's quota.
 func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex string) error {
@@ -1831,7 +1754,7 @@ func (e *Engine) GetOrDialPeer(ctx context.Context, peerID int64) (*CapnpPeerCli
 	// Announce our own listener address so they can dial us back.
 	if e.ListenAddress != "" {
 		cbHandler := NewRPCHandler(e, pubKeyHex)
-		cbNode := rpc.PeerNode_ServerToClient(cbHandler)
+		cbNode := rpc.PeerNode(capnp.NewClient(cbHandler.NewServer()))
 		if err := client.Announce(ctx, e.ListenAddress, e.ContactInfo, cbNode); err != nil {
 			log.Printf("Warning: failed to auto-announce to peer %d: %v", peerID, err)
 		}
@@ -1846,43 +1769,4 @@ func (e *Engine) GetOrDialPeer(ctx context.Context, peerID int64) (*CapnpPeerCli
 	}(peerID, client)
 
 	return client, nil
-}
-
-// PrepareUpload validates quota and saves expected metadata for incoming streams.
-func (e *Engine) PrepareUpload(ctx context.Context, pubKeyHex string, metas []rpc.PendingStreamMeta) error {
-	if pubKeyHex != "" {
-		var status string
-		var currentSize, maxStorageBytes int64
-		var peerID int64
-		err := e.DB.QueryRowContext(ctx, "SELECT id, status, current_storage_size, max_storage_size FROM peers WHERE public_key = ?", pubKeyHex).Scan(&peerID, &status, &currentSize, &maxStorageBytes)
-		if err == nil {
-			var incomingSize int64
-			for _, m := range metas {
-				incomingSize += int64(m.Size)
-			}
-
-			limitBytes := maxStorageBytes
-			if status == "untrusted" {
-				var myPiecesOnPeer int
-				_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
-				
-				pieceSize := e.ShardSize / int64(e.DataShards)
-				limitBytes = (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
-			}
-
-			if limitBytes > 0 && currentSize+incomingSize > limitBytes {
-				return fmt.Errorf("peer upload quota exceeded")
-			}
-
-			if e.MaxStorageBytes > 0 {
-				var localTotal, peerTotal int64
-				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
-				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
-				if (localTotal + peerTotal + incomingSize) > e.MaxStorageBytes {
-					return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes / (1024*1024*1024))
-				}
-			}
-		}
-	}
-	return nil
 }

@@ -11,11 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"p2p-backup/internal/crypto"
-	"p2p-backup/internal/rpc"
-
 	"github.com/klauspost/compress/zstd"
 	"lukechampine.com/blake3"
+	"p2p-backup/internal/crypto"
 )
 
 const (
@@ -25,7 +23,15 @@ const (
 	cipherOverhead = crypto.NonceSizeX + 16
 )
 
-// rpc.UploadJob represents a blob that is ready to be uploaded.
+// UploadJob represents a blob that is ready to be uploaded.
+type UploadJob struct {
+	Hash      string // Blob hash
+	Size      int64  // Blob size
+	Data      []byte // Encrypted data in memory
+	IsSpecial bool
+	Release   func() // Returns the Data buffer to the pool (nil if not pooled)
+}
+
 // FileArchive represents a completed file ready to be saved to local state.
 type FileArchive struct {
 	DirPath   string
@@ -51,7 +57,7 @@ type ChunkArchive struct {
 type CryptoPool struct {
 	Key            []byte
 	NumWorkers     int
-	UploadChan     chan<- rpc.UploadJob
+	UploadChan     chan<- UploadJob
 	ArchiveChan    chan<- FileArchive
 	Verbose        bool
 	Compress       bool
@@ -62,21 +68,18 @@ type CryptoPool struct {
 	rawChunkPool   sync.Pool   // Reusable raw chunk read buffers
 }
 
-func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- rpc.UploadJob, archiveChan chan<- FileArchive, verbose bool, compress bool, stats *BackupStats) *CryptoPool {
-	// The pool must be large enough to handle the uploader's batch size plus active worker buffers.
-	// We'll default to a safe multiplier.
-	poolSize := 250 // Sufficient for 2 uploader workers with batch size 100
-	if numWorkers*4 > poolSize {
-		poolSize = numWorkers * 4
+func NewCryptoPool(key []byte, numWorkers int, uploadChan chan<- UploadJob, archiveChan chan<- FileArchive, verbose bool, compress bool, stats *BackupStats, batchSize int, numUploaders int) *CryptoPool {
+	// Pool size must be large enough to handle:
+	// 1. Chunks in the upload pipeline (chan cap)
+	// 2. Chunks being processed by workers (numWorkers)
+	// 3. Chunks being hoarded in uploader batches (numUploaders * batchSize)
+	poolSize := cap(uploadChan) + numWorkers + (numUploaders * batchSize) + 10
+	if poolSize < 100 {
+		poolSize = 100
 	}
-
 	cipherBufs := make(chan []byte, poolSize)
 	for i := 0; i < poolSize; i++ {
 		cipherBufs <- make([]byte, 0, defaultBlockSize+cipherOverhead+1024)
-	}
-
-	if verbose {
-		log.Printf("CryptoPool: Initialized with %d workers and %d buffers", numWorkers, poolSize)
 	}
 
 	return &CryptoPool{
@@ -115,12 +118,7 @@ func (p *CryptoPool) Wait() {
 }
 
 func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID int) {
-	defer func() {
-		if p.Verbose {
-			log.Printf("[Worker %d] Thread exiting.", workerID)
-		}
-		wg.Done()
-	}()
+	defer wg.Done()
 
 	zstdEncoder, _ := zstd.NewWriter(nil)
 	defer zstdEncoder.Close()
@@ -129,10 +127,7 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 	compressBuf := make([]byte, 0, defaultBlockSize)
 
 	for job := range jobChan {
-		if p.Verbose {
-			log.Printf("[Worker %d] Processing job: %s/%s", workerID, job.DirPath, job.FileName)
-		}
-		err := p.processFile(job, zstdEncoder, &compressBuf, workerID)
+		err := p.processFile(job, zstdEncoder, &compressBuf)
 		if err != nil {
 			log.Printf("[Worker %d] Error processing %s/%s: %v", workerID, job.DirPath, job.FileName, err)
 		} else {
@@ -142,7 +137,8 @@ func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID
 		}
 	}
 }
-func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compressBuf *[]byte, workerID int) error {
+
+func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compressBuf *[]byte) error {
 	fullPath := filepath.Join(job.DirPath, job.FileName)
 
 	if job.Deleted {
@@ -239,11 +235,6 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 				}
 			} else {
 				// We own this hash for this session — encrypt it
-				if p.Verbose {
-					if len(p.cipherBufs) == 0 {
-						log.Printf("[Worker %d] Buffer pool exhausted, waiting for free buffer...", workerID)
-					}
-				}
 				cipherBuf := <-p.cipherBufs
 				ciphertext, encErr := crypto.EncryptTo(p.Key, chunk, cipherBuf)
 				if encErr != nil {
@@ -261,7 +252,7 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 
 				// Queue for upload (In-Memory) — uploader calls Release to return buffer
 				bufs := p.cipherBufs // capture for closure
-				p.UploadChan <- rpc.UploadJob{
+				p.UploadChan <- UploadJob{
 					Hash:      encHashHex,
 					Size:      int64(ciphertextSize),
 					Data:      ciphertext,

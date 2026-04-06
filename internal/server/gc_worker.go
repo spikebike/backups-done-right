@@ -51,8 +51,6 @@ func (e *Engine) runGCLoop(ctx context.Context) {
 	}
 
 	// Query for shards that exceed the waste threshold based on bytes
-	// A blob is "wasted" if ref_count is 0 AND it was deleted longer than its specific grace period ago.
-	// We use KeepMetadataMinutes for special blobs and KeepDeletedMinutes for regular blobs.
 	query := `
 		SELECT 
 			l.shard_id, 
@@ -112,7 +110,7 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 			(b.special = 0 AND b.deleted_at >= datetime('now', '-' || ? || ' minutes'))
 		)
 	`, shardID, e.KeepMetadataMinutes, e.KeepDeletedMinutes).Scan(&totalLive)
-	
+
 	if err != nil {
 		return err
 	}
@@ -157,7 +155,7 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 	}
 	defer rows.Close()
 
-	var liveBlobs []rpc.LocalBlobData
+	var itemsToIngest []rpc.ItemData
 	for rows.Next() {
 		var hash string
 		var special bool
@@ -165,24 +163,26 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 			continue
 		}
 
-		// Read blob data from the shard
-		// We need to read all sequences for this blob in this shard
 		blobData, err := e.readBlobFromShardFile(ctx, f, shardID, hash)
 		if err != nil {
 			log.Printf("GCWorker: failed to read blob %s from shard %d: %v", hash, shardID, err)
 			continue
 		}
 
-		liveBlobs = append(liveBlobs, rpc.LocalBlobData{
-			Hash: hash,
+		itemsToIngest = append(itemsToIngest, rpc.ItemData{
+			Meta: rpc.Metadata{
+				Hash:      hash,
+				Size:      int64(len(blobData)),
+				IsSpecial: special,
+			},
 			Data: blobData,
 		})
 	}
 	rows.Close()
 
-	if len(liveBlobs) > 0 {
+	if len(itemsToIngest) > 0 {
 		// Ingest into current open shard
-		if err := e.IngestBlobs(ctx, "system-gc", liveBlobs, true); err != nil {
+		if err := e.IngestItems(ctx, "system-gc", itemsToIngest, true); err != nil {
 			return fmt.Errorf("failed to ingest live blobs: %w", err)
 		}
 
@@ -193,13 +193,13 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 		}
 		defer tx.Rollback()
 
-		for _, b := range liveBlobs {
-			_, err = tx.ExecContext(ctx, "DELETE FROM blob_locations WHERE shard_id = ? AND blob_hash = ?", shardID, b.Hash)
+		for _, item := range itemsToIngest {
+			_, err = tx.ExecContext(ctx, "DELETE FROM blob_locations WHERE shard_id = ? AND blob_hash = ?", shardID, item.Meta.Hash)
 			if err != nil {
 				return err
 			}
 		}
-		
+
 		if err := tx.Commit(); err != nil {
 			return err
 		}

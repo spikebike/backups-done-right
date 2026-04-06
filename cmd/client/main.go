@@ -1,5 +1,8 @@
 package main
+
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
@@ -7,12 +10,14 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/libp2p/go-libp2p"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"p2p-backup/internal/client"
@@ -51,6 +56,7 @@ func main() {
 	// Parse command-line flags
 	configPath := flag.String("config", "client.yaml", "Path to the client configuration file")
 	fakeUpload := flag.Bool("fake-upload", false, "Simulate upload process without connecting to server")
+	mnemonicFlag := flag.String("mnemonic", "", "Override mnemonic for recovery mode")
 	var v verbosity
 	flag.Var(&v, "v", "Enable verbose logging (use -v -v for extra verbosity)")
 	dbPath := flag.String("db", "backup.db", "Path to the local SQLite database")
@@ -66,6 +72,10 @@ func main() {
 	if err != nil {
 		log.Printf("Warning: Failed to load config file %s: %v. Using defaults.", *configPath, err)
 		cfg = &config.ClientConfig{} // Use empty config, defaults will be applied
+	}
+
+	if *mnemonicFlag != "" {
+		cfg.Mnemonic = *mnemonicFlag
 	}
 
 	// Override flag with config if provided
@@ -93,6 +103,7 @@ func main() {
 		fmt.Println("  listclients                Show all known clients and their storage usage")
 		fmt.Println("  keygen                     Generate a new 24-word recovery mnemonic and public key")
 		fmt.Println("  identity                   Show public key derived from mnemonic in config")
+		fmt.Println("  recover [destination]      Recover client database and config from server special blob")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -112,6 +123,7 @@ func main() {
 	isListClientsCmd := (command == "listclients")
 	isKeygenCmd := (command == "keygen")
 	isIdentityCmd := (command == "identity")
+	isRecoverCmd := (command == "recover")
 
 	if isIdentityCmd {
 		if cfg.Mnemonic == "" {
@@ -136,14 +148,14 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to derive identity: %v", err)
 		}
-		
+
 		// Extract Public Key Hex for sharing
 		leaf, err := x509.ParseCertificate(id.TLSCert.Certificate[0])
 		if err != nil {
 			log.Fatalf("Failed to parse generated cert: %v", err)
 		}
 		pubKeyBytes, _ := x509.MarshalPKIXPublicKey(leaf.PublicKey)
-		
+
 		fmt.Println("=== NEW CLIENT IDENTITY GENERATED ===")
 		fmt.Printf("Mnemonic: %s\n\n", m)
 		fmt.Printf("Public Key (Hex): %x\n", pubKeyBytes)
@@ -152,8 +164,8 @@ func main() {
 		return
 	}
 
-	if !isStatusCmd && !isRestoreCmd && !isHistoryCmd && !isBackupCmd && !isPruneCmd && !isResetCmd && !isAddPeerCmd && !isUpdatePeerCmd && !isListPeersCmd && !isUpdateClientCmd && !isListClientsCmd && !isKeygenCmd && !isIdentityCmd && !isAddClientCmd {
-		log.Fatalf("Unknown command: %s. Expected keygen, identity, status, backup, restore, history, prune, reset, addpeer, updatepeer, listpeers, addclient, updateclient, or listclients.", command)
+	if !isStatusCmd && !isRestoreCmd && !isHistoryCmd && !isBackupCmd && !isPruneCmd && !isResetCmd && !isAddPeerCmd && !isUpdatePeerCmd && !isListPeersCmd && !isUpdateClientCmd && !isListClientsCmd && !isKeygenCmd && !isIdentityCmd && !isAddClientCmd && !isRecoverCmd {
+		log.Fatalf("Unknown command: %s. Expected keygen, identity, recover, status, backup, restore, history, prune, reset, addpeer, updatepeer, listpeers, addclient, updateclient, or listclients.", command)
 	}
 
 	var backupSources []config.BackupSource
@@ -168,7 +180,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("Failed to resolve absolute path for %s: %v", dir, err)
 				}
-				
+
 				info, err := os.Stat(absPath)
 				if err != nil {
 					log.Fatalf("Failed to access directory %s: %v", absPath, err)
@@ -190,7 +202,7 @@ func main() {
 					log.Printf("Warning: Failed to resolve absolute path for configured dir %s: %v", src.Path, err)
 					continue
 				}
-				
+
 				// Normalize excludes
 				var absExcludes []string
 				for _, ex := range src.Excludes {
@@ -201,7 +213,7 @@ func main() {
 						absExcludes = append(absExcludes, ex) // Fallback to raw pattern
 					}
 				}
-				
+
 				backupSources = append(backupSources, config.BackupSource{
 					Path:     absPath,
 					Excludes: absExcludes,
@@ -224,9 +236,12 @@ func main() {
 	}
 
 	// Initialize the local SQLite database
-	database, err := db.InitClientDB(actualDBPath)
-	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+	var database *sql.DB
+	if !isRecoverCmd {
+		database, err = db.InitClientDB(actualDBPath)
+		if err != nil {
+			log.Fatalf("Failed to initialize database: %v", err)
+		}
 	}
 
 	if isBackupListCmd {
@@ -239,7 +254,7 @@ func main() {
 		fmt.Println("=== Backup History ===")
 		fmt.Printf("%-5s | %-20s | %-20s | %-10s | %-10s | %-10s\n", "ID", "Start Time", "End Time", "Status", "Offered", "Uploaded")
 		fmt.Println(strings.Repeat("-", 85))
-		
+
 		var count int
 		for rows.Next() {
 			var id int
@@ -252,12 +267,12 @@ func main() {
 				log.Printf("Error scanning row: %v", err)
 				continue
 			}
-			
+
 			endStr := "Running/Incomplete"
 			if endTime.Valid {
 				endStr = endTime.String
 			}
-			
+
 			fmt.Printf("%-5d | %-20s | %-20s | %-10s | %-10d | %-10d\n", id, startTime, endStr, status, offered, uploaded)
 			count++
 		}
@@ -265,38 +280,42 @@ func main() {
 			fmt.Println("No backups found.")
 		}
 		fmt.Println("======================")
-		
-		database.Close()
+
+		if database != nil {
+			database.Close()
+		}
 		return
 	}
 
 	if isResetCmd {
 		log.Println("Resetting local deduplication cache and sync states...")
-		
+
 		_, err = database.Exec(`DELETE FROM local_blobs`)
 		if err != nil {
 			log.Fatalf("Failed to clear local_blobs: %v", err)
 		}
-		
+
 		_, err = database.Exec(`UPDATE directories SET last_seen = '1970-01-01 00:00:00'`)
 		if err != nil {
 			log.Fatalf("Failed to reset directories last_seen: %v", err)
 		}
-		
+
 		_, err = database.Exec(`UPDATE file_versions SET mtime = 0`)
 		if err != nil {
 			log.Fatalf("Failed to reset files mtime: %v", err)
 		}
-		
+
 		log.Println("Reset complete. The next 'backup' command will perform a full rescan and re-offer of all active files to the server.")
-		database.Close()
+		if database != nil {
+			database.Close()
+		}
 		return
 	}
 	// Do NOT defer database.Close() here, close it after pipeline finishes
 
 	// 1. Identity Derivation (Mnemonic Mandatory)
 	if cfg.Mnemonic == "" {
-		log.Fatal("Mnemonic is mandatory in client.yaml (currently empty). Run 'client keygen' to generate one.")
+		log.Fatal("Mnemonic is mandatory. Provide it via client.yaml or --mnemonic flag. Run 'client keygen' to generate one.")
 	}
 
 	id, err := crypto.DeriveIdentity(cfg.Mnemonic, false)
@@ -304,7 +323,7 @@ func main() {
 		log.Fatalf("Failed to derive identity from mnemonic: %v", err)
 	}
 	key := id.MasterKey
-	
+
 	// Convert to libp2p key
 	edPrivKey := id.TLSCert.PrivateKey.(ed25519.PrivateKey)
 	p2pPrivKey, err := crypto.Libp2pKeyFromEd25519(edPrivKey)
@@ -320,7 +339,7 @@ func main() {
 		if serverAddr == "" {
 			serverAddr = "127.0.0.1:8080"
 		}
-		
+
 		if cfg.Server.ExpectedServerKey == "" {
 			log.Fatal("expected_server_key is mandatory in the 'server:' section of client.yaml. Run 'server identity' on your server to get it.")
 		}
@@ -348,21 +367,30 @@ func main() {
 		defer rpcClient.Close()
 	}
 
+	if isRecoverCmd {
+		ctx := context.Background()
+		err := runRecover(ctx, rpcClient, key, args[1:], verbose)
+		if err != nil {
+			log.Fatalf("Recover failed: %v", err)
+		}
+		return
+	}
+
 	if isAddPeerCmd {
 		if len(args) < 2 {
 			log.Fatalf("Usage: client addpeer <address:port>")
 		}
-		
+
 		ctx := context.Background()
 		targetAddress := args[1]
 		log.Printf("Adding peer at %s...", targetAddress)
-		
+
 		err := rpcClient.AddPeer(ctx, targetAddress)
 		if err != nil {
 			log.Fatalf("Failed to add peer: %v", err)
 		}
 		log.Println("Peer added successfully.")
-		
+
 		database.Close()
 		return
 	}
@@ -414,14 +442,14 @@ func main() {
 				passPct = float64(p.ChallengesPassed) / float64(p.IntegrityAttempts) * 100
 			}
 			fmt.Printf("%-3d | %-20s | %-10s | %10.2f | %10.2f | %-7d | %-7d | %5.1f%% | %5.1f%% | %-20s | %s\n",
-				p.ID, p.IPAddress, p.Status, 
-				float64(p.CurrentStorageSize)/(1024*1024), 
+				p.ID, p.IPAddress, p.Status,
+				float64(p.CurrentStorageSize)/(1024*1024),
 				float64(p.OutboundStorageSize)/(1024*1024),
 				p.TotalShards, p.CurrentShards,
 				uptimePct, passPct, p.ContactInfo, p.LastSeen)
 		}
 		fmt.Println("==============================")
-		
+
 		database.Close()
 		return
 	}
@@ -442,7 +470,7 @@ func main() {
 				c.MaxStorageSize/(1024*1024*1024), c.LastSeen)
 		}
 		fmt.Println("============================")
-		
+
 		database.Close()
 		return
 	}
@@ -456,22 +484,22 @@ func main() {
 		if len(parsedArgs) < 2 {
 			log.Fatalf("Usage: client updateclient <id> <status> [--max=GB]")
 		}
-		
+
 		ctx := context.Background()
 		clientID, err := strconv.ParseUint(parsedArgs[0], 10, 64)
 		if err != nil {
 			log.Fatalf("Invalid client ID: %v", err)
 		}
 		targetStatus := parsedArgs[1]
-		
+
 		log.Printf("Updating client %d to status '%s' (Max: %d GB)...", clientID, targetStatus, *maxGB)
-		
+
 		err = rpcClient.UpdateClient(ctx, clientID, targetStatus, *maxGB)
 		if err != nil {
 			log.Fatalf("Failed to update client: %v", err)
 		}
 		log.Println("Client updated successfully.")
-		
+
 		database.Close()
 		return
 	}
@@ -485,19 +513,19 @@ func main() {
 		if len(parsedArgs) < 2 {
 			log.Fatalf("Usage: client addclient <public_key> <status> [--max=GB]")
 		}
-		
+
 		ctx := context.Background()
 		clientPK := parsedArgs[0]
 		targetStatus := parsedArgs[1]
-		
+
 		log.Printf("Adding client %s... with status '%s' (Max: %d GB)...", clientPK[:16], targetStatus, *maxGB)
-		
+
 		err = rpcClient.AddClient(ctx, clientPK, targetStatus, *maxGB)
 		if err != nil {
 			log.Fatalf("Failed to add client: %v", err)
 		}
 		log.Println("Client added successfully.")
-		
+
 		database.Close()
 		return
 	}
@@ -517,7 +545,7 @@ func main() {
 		fmt.Printf("Hosted Peer Shards:            %d\n", status.HostedPeerShards)
 		fmt.Printf("Queued Data:                   %.2f MB\n", float64(status.QueuedBytes)/(1024*1024))
 		fmt.Println("=========================================")
-		
+
 		database.Close()
 		return
 	}
@@ -531,10 +559,10 @@ func main() {
 		if len(parsedArgs) < 1 {
 			log.Fatalf("Usage: client restore [-b backup_id] <file or dir> [destination_dir]")
 		}
-		
+
 		target := parsedArgs[0]
 		targetBackupID := *backupIDPtr
-		
+
 		restoreDir := "restored_files"
 		if len(parsedArgs) >= 2 {
 			restoreDir = parsedArgs[1]
@@ -544,18 +572,18 @@ func main() {
 		}
 
 		restorer := client.NewRestorer(database, rpcClient, key, restoreDir, verbose)
-		
+
 		ctx := context.Background()
 		absTarget, err := filepath.Abs(target)
 		if err != nil {
 			log.Fatalf("Failed to resolve absolute path for %s: %v", target, err)
 		}
-		
+
 		err = restorer.Restore(ctx, absTarget, targetBackupID)
 		if err != nil {
 			log.Printf("Restore failed for %s: %v", target, err)
 		}
-		
+
 		database.Close()
 		return
 	}
@@ -564,9 +592,9 @@ func main() {
 		if len(args) < 2 {
 			log.Fatalf("Usage: client history <file>")
 		}
-		
+
 		restorer := client.NewRestorer(database, rpcClient, key, "", verbose)
-		
+
 		ctx := context.Background()
 		for _, target := range args[1:] {
 			absTarget, err := filepath.Abs(target)
@@ -579,7 +607,7 @@ func main() {
 				log.Printf("History lookup failed for %s: %v", target, err)
 			}
 		}
-		
+
 		database.Close()
 		return
 	}
@@ -596,7 +624,7 @@ func main() {
 		// Set up channels for the pipeline
 		// 1. Crawler -> CryptoPool (Files to be encrypted/hashed or marked deleted)
 		jobChan := make(chan client.FileJob, 1000)
-		
+
 		// 2. CryptoPool -> Uploader (Encrypted files ready for upload)
 		maxMemMB := cfg.Pipeline.MaxPipelineMemMB
 		if maxMemMB <= 0 {
@@ -610,8 +638,8 @@ func main() {
 		if uploadQueueSize <= 0 {
 			uploadQueueSize = 1
 		}
-		uploadChan := make(chan rpc.UploadJob, uploadQueueSize)
-		
+		uploadChan := make(chan client.UploadJob, uploadQueueSize)
+
 		// 3. DBWriter channel
 		dbJobChan := make(chan db.DBJob, 1000)
 		db.StartDBWriter(database, dbJobChan)
@@ -643,7 +671,7 @@ func main() {
 				crawler.SetExcludes(s.Path, s.Excludes)
 			}
 		}
-		
+
 		archiveChan := make(chan client.FileArchive, 1000)
 
 		stats := client.NewBackupStats()
@@ -656,20 +684,21 @@ func main() {
 		if cfg.Crypto.EnableCompression != nil {
 			enableCompression = *cfg.Crypto.EnableCompression
 		}
-		cryptoPool := client.NewCryptoPool(key, cryptoThreads, uploadChan, archiveChan, verbose, enableCompression, stats)
 
 		batchSize := cfg.Pipeline.BatchUploadSize
 		if batchSize <= 0 {
 			batchSize = 100 // Default
 		}
-		
+
 		uploaderThreads := cfg.Pipeline.UploadThreads
 		if uploaderThreads <= 0 {
 			uploaderThreads = 2
 		}
-		
+
 		uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, uploaderThreads, batchSize, *fakeUpload, verbose, backupID, stats)
 		stateManager := client.NewStateManager(database, dbJobChan, archiveChan, verbose)
+
+		cryptoPool := client.NewCryptoPool(key, cryptoThreads, uploadChan, archiveChan, verbose, enableCompression, stats, batchSize, uploaderThreads)
 
 		if verbose {
 			log.Println("Pipeline components initialized. Starting threads...")
@@ -687,40 +716,25 @@ func main() {
 		// This will block until the crawler finishes walking all directories
 		crawler.Start(backupID)
 
-		if verbose {
-			log.Println("Crawler finished. Waiting for CryptoPool...")
-		}
-
 		// Wait for CryptoPool to finish processing all jobs
 		cryptoPool.Wait()
 
 		if verbose {
-			log.Println("Crypto workers finished. Closing upload and archive channels...")
+			log.Println("Crypto workers finished. Closing upload channel...")
 		}
 
 		// Close uploadChan to signal Uploader that no more uploads are coming
 		close(uploadChan)
 		close(archiveChan)
 
-		if verbose {
-			log.Println("Waiting for Uploader to finish...")
-		}
-
 		// Wait for Uploader to finish uploading all files
 		uploader.Wait()
 
-		if verbose {
-			log.Println("Uploader finished. Waiting for StateManager...")
-		}
-
 		stateManager.Wait()
 
-		if verbose {
-			log.Println("StateManager finished.")
-		}
 		// Print performance summary
 		stats.PrintSummary()
-		
+
 		if verbose {
 			log.Println("Backup process completed successfully.")
 		} else {
@@ -742,92 +756,233 @@ func main() {
 		return // Exit early since we already closed the DB
 	}
 
-	database.Close()
+	if database != nil {
+		database.Close()
+	}
+}
+
+func runRecover(ctx context.Context, rpcClient client.RPCClient, key []byte, args []string, verbose bool) error {
+	destDir := ""
+	if len(args) > 0 {
+		destDir = args[0]
+	} else {
+		home, _ := os.UserHomeDir()
+		destDir = filepath.Join(home, "recovered")
+	}
+
+	if verbose {
+		log.Printf("Starting recovery into %s...", destDir)
+	}
+
+	specials, err := rpcClient.ListSpecialItems(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list special items: %w", err)
+	}
+
+	if len(specials) == 0 {
+		return fmt.Errorf("no special recovery blobs found for this identity")
+	}
+
+	var target rpc.Metadata
+	var highestSeq uint64
+	for _, s := range specials {
+		if s.SequenceNumber >= highestSeq {
+			target = s
+			highestSeq = s.SequenceNumber
+		}
+	}
+
+	if verbose {
+		log.Printf("Found special blob: %s (size %d), downloading...", target.Hash, target.Size)
+	}
+
+	blobs, missing, err := rpcClient.DownloadItems(ctx, []string{target.Hash})
+	if err != nil {
+		return fmt.Errorf("DownloadItems failed: %w", err)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("server reported missing chunk for recovery blob")
+	}
+	if len(blobs) == 0 {
+		return fmt.Errorf("no data returned from server")
+	}
+
+	actualData := blobs[0].Data
+	if len(actualData) < 64 {
+		return fmt.Errorf("recovery shard is too small to contain signature")
+	}
+
+	signature := actualData[:64]
+	ciphertext := actualData[64:]
+
+	if !crypto.VerifyRecoveryShard(key, signature, ciphertext) {
+		if verbose {
+			log.Println("Signature verification failed! Data may be corrupted or malicious.")
+		}
+		return fmt.Errorf("recovery shard signature verification failed")
+	}
+
+	if verbose {
+		log.Println("Signature verified successfully. Unbundling...")
+	}
+
+	dec, err := crypto.Decrypt(key, ciphertext)
+	if err != nil {
+		return fmt.Errorf("decrypt failed: %w", err)
+	}
+
+	decoder, err := zstd.NewReader(bytes.NewReader(dec))
+	if err != nil {
+		return fmt.Errorf("zstd init failed: %w", err)
+	}
+	defer decoder.Close()
+
+	tr := tar.NewReader(decoder)
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination dir: %w", err)
+	}
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("tar read error: %w", err)
+		}
+
+		outPath := filepath.Join(destDir, hdr.Name)
+		outFile, err := os.Create(outPath)
+		if err != nil {
+			return fmt.Errorf("failed to create recovered file %s: %w", outPath, err)
+		}
+		
+		if _, err := io.Copy(outFile, tr); err != nil {
+			outFile.Close()
+			return fmt.Errorf("failed to write data to %s: %w", outPath, err)
+		}
+		outFile.Close()
+		
+		if verbose {
+			log.Printf("Recovered file: %s", outPath)
+		}
+	}
+
+	fmt.Printf("\nRecovery complete. Files extracted to: %s\n", destDir)
+	return nil
 }
 
 func uploadMetadata(ctx context.Context, filePaths []string, key []byte, rpcClient client.RPCClient, verbose bool) error {
-	var metaToOffer []rpc.BlobMeta
-	var blobsToUpload []rpc.LocalBlobData
+	if verbose {
+		log.Println("Bundling and encrypting metadata...")
+	}
 
+	// 1. Create a tar.zst bundle
+	var buf bytes.Buffer
+	enc, err := zstd.NewWriter(&buf)
+	if err != nil {
+		return fmt.Errorf("failed to create zstd writer: %w", err)
+	}
+	tw := tar.NewWriter(enc)
+
+	bundledCount := 0
 	for _, path := range filePaths {
-		if verbose {
-			log.Printf("Encrypting metadata: %s...", filepath.Base(path))
-		}
-
 		data, err := os.ReadFile(path)
 		if err != nil {
 			log.Printf("Warning: failed to read %s: %v", path, err)
 			continue
 		}
 
-		ciphertext, err := crypto.Encrypt(key, data)
+		info, err := os.Stat(path)
 		if err != nil {
-			return fmt.Errorf("encrypt %s: %w", path, err)
+			log.Printf("Warning: failed to stat %s: %v", path, err)
+			continue
 		}
 
-		encHash := crypto.Hash(ciphertext)
-		encHashHex := hex.EncodeToString(encHash)
+		hdr, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			log.Printf("Warning: failed to create tar header for %s: %v", path, err)
+			continue
+		}
+		// ensure the name is just the basename
+		hdr.Name = filepath.Base(path)
 
-		metaToOffer = append(metaToOffer, rpc.BlobMeta{
-			Hash:    encHashHex,
-			Size:    int64(len(ciphertext)),
-			Special: true,
-		})
-		
-		blobsToUpload = append(blobsToUpload, rpc.LocalBlobData{
-			Hash:      encHashHex,
-			Data:      ciphertext,
-			IsSpecial: true,
-		})
+		if err := tw.WriteHeader(hdr); err != nil {
+			log.Printf("Warning: failed to write tar header for %s: %v", path, err)
+			continue
+		}
+		if _, err := tw.Write(data); err != nil {
+			log.Printf("Warning: failed to write tar data for %s: %v", path, err)
+			continue
+		}
+		bundledCount++
 	}
 
-	if len(metaToOffer) == 0 {
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("close tar: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("close zstd: %w", err)
+	}
+
+	if bundledCount == 0 {
 		return nil
 	}
 
-	// 1. Offer all metadata blobs
-	needed, err := rpcClient.OfferBlobs(ctx, metaToOffer)
+	// 2. Encrypt the bundle
+	ciphertext, err := crypto.Encrypt(key, buf.Bytes())
 	if err != nil {
-		return fmt.Errorf("offer metadata: %w", err)
+		return fmt.Errorf("encrypt bundle: %w", err)
 	}
 
-	// 2. Filter blobs to only those the server needs
-	if len(needed) > 0 {
-		var finalUploadMeta []rpc.BlobMeta
-		for _, idx := range needed {
-			b := blobsToUpload[idx]
-			finalUploadMeta = append(finalUploadMeta, rpc.BlobMeta{
-				Hash:    b.Hash,
-				Size:    int64(len(b.Data)),
-				Special: true,
-			})
-		}
+	// 3. Sign the ciphertext to prove authenticity
+	signature := crypto.SignRecoveryShard(key, ciphertext)
 
-		err = rpcClient.PrepareUploadClient(ctx, finalUploadMeta)
+	// 4. Prepend signature (64 bytes)
+	signedCiphertext := make([]byte, 64+len(ciphertext))
+	copy(signedCiphertext[:64], signature)
+	copy(signedCiphertext[64:], ciphertext)
+	ciphertext = signedCiphertext
+
+	encHash := crypto.Hash(ciphertext)
+	encHashHex := hex.EncodeToString(encHash)
+
+	m := rpc.Metadata{
+		Hash:      encHashHex,
+		Size:      int64(len(ciphertext)),
+		IsSpecial: true,
+		Type:      0, // ClientBlob
+	}
+
+	// 1. Offer the bundle blob
+	plan, err := rpcClient.OfferItems(ctx, []rpc.Metadata{m})
+	if err != nil {
+		return fmt.Errorf("prepare upload: %w", err)
+	}
+
+	// 2. If the server needs it, upload it
+	if len(plan.NeededIndices) > 0 {
+		hashBytes, _ := hex.DecodeString(m.Hash)
+		item := rpc.StreamItem{
+			Header: rpc.StreamItemHeader{
+				OpCode: rpc.OpCodePush,
+				Flags:  rpc.FlagTypeClientBlob,
+				Size:   uint64(len(ciphertext)),
+			},
+			Data: bytes.NewReader(ciphertext),
+		}
+		copy(item.Header.Hash[:], hashBytes)
+
+		err = rpcClient.UploadItemsStreamed(ctx, []rpc.StreamItem{item})
 		if err != nil {
-			return fmt.Errorf("prepare upload metadata: %w", err)
+			return fmt.Errorf("upload metadata stream: %w", err)
 		}
-
-		var finalJobs []rpc.UploadJob
-		for _, idx := range needed {
-			b := blobsToUpload[idx]
-			finalJobs = append(finalJobs, rpc.UploadJob{
-				Hash: b.Hash,
-				Data: b.Data,
-				Size: int64(len(b.Data)),
-			})
-		}
-
-		err = rpcClient.PushBlobBatch(ctx, finalJobs)
-		if err != nil {
-			return fmt.Errorf("push metadata batch: %w", err)
-		}
-
 		if verbose {
-			log.Printf("Successfully uploaded %d metadata files.", len(needed))
+			log.Println("Successfully uploaded bundled metadata rescue shard.")
 		}
 	} else if verbose {
-		log.Println("Metadata already up to date on server.")
+		log.Println("Metadata bundle already up to date on server.")
 	}
 
 	return nil
@@ -835,14 +990,14 @@ func uploadMetadata(ctx context.Context, filePaths []string, key []byte, rpcClie
 
 func runPrune(ctx context.Context, database *sql.DB, rpcClient client.RPCClient) {
 	log.Println("Starting garbage collection (prune)...")
-	
+
 	// 1. Ask server for all hashes it holds for us
 	log.Println("Fetching blob list from server...")
-	serverHashes, err := rpcClient.ListAllBlobs(ctx)
+	serverHashes, err := rpcClient.ListAllItems(ctx)
 	if err != nil {
 		log.Fatalf("Failed to fetch server blobs: %v", err)
 	}
-	
+
 	// 2. Query our local database for active hashes across all versions
 	log.Println("Querying local database for active chunks...")
 	rows, err := database.QueryContext(ctx, `
@@ -851,7 +1006,7 @@ func runPrune(ctx context.Context, database *sql.DB, rpcClient client.RPCClient)
 	if err != nil {
 		log.Fatalf("Failed to query active local blobs: %v", err)
 	}
-	
+
 	activeHashes := make(map[string]bool)
 	for rows.Next() {
 		var hash string
@@ -876,9 +1031,9 @@ func runPrune(ctx context.Context, database *sql.DB, rpcClient client.RPCClient)
 	}
 
 	log.Printf("Found %d orphaned blobs on the server. Sending delete command...", len(orphanHashes))
-	
+
 	// 4. Send delete command
-	err = rpcClient.DeleteBlobs(ctx, orphanHashes)
+	err = rpcClient.DeleteItems(ctx, orphanHashes)
 	if err != nil {
 		log.Fatalf("Failed to delete orphaned blobs: %v", err)
 	}

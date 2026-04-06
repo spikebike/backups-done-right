@@ -1,8 +1,8 @@
 package crypto
 
 import (
-	"errors"
 	"crypto/rand"
+	"errors"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"

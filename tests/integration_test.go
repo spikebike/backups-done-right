@@ -1,15 +1,20 @@
 package tests
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 
 	"p2p-backup/internal/client"
 	"p2p-backup/internal/crypto"
@@ -31,8 +36,8 @@ func runBackupCycle(t *testing.T, clientDB *sql.DB, dbJobChan chan db.DBJob, rpc
 
 	crawler := client.NewCrawler(clientDB, dbJobChan, backupDirs, jobChan, 4, false)
 	archiveChan := make(chan client.FileArchive, 1000)
-	cryptoPool := client.NewCryptoPool(key, 2, uploadChan, archiveChan, false, true, nil)
-	uploader := client.NewUploader(dbJobChan, uploadChan, rpcClient, 2, 10, false, false, backupID, nil)
+	cryptoPool := client.NewCryptoPool(key, 4, uploadChan, archiveChan, false, true, nil, 10, 1)
+	uploader := client.NewUploader((chan<- db.DBJob)(dbJobChan), uploadChan, rpcClient, 2, 10, false, false, backupID, nil)
 	stateManager := client.NewStateManager(clientDB, dbJobChan, archiveChan, false)
 
 	go stateManager.Start()
@@ -70,9 +75,9 @@ func TestEndToEndBackup(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
-	
+
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer clientDB.Close()
 	dbJobChan := make(chan db.DBJob, 100)
@@ -117,7 +122,7 @@ func TestDeduplication(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -154,7 +159,7 @@ func TestLargeFile(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -194,7 +199,7 @@ func TestIncrementalBackup(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -234,7 +239,7 @@ func TestFileDeletion(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -273,7 +278,7 @@ func TestServerGC(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10, true, nil, "", 1024, false, false, 8, 0, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 5, true, nil, "", 1024, false, false, 8, 0, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 	engine.KeepDeletedMinutes = 0
 	engine.KeepMetadataMinutes = 0
@@ -285,16 +290,17 @@ func TestServerGC(t *testing.T) {
 	defer close(dbJobChan)
 
 	h := hex.EncodeToString(crypto.Hash([]byte("some data")))
-	ingestErr := engine.IngestBlobs(context.Background(), "system-self-backup", []rpc.LocalBlobData{
-	    {Hash: h, Data: []byte("some data"), IsSpecial: true},
+	ingestErr := engine.IngestItems(context.Background(), "system-self-backup", []rpc.ItemData{
+		{Meta: rpc.Metadata{Hash: h, Size: int64(len("some data")), IsSpecial: true, Type: 0}, Data: []byte("some data")},
 	}, false)
 	if ingestErr != nil {
-		t.Fatalf("IngestBlobs failed: %v", ingestErr)
+		t.Fatalf("IngestItems failed: %v", ingestErr)
 	}
 	var blobHash string
 	serverDB.QueryRow("SELECT hash FROM blobs LIMIT 1").Scan(&blobHash)
-	engine.DeleteBlobs(context.Background(), []string{blobHash})
-	serverDB.Exec("UPDATE blobs SET deleted_at = datetime('now', '-1 hour') WHERE hash = ?", blobHash)
+	engine.DeleteItems(context.Background(), []string{blobHash})
+	serverDB.Exec("UPDATE blobs SET deleted_at = datetime('now', '-1 hour'), ref_count = 0 WHERE hash = ?", blobHash)
+	serverDB.Exec("UPDATE shards SET status = 'sealed'")
 
 	// Wait for any background encoding to finish before we start deleting things
 	engine.Wait()
@@ -310,16 +316,16 @@ func TestServerGC(t *testing.T) {
 
 type MockPiece struct {
 	Data []byte
-	Meta rpc.PeerShardMeta
+	Meta rpc.Metadata
 }
 
 type MockPeerHandler struct {
 	Pieces map[string]MockPiece
 }
 
-func (h *MockPeerHandler) OfferShards(ctx context.Context, call rpc.PeerNode_offerShards) error {
+func (h *MockPeerHandler) OfferItems(ctx context.Context, call rpc.PeerNode_offerItems) error {
 	args := call.Args()
-	shards, _ := args.Shards()
+	shards, _ := args.Items()
 	res, _ := call.AllocResults()
 	needed, _ := res.NewNeededIndices(int32(shards.Len()))
 	for i := 0; i < shards.Len(); i++ {
@@ -330,7 +336,7 @@ func (h *MockPeerHandler) OfferShards(ctx context.Context, call rpc.PeerNode_off
 
 func (h *MockPeerHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_prepareUpload) error {
 	args := call.Args()
-	shards, _ := args.Shards()
+	shards, _ := args.Items()
 	for i := 0; i < shards.Len(); i++ {
 		s := shards.At(i)
 		hashBytes, _ := s.Checksum()
@@ -338,7 +344,7 @@ func (h *MockPeerHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_p
 		parentHashBytes, _ := s.ParentShardHash()
 		h.Pieces[hash] = MockPiece{
 			Data: nil, // Data arrives via raw stream (skipped in test mode)
-			Meta: rpc.PeerShardMeta{
+			Meta: rpc.Metadata{
 				Hash:            hash,
 				Size:            int64(s.Size()),
 				IsSpecial:       s.IsSpecial(),
@@ -346,6 +352,7 @@ func (h *MockPeerHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_p
 				ParentShardHash: hex.EncodeToString(parentHashBytes),
 				SequenceNumber:  s.SequenceNumber(),
 				TotalPieces:     int(s.TotalPieces()),
+				Type:            1, // PeerShard
 			},
 		}
 	}
@@ -356,11 +363,13 @@ func (h *MockPeerHandler) PrepareUpload(ctx context.Context, call rpc.PeerNode_p
 
 func (h *MockPeerHandler) ChallengePiece(ctx context.Context, call rpc.PeerNode_challengePiece) error {
 	args := call.Args()
-	hashBytes, _ := args.ShardChecksum()
+	hashBytes, _ := args.Checksum()
 	hashHex := hex.EncodeToString(hashBytes)
 	offset := args.Offset()
 	p, ok := h.Pieces[hashHex]
-	if !ok { return fmt.Errorf("not found") }
+	if !ok {
+		return fmt.Errorf("not found")
+	}
 	res, _ := call.AllocResults()
 	return res.SetData(p.Data[offset : offset+32])
 }
@@ -371,17 +380,15 @@ func (h *MockPeerHandler) ReleasePiece(ctx context.Context, call rpc.PeerNode_re
 	return nil
 }
 
-
-
-func (h *MockPeerHandler) ListSpecialPieces(ctx context.Context, call rpc.PeerNode_listSpecialPieces) error {
-	var specials []rpc.PeerShardMeta
+func (h *MockPeerHandler) ListSpecialItems(ctx context.Context, call rpc.PeerNode_listSpecialItems) error {
+	var specials []rpc.Metadata
 	for _, p := range h.Pieces {
 		if p.Meta.IsSpecial {
 			specials = append(specials, p.Meta)
 		}
 	}
 	res, _ := call.AllocResults()
-	shards, _ := res.NewShards(int32(len(specials)))
+	shards, _ := res.NewItems(int32(len(specials)))
 	for i, m := range specials {
 		s := shards.At(i)
 		hb, _ := hex.DecodeString(m.Hash)
@@ -416,7 +423,7 @@ func TestOutboundWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	mh1 := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -464,7 +471,7 @@ func TestChallengeWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	mh := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -475,7 +482,7 @@ func TestChallengeWorkerFlow(t *testing.T) {
 
 	data := make([]byte, 1024)
 	pieceHash := hex.EncodeToString(crypto.Hash(data))
-	mh.Pieces[pieceHash] = MockPiece{Data: data, Meta: rpc.PeerShardMeta{IsSpecial: false}}
+	mh.Pieces[pieceHash] = MockPiece{Data: data, Meta: rpc.Metadata{IsSpecial: false, Type: 1}}
 	serverDB.Exec("INSERT INTO shards (id, status, size) VALUES (1, 'sealed', 1024)")
 	serverDB.Exec("INSERT INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (1, 0, ?, 'uploaded')", pid)
 	serverDB.Exec("INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (1, 0, ?, ?, 100, ?)", pid, pieceHash, data[100:132])
@@ -502,7 +509,7 @@ func TestRepairWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -527,9 +534,13 @@ func TestRepairWorkerFlow(t *testing.T) {
 	entries, _ := os.ReadDir(serverQueueDir)
 	found := false
 	for _, e := range entries {
-		if strings.Contains(e.Name(), "piece_2") { found = true }
+		if strings.Contains(e.Name(), "piece_2") {
+			found = true
+		}
 	}
-	if !found { t.Errorf("Piece 2 not enqueued for repair") }
+	if !found {
+		t.Errorf("Piece 2 not enqueued for repair")
+	}
 }
 
 func TestReedSolomonIntegration(t *testing.T) {
@@ -545,7 +556,7 @@ func TestReedSolomonIntegration(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -570,14 +581,14 @@ func TestReedSolomonIntegration(t *testing.T) {
 		pPath := filepath.Join(serverQueueDir, fmt.Sprintf("shard_%d_piece_%d", sid, i))
 		data, _ := os.ReadFile(pPath)
 		h := hex.EncodeToString(crypto.Hash(data))
-		handlers[i].Pieces[h] = MockPiece{Data: data, Meta: rpc.PeerShardMeta{IsSpecial: false}}
+		handlers[i].Pieces[h] = MockPiece{Data: data, Meta: rpc.Metadata{IsSpecial: false, Type: 1}}
 		serverDB.Exec("INSERT INTO peers (public_key, ip_address, status) VALUES (?, '127.0.0.1', 'trusted')", fmt.Sprintf("p%d", i))
 		var pid int64
 		serverDB.QueryRow("SELECT id FROM peers WHERE public_key=?", fmt.Sprintf("p%d", i)).Scan(&pid)
 		engine.RegisterActivePeer(pid, rpc.PeerNode_ServerToClient(handlers[i]))
 		serverDB.Exec("INSERT INTO outbound_pieces (shard_id, piece_index, peer_id, status) VALUES (?, ?, ?, 'uploaded')", sid, i, pid)
 		serverDB.Exec("INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, 0, ?)", sid, i, pid, h, []byte{0})
-    }
+	}
 
 	// Verify erasure coding produced the expected number of pieces
 	var pieceCount int
@@ -611,7 +622,7 @@ func TestDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false)
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -625,17 +636,85 @@ func TestDisasterRecovery(t *testing.T) {
 
 	close(dbJobChan)
 	clientDB.Close()
+	
+	// Create tar.zst bundle
+	var buf bytes.Buffer
+	enc, _ := zstd.NewWriter(&buf)
+	tw := tar.NewWriter(enc)
 	dbData, _ := os.ReadFile(filepath.Join(baseDir, "client.db"))
-	cipher, _ := crypto.Encrypt(key, dbData)
-	h := hex.EncodeToString(crypto.Hash(cipher))
-	rpcClient.PrepareUploadClient(context.Background(), []rpc.BlobMeta{{Hash: h, Size: int64(len(cipher)), Special: true}})
-	engine.IngestBlobs(context.Background(), "insecure-local-client", []rpc.LocalBlobData{{Hash: h, Data: cipher, IsSpecial: true}}, false)
+	hdr := &tar.Header{Name: "client.db", Size: int64(len(dbData)), Mode: 0644}
+	tw.WriteHeader(hdr)
+	tw.Write(dbData)
+	tw.Close()
+	enc.Close()
+
+	cipher, _ := crypto.Encrypt(key, buf.Bytes())
+	signature := crypto.SignRecoveryShard(key, cipher)
+	signedCipher := make([]byte, 64+len(cipher))
+	copy(signedCipher[:64], signature)
+	copy(signedCipher[64:], cipher)
+
+	h := hex.EncodeToString(crypto.Hash(signedCipher))
+	hashBytes, _ := hex.DecodeString(h)
+	item := rpc.StreamItem{
+		Header: rpc.StreamItemHeader{
+			OpCode: rpc.OpCodePush,
+			Flags:  rpc.FlagTypeClientBlob,
+			Size:   uint64(len(signedCipher)),
+		},
+		Data: bytes.NewReader(signedCipher),
+	}
+	copy(item.Header.Hash[:], hashBytes)
+
+	_, err := rpcClient.OfferItems(context.Background(), []rpc.Metadata{
+		{Hash: h, Size: int64(len(signedCipher)), IsSpecial: true, Type: 0},
+	})
+	if err != nil {
+		t.Fatalf("Failed to prepare client bundle metadata: %v", err)
+	}
+
+	err = rpcClient.UploadItemsStreamed(context.Background(), []rpc.StreamItem{item})
+	if err != nil {
+		t.Fatalf("Failed to upload client bundle metadata: %v", err)
+	}
 
 	os.Remove(filepath.Join(baseDir, "client.db"))
-	specials, _ := rpcClient.ListSpecialBlobs(context.Background())
-	data, _ := rpcClient.PullBlob(context.Background(), specials[0].Hash)
-	dec, _ := crypto.Decrypt(key, data)
-	os.WriteFile(filepath.Join(baseDir, "client.db"), dec, 0644)
+	specials, _ := rpcClient.ListSpecialItems(context.Background())
+	if len(specials) == 0 {
+		t.Fatalf("No special blobs listed")
+	}
+	blobs, missing, err := rpcClient.DownloadItems(context.Background(), []string{specials[0].Hash})
+	if err != nil {
+		t.Fatalf("DownloadItems failed: %v", err)
+	}
+	if len(missing) > 0 {
+		t.Fatalf("Missing blob: %s", missing[0])
+	}
+	if len(blobs) == 0 {
+		t.Fatalf("No blobs returned")
+	}
+
+	actualData := blobs[0].Data
+	if len(actualData) < 64 {
+		t.Fatalf("Downloaded payload too short for signature")
+	}
+	rcvSig := actualData[:64]
+	rcvCipher := actualData[64:]
+	if !crypto.VerifyRecoveryShard(key, rcvSig, rcvCipher) {
+		t.Fatalf("Test payload signature verification failed")
+	}
+
+	dec, err := crypto.Decrypt(key, rcvCipher)
+	if err != nil {
+		t.Fatalf("Decrypt failed: %v", err)
+	}
+	
+	decoder, _ := zstd.NewReader(bytes.NewReader(dec))
+	tr := tar.NewReader(decoder)
+	tr.Next() // Should be client.db
+	outF, _ := os.Create(filepath.Join(baseDir, "client.db"))
+	io.Copy(outF, tr)
+	outF.Close()
 
 	recDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
 	defer recDB.Close()
@@ -656,7 +735,7 @@ func TestServerDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	masterKey := []byte("01234567890123456789012345678901")
-	engineA := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "", 4, false)
+	engineA := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "", 4, false)
 	defer engineA.Wait()
 	defer serverDB.Close()
 
@@ -730,9 +809,9 @@ func TestContactInfoPropagation(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	
+
 	myContact := "operator@server-a.com"
-	engine := server.NewEngine(serverDB, serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", myContact, 4, false)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", myContact, 4, false)
 	defer engine.Wait()
 
 	// 1. Verify Engine has contact info
@@ -744,7 +823,7 @@ func TestContactInfoPropagation(t *testing.T) {
 	peerContact := "@twitter_handle"
 	peerPubKey := "peer-pub-key-hex-string-32-chars-long"
 	peerAddr := "1.2.3.4:8081"
-	
+
 	peerID, err := engine.AnnouncePeer(context.Background(), peerPubKey, peerAddr, peerContact)
 	if err != nil {
 		t.Fatalf("AnnouncePeer failed: %v", err)

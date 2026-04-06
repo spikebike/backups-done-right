@@ -7,13 +7,13 @@ import (
 	"io"
 	"net"
 
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/multiformats/go-multiaddr"
 	capnp "capnproto.org/go/capnp/v3"
 	capnprpc "capnproto.org/go/capnp/v3/rpc"
 	"capnproto.org/go/capnp/v3/rpc/transport"
-	"p2p-backup/internal/rpc"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 	"p2p-backup/internal/crypto"
+	"p2p-backup/internal/rpc"
 )
 
 type customCodec struct {
@@ -115,9 +115,9 @@ func NewCapnpPeerClient(ctx context.Context, e *Engine, address string, expected
 	}, nil
 }
 
-func (c *CapnpPeerClient) OfferShards(ctx context.Context, shards []rpc.PeerShardMeta) ([]uint32, error) {
-	req, release := c.clientStub.OfferShards(ctx, func(p rpc.PeerNode_offerShards_Params) error {
-		capnpShards, err := p.NewShards(int32(len(shards)))
+func (c *CapnpPeerClient) OfferItems(ctx context.Context, shards []rpc.Metadata) ([]uint32, error) {
+	req, release := c.clientStub.OfferItems(ctx, func(p rpc.PeerNode_offerItems_Params) error {
+		capnpShards, err := p.NewItems(int32(len(shards)))
 		if err != nil {
 			return err
 		}
@@ -139,7 +139,7 @@ func (c *CapnpPeerClient) OfferShards(ctx context.Context, shards []rpc.PeerShar
 
 	res, err := req.Struct()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read OfferShards results: %w", err)
+		return nil, fmt.Errorf("failed to read OfferItems results: %w", err)
 	}
 
 	neededList, err := res.NeededIndices()
@@ -155,9 +155,9 @@ func (c *CapnpPeerClient) OfferShards(ctx context.Context, shards []rpc.PeerShar
 	return neededIndices, nil
 }
 
-func (c *CapnpPeerClient) PrepareUpload(ctx context.Context, shards []rpc.PeerShardMeta) error {
+func (c *CapnpPeerClient) PrepareUpload(ctx context.Context, shards []rpc.Metadata) error {
 	req, release := c.clientStub.PrepareUpload(ctx, func(p rpc.PeerNode_prepareUpload_Params) error {
-		capnpShards, err := p.NewShards(int32(len(shards)))
+		capnpShards, err := p.NewItems(int32(len(shards)))
 		if err != nil {
 			return err
 		}
@@ -192,7 +192,7 @@ func (c *CapnpPeerClient) PrepareUpload(ctx context.Context, shards []rpc.PeerSh
 
 func (c *CapnpPeerClient) ChallengePiece(ctx context.Context, hashBytes []byte, offset uint64) ([]byte, error) {
 	req, release := c.clientStub.ChallengePiece(ctx, func(p rpc.PeerNode_challengePiece_Params) error {
-		if err := p.SetShardChecksum(hashBytes); err != nil {
+		if err := p.SetChecksum(hashBytes); err != nil {
 			return err
 		}
 		p.SetOffset(offset)
@@ -219,7 +219,7 @@ func (c *CapnpPeerClient) ChallengePiece(ctx context.Context, hashBytes []byte, 
 
 func (c *CapnpPeerClient) ReleasePiece(ctx context.Context, hashBytes []byte) error {
 	req, release := c.clientStub.ReleasePiece(ctx, func(p rpc.PeerNode_releasePiece_Params) error {
-		if err := p.SetShardChecksum(hashBytes); err != nil {
+		if err := p.SetChecksum(hashBytes); err != nil {
 			return err
 		}
 		return nil
@@ -239,26 +239,26 @@ func (c *CapnpPeerClient) ReleasePiece(ctx context.Context, hashBytes []byte) er
 	return nil
 }
 
-func (c *CapnpPeerClient) ListSpecialPieces(ctx context.Context) ([]rpc.PeerShardMeta, error) {
-	req, release := c.clientStub.ListSpecialPieces(ctx, nil)
+func (c *CapnpPeerClient) ListSpecialItems(ctx context.Context) ([]rpc.Metadata, error) {
+	req, release := c.clientStub.ListSpecialItems(ctx, nil)
 	defer release()
 
 	res, err := req.Struct()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read ListSpecialPieces results: %w", err)
+		return nil, fmt.Errorf("failed to read ListSpecialItems results: %w", err)
 	}
 
-	capnpShards, err := res.Shards()
+	capnpShards, err := res.Items()
 	if err != nil {
 		return nil, err
 	}
 
-	var pieces []rpc.PeerShardMeta
+	var pieces []rpc.Metadata
 	for i := 0; i < capnpShards.Len(); i++ {
 		cs := capnpShards.At(i)
 		hashBytes, _ := cs.Checksum()
 		parentHash, _ := cs.ParentShardHash()
-		pieces = append(pieces, rpc.PeerShardMeta{
+		pieces = append(pieces, rpc.Metadata{
 			Hash:            hex.EncodeToString(hashBytes),
 			Size:            int64(cs.Size()),
 			IsSpecial:       true,

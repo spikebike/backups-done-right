@@ -11,187 +11,290 @@ import (
 	context "context"
 )
 
-type BlobMetadata capnp.Struct
+type TransferMetadata capnp.Struct
 
-// BlobMetadata_TypeID is the unique identifier for the type BlobMetadata.
-const BlobMetadata_TypeID = 0xa14563bf72a123cd
+// TransferMetadata_TypeID is the unique identifier for the type TransferMetadata.
+const TransferMetadata_TypeID = 0xe677448bd0153feb
 
-func NewBlobMetadata(s *capnp.Segment) (BlobMetadata, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
-	return BlobMetadata(st), err
+func NewTransferMetadata(s *capnp.Segment) (TransferMetadata, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
+	return TransferMetadata(st), err
 }
 
-func NewRootBlobMetadata(s *capnp.Segment) (BlobMetadata, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
-	return BlobMetadata(st), err
+func NewRootTransferMetadata(s *capnp.Segment) (TransferMetadata, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
+	return TransferMetadata(st), err
 }
 
-func ReadRootBlobMetadata(msg *capnp.Message) (BlobMetadata, error) {
+func ReadRootTransferMetadata(msg *capnp.Message) (TransferMetadata, error) {
 	root, err := msg.Root()
-	return BlobMetadata(root.Struct()), err
+	return TransferMetadata(root.Struct()), err
 }
 
-func (s BlobMetadata) String() string {
-	str, _ := text.Marshal(0xa14563bf72a123cd, capnp.Struct(s))
+func (s TransferMetadata) String() string {
+	str, _ := text.Marshal(0xe677448bd0153feb, capnp.Struct(s))
 	return str
 }
 
-func (s BlobMetadata) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s TransferMetadata) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BlobMetadata) DecodeFromPtr(p capnp.Ptr) BlobMetadata {
-	return BlobMetadata(capnp.Struct{}.DecodeFromPtr(p))
+func (TransferMetadata) DecodeFromPtr(p capnp.Ptr) TransferMetadata {
+	return TransferMetadata(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BlobMetadata) ToPtr() capnp.Ptr {
+func (s TransferMetadata) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BlobMetadata) IsValid() bool {
+func (s TransferMetadata) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BlobMetadata) Message() *capnp.Message {
+func (s TransferMetadata) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BlobMetadata) Segment() *capnp.Segment {
+func (s TransferMetadata) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BlobMetadata) Checksum() ([]byte, error) {
+func (s TransferMetadata) Checksum() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s BlobMetadata) HasChecksum() bool {
+func (s TransferMetadata) HasChecksum() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BlobMetadata) SetChecksum(v []byte) error {
+func (s TransferMetadata) SetChecksum(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
-func (s BlobMetadata) Size() uint64 {
+func (s TransferMetadata) Size() uint64 {
 	return capnp.Struct(s).Uint64(0)
 }
 
-func (s BlobMetadata) SetSize(v uint64) {
+func (s TransferMetadata) SetSize(v uint64) {
 	capnp.Struct(s).SetUint64(0, v)
 }
 
-func (s BlobMetadata) Special() bool {
-	return capnp.Struct(s).Bit(64)
+func (s TransferMetadata) Type() TransferType {
+	return TransferType(capnp.Struct(s).Uint16(8))
 }
 
-func (s BlobMetadata) SetSpecial(v bool) {
-	capnp.Struct(s).SetBit(64, v)
+func (s TransferMetadata) SetType(v TransferType) {
+	capnp.Struct(s).SetUint16(8, uint16(v))
 }
 
-// BlobMetadata_List is a list of BlobMetadata.
-type BlobMetadata_List = capnp.StructList[BlobMetadata]
-
-// NewBlobMetadata creates a new list of BlobMetadata.
-func NewBlobMetadata_List(s *capnp.Segment, sz int32) (BlobMetadata_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1}, sz)
-	return capnp.StructList[BlobMetadata](l), err
+func (s TransferMetadata) IsSpecial() bool {
+	return capnp.Struct(s).Bit(80)
 }
 
-// BlobMetadata_Future is a wrapper for a BlobMetadata promised by a client call.
-type BlobMetadata_Future struct{ *capnp.Future }
-
-func (f BlobMetadata_Future) Struct() (BlobMetadata, error) {
-	p, err := f.Future.Ptr()
-	return BlobMetadata(p.Struct()), err
+func (s TransferMetadata) SetIsSpecial(v bool) {
+	capnp.Struct(s).SetBit(80, v)
 }
 
-type BlobData capnp.Struct
-
-// BlobData_TypeID is the unique identifier for the type BlobData.
-const BlobData_TypeID = 0x8a704e4e9c94d5a5
-
-func NewBlobData(s *capnp.Segment) (BlobData, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return BlobData(st), err
+func (s TransferMetadata) PieceIndex() uint32 {
+	return capnp.Struct(s).Uint32(12)
 }
 
-func NewRootBlobData(s *capnp.Segment) (BlobData, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
-	return BlobData(st), err
+func (s TransferMetadata) SetPieceIndex(v uint32) {
+	capnp.Struct(s).SetUint32(12, v)
 }
 
-func ReadRootBlobData(msg *capnp.Message) (BlobData, error) {
-	root, err := msg.Root()
-	return BlobData(root.Struct()), err
-}
-
-func (s BlobData) String() string {
-	str, _ := text.Marshal(0x8a704e4e9c94d5a5, capnp.Struct(s))
-	return str
-}
-
-func (s BlobData) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (BlobData) DecodeFromPtr(p capnp.Ptr) BlobData {
-	return BlobData(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s BlobData) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s BlobData) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s BlobData) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s BlobData) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s BlobData) Checksum() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s BlobData) HasChecksum() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BlobData) SetChecksum(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s BlobData) Data() ([]byte, error) {
+func (s TransferMetadata) ParentShardHash() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(1)
 	return []byte(p.Data()), err
 }
 
-func (s BlobData) HasData() bool {
+func (s TransferMetadata) HasParentShardHash() bool {
 	return capnp.Struct(s).HasPtr(1)
 }
 
-func (s BlobData) SetData(v []byte) error {
+func (s TransferMetadata) SetParentShardHash(v []byte) error {
 	return capnp.Struct(s).SetData(1, v)
 }
 
-// BlobData_List is a list of BlobData.
-type BlobData_List = capnp.StructList[BlobData]
-
-// NewBlobData creates a new list of BlobData.
-func NewBlobData_List(s *capnp.Segment, sz int32) (BlobData_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
-	return capnp.StructList[BlobData](l), err
+func (s TransferMetadata) SequenceNumber() uint64 {
+	return capnp.Struct(s).Uint64(16)
 }
 
-// BlobData_Future is a wrapper for a BlobData promised by a client call.
-type BlobData_Future struct{ *capnp.Future }
+func (s TransferMetadata) SetSequenceNumber(v uint64) {
+	capnp.Struct(s).SetUint64(16, v)
+}
 
-func (f BlobData_Future) Struct() (BlobData, error) {
+func (s TransferMetadata) TotalPieces() uint32 {
+	return capnp.Struct(s).Uint32(24)
+}
+
+func (s TransferMetadata) SetTotalPieces(v uint32) {
+	capnp.Struct(s).SetUint32(24, v)
+}
+
+// TransferMetadata_List is a list of TransferMetadata.
+type TransferMetadata_List = capnp.StructList[TransferMetadata]
+
+// NewTransferMetadata creates a new list of TransferMetadata.
+func NewTransferMetadata_List(s *capnp.Segment, sz int32) (TransferMetadata_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2}, sz)
+	return capnp.StructList[TransferMetadata](l), err
+}
+
+// TransferMetadata_Future is a wrapper for a TransferMetadata promised by a client call.
+type TransferMetadata_Future struct{ *capnp.Future }
+
+func (f TransferMetadata_Future) Struct() (TransferMetadata, error) {
 	p, err := f.Future.Ptr()
-	return BlobData(p.Struct()), err
+	return TransferMetadata(p.Struct()), err
+}
+
+type TransferType uint16
+
+// TransferType_TypeID is the unique identifier for the type TransferType.
+const TransferType_TypeID = 0x817b503885e75d7a
+
+// Values of TransferType.
+const (
+	TransferType_clientBlob TransferType = 0
+	TransferType_peerShard  TransferType = 1
+)
+
+// String returns the enum's constant name.
+func (c TransferType) String() string {
+	switch c {
+	case TransferType_clientBlob:
+		return "clientBlob"
+	case TransferType_peerShard:
+		return "peerShard"
+
+	default:
+		return ""
+	}
+}
+
+// TransferTypeFromString returns the enum value with a name,
+// or the zero value if there's no such value.
+func TransferTypeFromString(c string) TransferType {
+	switch c {
+	case "clientBlob":
+		return TransferType_clientBlob
+	case "peerShard":
+		return TransferType_peerShard
+
+	default:
+		return 0
+	}
+}
+
+type TransferType_List = capnp.EnumList[TransferType]
+
+func NewTransferType_List(s *capnp.Segment, sz int32) (TransferType_List, error) {
+	return capnp.NewEnumList[TransferType](s, sz)
+}
+
+type TransferData capnp.Struct
+
+// TransferData_TypeID is the unique identifier for the type TransferData.
+const TransferData_TypeID = 0xdead20e2be5aac66
+
+func NewTransferData(s *capnp.Segment) (TransferData, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return TransferData(st), err
+}
+
+func NewRootTransferData(s *capnp.Segment) (TransferData, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return TransferData(st), err
+}
+
+func ReadRootTransferData(msg *capnp.Message) (TransferData, error) {
+	root, err := msg.Root()
+	return TransferData(root.Struct()), err
+}
+
+func (s TransferData) String() string {
+	str, _ := text.Marshal(0xdead20e2be5aac66, capnp.Struct(s))
+	return str
+}
+
+func (s TransferData) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (TransferData) DecodeFromPtr(p capnp.Ptr) TransferData {
+	return TransferData(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s TransferData) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s TransferData) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s TransferData) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s TransferData) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s TransferData) Meta() (TransferMetadata, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return TransferMetadata(p.Struct()), err
+}
+
+func (s TransferData) HasMeta() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s TransferData) SetMeta(v TransferMetadata) error {
+	return capnp.Struct(s).SetPtr(0, capnp.Struct(v).ToPtr())
+}
+
+// NewMeta sets the meta field to a newly
+// allocated TransferMetadata struct, preferring placement in s's segment.
+func (s TransferData) NewMeta() (TransferMetadata, error) {
+	ss, err := NewTransferMetadata(capnp.Struct(s).Segment())
+	if err != nil {
+		return TransferMetadata{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, capnp.Struct(ss).ToPtr())
+	return ss, err
+}
+
+func (s TransferData) Data() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return []byte(p.Data()), err
+}
+
+func (s TransferData) HasData() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s TransferData) SetData(v []byte) error {
+	return capnp.Struct(s).SetData(1, v)
+}
+
+// TransferData_List is a list of TransferData.
+type TransferData_List = capnp.StructList[TransferData]
+
+// NewTransferData creates a new list of TransferData.
+func NewTransferData_List(s *capnp.Segment, sz int32) (TransferData_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[TransferData](l), err
+}
+
+// TransferData_Future is a wrapper for a TransferData promised by a client call.
+type TransferData_Future struct{ *capnp.Future }
+
+func (f TransferData_Future) Struct() (TransferData, error) {
+	p, err := f.Future.Ptr()
+	return TransferData(p.Struct()), err
+}
+func (p TransferData_Future) Meta() TransferMetadata_Future {
+	return TransferMetadata_Future{Future: p.Future.Field(0, nil)}
 }
 
 type LocalServerStatus capnp.Struct
@@ -705,63 +808,83 @@ type BackupServer capnp.Client
 // BackupServer_TypeID is the unique identifier for the type BackupServer.
 const BackupServer_TypeID = 0xd606e7f1b66afc98
 
-func (c BackupServer) OfferBlobs(ctx context.Context, params func(BackupServer_offerBlobs_Params) error) (BackupServer_offerBlobs_Results_Future, capnp.ReleaseFunc) {
+func (c BackupServer) OfferItems(ctx context.Context, params func(BackupServer_offerItems_Params) error) (BackupServer_offerItems_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      0,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "offerBlobs",
+			MethodName:    "offerItems",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_offerBlobs_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_offerItems_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return BackupServer_offerBlobs_Results_Future{Future: ans.Future()}, release
+	return BackupServer_offerItems_Results_Future{Future: ans.Future()}, release
 
 }
 
-func (c BackupServer) PrepareUploadClient(ctx context.Context, params func(BackupServer_prepareUploadClient_Params) error) (BackupServer_prepareUploadClient_Results_Future, capnp.ReleaseFunc) {
+func (c BackupServer) UploadItems(ctx context.Context, params func(BackupServer_uploadItems_Params) error) (BackupServer_uploadItems_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      1,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "prepareUploadClient",
+			MethodName:    "uploadItems",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_prepareUploadClient_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_uploadItems_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return BackupServer_prepareUploadClient_Results_Future{Future: ans.Future()}, release
+	return BackupServer_uploadItems_Results_Future{Future: ans.Future()}, release
 
 }
 
-func (c BackupServer) ListSpecialBlobs(ctx context.Context, params func(BackupServer_listSpecialBlobs_Params) error) (BackupServer_listSpecialBlobs_Results_Future, capnp.ReleaseFunc) {
+func (c BackupServer) ListSpecialItems(ctx context.Context, params func(BackupServer_listSpecialItems_Params) error) (BackupServer_listSpecialItems_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      2,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "listSpecialBlobs",
+			MethodName:    "listSpecialItems",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_listSpecialBlobs_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_listSpecialItems_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return BackupServer_listSpecialBlobs_Results_Future{Future: ans.Future()}, release
+	return BackupServer_listSpecialItems_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c BackupServer) DownloadItems(ctx context.Context, params func(BackupServer_downloadItems_Params) error) (BackupServer_downloadItems_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd606e7f1b66afc98,
+			MethodID:      3,
+			InterfaceName: "api/schema.capnp:BackupServer",
+			MethodName:    "downloadItems",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_downloadItems_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return BackupServer_downloadItems_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -770,7 +893,7 @@ func (c BackupServer) GetStatus(ctx context.Context, params func(BackupServer_ge
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      3,
+			MethodID:      4,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "getStatus",
 		},
@@ -785,43 +908,43 @@ func (c BackupServer) GetStatus(ctx context.Context, params func(BackupServer_ge
 
 }
 
-func (c BackupServer) DeleteBlobs(ctx context.Context, params func(BackupServer_deleteBlobs_Params) error) (BackupServer_deleteBlobs_Results_Future, capnp.ReleaseFunc) {
-
-	s := capnp.Send{
-		Method: capnp.Method{
-			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      4,
-			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "deleteBlobs",
-		},
-	}
-	if params != nil {
-		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_deleteBlobs_Params(s)) }
-	}
-
-	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return BackupServer_deleteBlobs_Results_Future{Future: ans.Future()}, release
-
-}
-
-func (c BackupServer) ListAllBlobs(ctx context.Context, params func(BackupServer_listAllBlobs_Params) error) (BackupServer_listAllBlobs_Results_Future, capnp.ReleaseFunc) {
+func (c BackupServer) DeleteItems(ctx context.Context, params func(BackupServer_deleteItems_Params) error) (BackupServer_deleteItems_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      5,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "listAllBlobs",
+			MethodName:    "deleteItems",
+		},
+	}
+	if params != nil {
+		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
+		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_deleteItems_Params(s)) }
+	}
+
+	ans, release := capnp.Client(c).SendCall(ctx, s)
+	return BackupServer_deleteItems_Results_Future{Future: ans.Future()}, release
+
+}
+
+func (c BackupServer) ListAllItems(ctx context.Context, params func(BackupServer_listAllItems_Params) error) (BackupServer_listAllItems_Results_Future, capnp.ReleaseFunc) {
+
+	s := capnp.Send{
+		Method: capnp.Method{
+			InterfaceID:   0xd606e7f1b66afc98,
+			MethodID:      6,
+			InterfaceName: "api/schema.capnp:BackupServer",
+			MethodName:    "listAllItems",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_listAllBlobs_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(BackupServer_listAllItems_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return BackupServer_listAllBlobs_Results_Future{Future: ans.Future()}, release
+	return BackupServer_listAllItems_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -830,7 +953,7 @@ func (c BackupServer) AddPeer(ctx context.Context, params func(BackupServer_addP
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      6,
+			MethodID:      7,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addPeer",
 		},
@@ -850,7 +973,7 @@ func (c BackupServer) UpdatePeer(ctx context.Context, params func(BackupServer_u
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      7,
+			MethodID:      8,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updatePeer",
 		},
@@ -870,7 +993,7 @@ func (c BackupServer) ListPeers(ctx context.Context, params func(BackupServer_li
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      8,
+			MethodID:      9,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listPeers",
 		},
@@ -890,7 +1013,7 @@ func (c BackupServer) ListClients(ctx context.Context, params func(BackupServer_
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      9,
+			MethodID:      10,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listClients",
 		},
@@ -910,7 +1033,7 @@ func (c BackupServer) UpdateClient(ctx context.Context, params func(BackupServer
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      10,
+			MethodID:      11,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updateClient",
 		},
@@ -930,7 +1053,7 @@ func (c BackupServer) AddClient(ctx context.Context, params func(BackupServer_ad
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      11,
+			MethodID:      12,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addClient",
 		},
@@ -1018,17 +1141,19 @@ func (c BackupServer) GetFlowLimiter() fc.FlowLimiter {
 
 // A BackupServer_Server is a BackupServer with a local implementation.
 type BackupServer_Server interface {
-	OfferBlobs(context.Context, BackupServer_offerBlobs) error
+	OfferItems(context.Context, BackupServer_offerItems) error
 
-	PrepareUploadClient(context.Context, BackupServer_prepareUploadClient) error
+	UploadItems(context.Context, BackupServer_uploadItems) error
 
-	ListSpecialBlobs(context.Context, BackupServer_listSpecialBlobs) error
+	ListSpecialItems(context.Context, BackupServer_listSpecialItems) error
+
+	DownloadItems(context.Context, BackupServer_downloadItems) error
 
 	GetStatus(context.Context, BackupServer_getStatus) error
 
-	DeleteBlobs(context.Context, BackupServer_deleteBlobs) error
+	DeleteItems(context.Context, BackupServer_deleteItems) error
 
-	ListAllBlobs(context.Context, BackupServer_listAllBlobs) error
+	ListAllItems(context.Context, BackupServer_listAllItems) error
 
 	AddPeer(context.Context, BackupServer_addPeer) error
 
@@ -1059,7 +1184,7 @@ func BackupServer_ServerToClient(s BackupServer_Server) BackupServer {
 // This can be used to create a more complicated Server.
 func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []server.Method {
 	if cap(methods) == 0 {
-		methods = make([]server.Method, 0, 12)
+		methods = make([]server.Method, 0, 13)
 	}
 
 	methods = append(methods, server.Method{
@@ -1067,10 +1192,10 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      0,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "offerBlobs",
+			MethodName:    "offerItems",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.OfferBlobs(ctx, BackupServer_offerBlobs{call})
+			return s.OfferItems(ctx, BackupServer_offerItems{call})
 		},
 	})
 
@@ -1079,10 +1204,10 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      1,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "prepareUploadClient",
+			MethodName:    "uploadItems",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.PrepareUploadClient(ctx, BackupServer_prepareUploadClient{call})
+			return s.UploadItems(ctx, BackupServer_uploadItems{call})
 		},
 	})
 
@@ -1091,10 +1216,10 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      2,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "listSpecialBlobs",
+			MethodName:    "listSpecialItems",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.ListSpecialBlobs(ctx, BackupServer_listSpecialBlobs{call})
+			return s.ListSpecialItems(ctx, BackupServer_listSpecialItems{call})
 		},
 	})
 
@@ -1102,6 +1227,18 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      3,
+			InterfaceName: "api/schema.capnp:BackupServer",
+			MethodName:    "downloadItems",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.DownloadItems(ctx, BackupServer_downloadItems{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd606e7f1b66afc98,
+			MethodID:      4,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "getStatus",
 		},
@@ -1113,24 +1250,12 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      4,
-			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "deleteBlobs",
-		},
-		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.DeleteBlobs(ctx, BackupServer_deleteBlobs{call})
-		},
-	})
-
-	methods = append(methods, server.Method{
-		Method: capnp.Method{
-			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      5,
 			InterfaceName: "api/schema.capnp:BackupServer",
-			MethodName:    "listAllBlobs",
+			MethodName:    "deleteItems",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.ListAllBlobs(ctx, BackupServer_listAllBlobs{call})
+			return s.DeleteItems(ctx, BackupServer_deleteItems{call})
 		},
 	})
 
@@ -1138,6 +1263,18 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
 			MethodID:      6,
+			InterfaceName: "api/schema.capnp:BackupServer",
+			MethodName:    "listAllItems",
+		},
+		Impl: func(ctx context.Context, call *server.Call) error {
+			return s.ListAllItems(ctx, BackupServer_listAllItems{call})
+		},
+	})
+
+	methods = append(methods, server.Method{
+		Method: capnp.Method{
+			InterfaceID:   0xd606e7f1b66afc98,
+			MethodID:      7,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addPeer",
 		},
@@ -1149,7 +1286,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      7,
+			MethodID:      8,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updatePeer",
 		},
@@ -1161,7 +1298,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      8,
+			MethodID:      9,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listPeers",
 		},
@@ -1173,7 +1310,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      9,
+			MethodID:      10,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "listClients",
 		},
@@ -1185,7 +1322,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      10,
+			MethodID:      11,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "updateClient",
 		},
@@ -1197,7 +1334,7 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	methods = append(methods, server.Method{
 		Method: capnp.Method{
 			InterfaceID:   0xd606e7f1b66afc98,
-			MethodID:      11,
+			MethodID:      12,
 			InterfaceName: "api/schema.capnp:BackupServer",
 			MethodName:    "addClient",
 		},
@@ -1209,55 +1346,72 @@ func BackupServer_Methods(methods []server.Method, s BackupServer_Server) []serv
 	return methods
 }
 
-// BackupServer_offerBlobs holds the state for a server call to BackupServer.offerBlobs.
+// BackupServer_offerItems holds the state for a server call to BackupServer.offerItems.
 // See server.Call for documentation.
-type BackupServer_offerBlobs struct {
+type BackupServer_offerItems struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c BackupServer_offerBlobs) Args() BackupServer_offerBlobs_Params {
-	return BackupServer_offerBlobs_Params(c.Call.Args())
+func (c BackupServer_offerItems) Args() BackupServer_offerItems_Params {
+	return BackupServer_offerItems_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c BackupServer_offerBlobs) AllocResults() (BackupServer_offerBlobs_Results, error) {
+func (c BackupServer_offerItems) AllocResults() (BackupServer_offerItems_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_offerBlobs_Results(r), err
+	return BackupServer_offerItems_Results(r), err
 }
 
-// BackupServer_prepareUploadClient holds the state for a server call to BackupServer.prepareUploadClient.
+// BackupServer_uploadItems holds the state for a server call to BackupServer.uploadItems.
 // See server.Call for documentation.
-type BackupServer_prepareUploadClient struct {
+type BackupServer_uploadItems struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c BackupServer_prepareUploadClient) Args() BackupServer_prepareUploadClient_Params {
-	return BackupServer_prepareUploadClient_Params(c.Call.Args())
+func (c BackupServer_uploadItems) Args() BackupServer_uploadItems_Params {
+	return BackupServer_uploadItems_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c BackupServer_prepareUploadClient) AllocResults() (BackupServer_prepareUploadClient_Results, error) {
+func (c BackupServer_uploadItems) AllocResults() (BackupServer_uploadItems_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_prepareUploadClient_Results(r), err
+	return BackupServer_uploadItems_Results(r), err
 }
 
-// BackupServer_listSpecialBlobs holds the state for a server call to BackupServer.listSpecialBlobs.
+// BackupServer_listSpecialItems holds the state for a server call to BackupServer.listSpecialItems.
 // See server.Call for documentation.
-type BackupServer_listSpecialBlobs struct {
+type BackupServer_listSpecialItems struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c BackupServer_listSpecialBlobs) Args() BackupServer_listSpecialBlobs_Params {
-	return BackupServer_listSpecialBlobs_Params(c.Call.Args())
+func (c BackupServer_listSpecialItems) Args() BackupServer_listSpecialItems_Params {
+	return BackupServer_listSpecialItems_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c BackupServer_listSpecialBlobs) AllocResults() (BackupServer_listSpecialBlobs_Results, error) {
+func (c BackupServer_listSpecialItems) AllocResults() (BackupServer_listSpecialItems_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_listSpecialBlobs_Results(r), err
+	return BackupServer_listSpecialItems_Results(r), err
+}
+
+// BackupServer_downloadItems holds the state for a server call to BackupServer.downloadItems.
+// See server.Call for documentation.
+type BackupServer_downloadItems struct {
+	*server.Call
+}
+
+// Args returns the call's arguments.
+func (c BackupServer_downloadItems) Args() BackupServer_downloadItems_Params {
+	return BackupServer_downloadItems_Params(c.Call.Args())
+}
+
+// AllocResults allocates the results struct.
+func (c BackupServer_downloadItems) AllocResults() (BackupServer_downloadItems_Results, error) {
+	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return BackupServer_downloadItems_Results(r), err
 }
 
 // BackupServer_getStatus holds the state for a server call to BackupServer.getStatus.
@@ -1277,38 +1431,38 @@ func (c BackupServer_getStatus) AllocResults() (BackupServer_getStatus_Results, 
 	return BackupServer_getStatus_Results(r), err
 }
 
-// BackupServer_deleteBlobs holds the state for a server call to BackupServer.deleteBlobs.
+// BackupServer_deleteItems holds the state for a server call to BackupServer.deleteItems.
 // See server.Call for documentation.
-type BackupServer_deleteBlobs struct {
+type BackupServer_deleteItems struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c BackupServer_deleteBlobs) Args() BackupServer_deleteBlobs_Params {
-	return BackupServer_deleteBlobs_Params(c.Call.Args())
+func (c BackupServer_deleteItems) Args() BackupServer_deleteItems_Params {
+	return BackupServer_deleteItems_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c BackupServer_deleteBlobs) AllocResults() (BackupServer_deleteBlobs_Results, error) {
+func (c BackupServer_deleteItems) AllocResults() (BackupServer_deleteItems_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_deleteBlobs_Results(r), err
+	return BackupServer_deleteItems_Results(r), err
 }
 
-// BackupServer_listAllBlobs holds the state for a server call to BackupServer.listAllBlobs.
+// BackupServer_listAllItems holds the state for a server call to BackupServer.listAllItems.
 // See server.Call for documentation.
-type BackupServer_listAllBlobs struct {
+type BackupServer_listAllItems struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c BackupServer_listAllBlobs) Args() BackupServer_listAllBlobs_Params {
-	return BackupServer_listAllBlobs_Params(c.Call.Args())
+func (c BackupServer_listAllItems) Args() BackupServer_listAllItems_Params {
+	return BackupServer_listAllItems_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c BackupServer_listAllBlobs) AllocResults() (BackupServer_listAllBlobs_Results, error) {
+func (c BackupServer_listAllItems) AllocResults() (BackupServer_listAllItems_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_listAllBlobs_Results(r), err
+	return BackupServer_listAllItems_Results(r), err
 }
 
 // BackupServer_addPeer holds the state for a server call to BackupServer.addPeer.
@@ -1422,157 +1576,157 @@ func NewBackupServer_List(s *capnp.Segment, sz int32) (BackupServer_List, error)
 	return capnp.CapList[BackupServer](l), err
 }
 
-type BackupServer_offerBlobs_Params capnp.Struct
+type BackupServer_offerItems_Params capnp.Struct
 
-// BackupServer_offerBlobs_Params_TypeID is the unique identifier for the type BackupServer_offerBlobs_Params.
-const BackupServer_offerBlobs_Params_TypeID = 0xd67aca1259c675cf
+// BackupServer_offerItems_Params_TypeID is the unique identifier for the type BackupServer_offerItems_Params.
+const BackupServer_offerItems_Params_TypeID = 0xd67aca1259c675cf
 
-func NewBackupServer_offerBlobs_Params(s *capnp.Segment) (BackupServer_offerBlobs_Params, error) {
+func NewBackupServer_offerItems_Params(s *capnp.Segment) (BackupServer_offerItems_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_offerBlobs_Params(st), err
+	return BackupServer_offerItems_Params(st), err
 }
 
-func NewRootBackupServer_offerBlobs_Params(s *capnp.Segment) (BackupServer_offerBlobs_Params, error) {
+func NewRootBackupServer_offerItems_Params(s *capnp.Segment) (BackupServer_offerItems_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_offerBlobs_Params(st), err
+	return BackupServer_offerItems_Params(st), err
 }
 
-func ReadRootBackupServer_offerBlobs_Params(msg *capnp.Message) (BackupServer_offerBlobs_Params, error) {
+func ReadRootBackupServer_offerItems_Params(msg *capnp.Message) (BackupServer_offerItems_Params, error) {
 	root, err := msg.Root()
-	return BackupServer_offerBlobs_Params(root.Struct()), err
+	return BackupServer_offerItems_Params(root.Struct()), err
 }
 
-func (s BackupServer_offerBlobs_Params) String() string {
+func (s BackupServer_offerItems_Params) String() string {
 	str, _ := text.Marshal(0xd67aca1259c675cf, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_offerBlobs_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_offerItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_offerBlobs_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_offerBlobs_Params {
-	return BackupServer_offerBlobs_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_offerItems_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_offerItems_Params {
+	return BackupServer_offerItems_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_offerBlobs_Params) ToPtr() capnp.Ptr {
+func (s BackupServer_offerItems_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_offerBlobs_Params) IsValid() bool {
+func (s BackupServer_offerItems_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_offerBlobs_Params) Message() *capnp.Message {
+func (s BackupServer_offerItems_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_offerBlobs_Params) Segment() *capnp.Segment {
+func (s BackupServer_offerItems_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BackupServer_offerBlobs_Params) Blobs() (BlobMetadata_List, error) {
+func (s BackupServer_offerItems_Params) Items() (TransferMetadata_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return BlobMetadata_List(p.List()), err
+	return TransferMetadata_List(p.List()), err
 }
 
-func (s BackupServer_offerBlobs_Params) HasBlobs() bool {
+func (s BackupServer_offerItems_Params) HasItems() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_offerBlobs_Params) SetBlobs(v BlobMetadata_List) error {
+func (s BackupServer_offerItems_Params) SetItems(v TransferMetadata_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewBlobs sets the blobs field to a newly
-// allocated BlobMetadata_List, preferring placement in s's segment.
-func (s BackupServer_offerBlobs_Params) NewBlobs(n int32) (BlobMetadata_List, error) {
-	l, err := NewBlobMetadata_List(capnp.Struct(s).Segment(), n)
+// NewItems sets the items field to a newly
+// allocated TransferMetadata_List, preferring placement in s's segment.
+func (s BackupServer_offerItems_Params) NewItems(n int32) (TransferMetadata_List, error) {
+	l, err := NewTransferMetadata_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return BlobMetadata_List{}, err
+		return TransferMetadata_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// BackupServer_offerBlobs_Params_List is a list of BackupServer_offerBlobs_Params.
-type BackupServer_offerBlobs_Params_List = capnp.StructList[BackupServer_offerBlobs_Params]
+// BackupServer_offerItems_Params_List is a list of BackupServer_offerItems_Params.
+type BackupServer_offerItems_Params_List = capnp.StructList[BackupServer_offerItems_Params]
 
-// NewBackupServer_offerBlobs_Params creates a new list of BackupServer_offerBlobs_Params.
-func NewBackupServer_offerBlobs_Params_List(s *capnp.Segment, sz int32) (BackupServer_offerBlobs_Params_List, error) {
+// NewBackupServer_offerItems_Params creates a new list of BackupServer_offerItems_Params.
+func NewBackupServer_offerItems_Params_List(s *capnp.Segment, sz int32) (BackupServer_offerItems_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_offerBlobs_Params](l), err
+	return capnp.StructList[BackupServer_offerItems_Params](l), err
 }
 
-// BackupServer_offerBlobs_Params_Future is a wrapper for a BackupServer_offerBlobs_Params promised by a client call.
-type BackupServer_offerBlobs_Params_Future struct{ *capnp.Future }
+// BackupServer_offerItems_Params_Future is a wrapper for a BackupServer_offerItems_Params promised by a client call.
+type BackupServer_offerItems_Params_Future struct{ *capnp.Future }
 
-func (f BackupServer_offerBlobs_Params_Future) Struct() (BackupServer_offerBlobs_Params, error) {
+func (f BackupServer_offerItems_Params_Future) Struct() (BackupServer_offerItems_Params, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_offerBlobs_Params(p.Struct()), err
+	return BackupServer_offerItems_Params(p.Struct()), err
 }
 
-type BackupServer_offerBlobs_Results capnp.Struct
+type BackupServer_offerItems_Results capnp.Struct
 
-// BackupServer_offerBlobs_Results_TypeID is the unique identifier for the type BackupServer_offerBlobs_Results.
-const BackupServer_offerBlobs_Results_TypeID = 0xe68157020e1f162a
+// BackupServer_offerItems_Results_TypeID is the unique identifier for the type BackupServer_offerItems_Results.
+const BackupServer_offerItems_Results_TypeID = 0xe68157020e1f162a
 
-func NewBackupServer_offerBlobs_Results(s *capnp.Segment) (BackupServer_offerBlobs_Results, error) {
+func NewBackupServer_offerItems_Results(s *capnp.Segment) (BackupServer_offerItems_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_offerBlobs_Results(st), err
+	return BackupServer_offerItems_Results(st), err
 }
 
-func NewRootBackupServer_offerBlobs_Results(s *capnp.Segment) (BackupServer_offerBlobs_Results, error) {
+func NewRootBackupServer_offerItems_Results(s *capnp.Segment) (BackupServer_offerItems_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_offerBlobs_Results(st), err
+	return BackupServer_offerItems_Results(st), err
 }
 
-func ReadRootBackupServer_offerBlobs_Results(msg *capnp.Message) (BackupServer_offerBlobs_Results, error) {
+func ReadRootBackupServer_offerItems_Results(msg *capnp.Message) (BackupServer_offerItems_Results, error) {
 	root, err := msg.Root()
-	return BackupServer_offerBlobs_Results(root.Struct()), err
+	return BackupServer_offerItems_Results(root.Struct()), err
 }
 
-func (s BackupServer_offerBlobs_Results) String() string {
+func (s BackupServer_offerItems_Results) String() string {
 	str, _ := text.Marshal(0xe68157020e1f162a, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_offerBlobs_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_offerItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_offerBlobs_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_offerBlobs_Results {
-	return BackupServer_offerBlobs_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_offerItems_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_offerItems_Results {
+	return BackupServer_offerItems_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_offerBlobs_Results) ToPtr() capnp.Ptr {
+func (s BackupServer_offerItems_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_offerBlobs_Results) IsValid() bool {
+func (s BackupServer_offerItems_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_offerBlobs_Results) Message() *capnp.Message {
+func (s BackupServer_offerItems_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_offerBlobs_Results) Segment() *capnp.Segment {
+func (s BackupServer_offerItems_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BackupServer_offerBlobs_Results) NeededIndices() (capnp.UInt32List, error) {
+func (s BackupServer_offerItems_Results) NeededIndices() (capnp.UInt32List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return capnp.UInt32List(p.List()), err
 }
 
-func (s BackupServer_offerBlobs_Results) HasNeededIndices() bool {
+func (s BackupServer_offerItems_Results) HasNeededIndices() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_offerBlobs_Results) SetNeededIndices(v capnp.UInt32List) error {
+func (s BackupServer_offerItems_Results) SetNeededIndices(v capnp.UInt32List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewNeededIndices sets the neededIndices field to a newly
 // allocated capnp.UInt32List, preferring placement in s's segment.
-func (s BackupServer_offerBlobs_Results) NewNeededIndices(n int32) (capnp.UInt32List, error) {
+func (s BackupServer_offerItems_Results) NewNeededIndices(n int32) (capnp.UInt32List, error) {
 	l, err := capnp.NewUInt32List(capnp.Struct(s).Segment(), n)
 	if err != nil {
 		return capnp.UInt32List{}, err
@@ -1581,358 +1735,557 @@ func (s BackupServer_offerBlobs_Results) NewNeededIndices(n int32) (capnp.UInt32
 	return l, err
 }
 
-// BackupServer_offerBlobs_Results_List is a list of BackupServer_offerBlobs_Results.
-type BackupServer_offerBlobs_Results_List = capnp.StructList[BackupServer_offerBlobs_Results]
+// BackupServer_offerItems_Results_List is a list of BackupServer_offerItems_Results.
+type BackupServer_offerItems_Results_List = capnp.StructList[BackupServer_offerItems_Results]
 
-// NewBackupServer_offerBlobs_Results creates a new list of BackupServer_offerBlobs_Results.
-func NewBackupServer_offerBlobs_Results_List(s *capnp.Segment, sz int32) (BackupServer_offerBlobs_Results_List, error) {
+// NewBackupServer_offerItems_Results creates a new list of BackupServer_offerItems_Results.
+func NewBackupServer_offerItems_Results_List(s *capnp.Segment, sz int32) (BackupServer_offerItems_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_offerBlobs_Results](l), err
+	return capnp.StructList[BackupServer_offerItems_Results](l), err
 }
 
-// BackupServer_offerBlobs_Results_Future is a wrapper for a BackupServer_offerBlobs_Results promised by a client call.
-type BackupServer_offerBlobs_Results_Future struct{ *capnp.Future }
+// BackupServer_offerItems_Results_Future is a wrapper for a BackupServer_offerItems_Results promised by a client call.
+type BackupServer_offerItems_Results_Future struct{ *capnp.Future }
 
-func (f BackupServer_offerBlobs_Results_Future) Struct() (BackupServer_offerBlobs_Results, error) {
+func (f BackupServer_offerItems_Results_Future) Struct() (BackupServer_offerItems_Results, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_offerBlobs_Results(p.Struct()), err
+	return BackupServer_offerItems_Results(p.Struct()), err
 }
 
-type BackupServer_prepareUploadClient_Params capnp.Struct
+type BackupServer_uploadItems_Params capnp.Struct
 
-// BackupServer_prepareUploadClient_Params_TypeID is the unique identifier for the type BackupServer_prepareUploadClient_Params.
-const BackupServer_prepareUploadClient_Params_TypeID = 0xac7e34ae1fe5a13b
+// BackupServer_uploadItems_Params_TypeID is the unique identifier for the type BackupServer_uploadItems_Params.
+const BackupServer_uploadItems_Params_TypeID = 0xac7e34ae1fe5a13b
 
-func NewBackupServer_prepareUploadClient_Params(s *capnp.Segment) (BackupServer_prepareUploadClient_Params, error) {
+func NewBackupServer_uploadItems_Params(s *capnp.Segment) (BackupServer_uploadItems_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_prepareUploadClient_Params(st), err
+	return BackupServer_uploadItems_Params(st), err
 }
 
-func NewRootBackupServer_prepareUploadClient_Params(s *capnp.Segment) (BackupServer_prepareUploadClient_Params, error) {
+func NewRootBackupServer_uploadItems_Params(s *capnp.Segment) (BackupServer_uploadItems_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_prepareUploadClient_Params(st), err
+	return BackupServer_uploadItems_Params(st), err
 }
 
-func ReadRootBackupServer_prepareUploadClient_Params(msg *capnp.Message) (BackupServer_prepareUploadClient_Params, error) {
+func ReadRootBackupServer_uploadItems_Params(msg *capnp.Message) (BackupServer_uploadItems_Params, error) {
 	root, err := msg.Root()
-	return BackupServer_prepareUploadClient_Params(root.Struct()), err
+	return BackupServer_uploadItems_Params(root.Struct()), err
 }
 
-func (s BackupServer_prepareUploadClient_Params) String() string {
+func (s BackupServer_uploadItems_Params) String() string {
 	str, _ := text.Marshal(0xac7e34ae1fe5a13b, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_prepareUploadClient_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_uploadItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_prepareUploadClient_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_prepareUploadClient_Params {
-	return BackupServer_prepareUploadClient_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_uploadItems_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_uploadItems_Params {
+	return BackupServer_uploadItems_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_prepareUploadClient_Params) ToPtr() capnp.Ptr {
+func (s BackupServer_uploadItems_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_prepareUploadClient_Params) IsValid() bool {
+func (s BackupServer_uploadItems_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_prepareUploadClient_Params) Message() *capnp.Message {
+func (s BackupServer_uploadItems_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_prepareUploadClient_Params) Segment() *capnp.Segment {
+func (s BackupServer_uploadItems_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BackupServer_prepareUploadClient_Params) Blobs() (BlobMetadata_List, error) {
+func (s BackupServer_uploadItems_Params) Items() (TransferData_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return BlobMetadata_List(p.List()), err
+	return TransferData_List(p.List()), err
 }
 
-func (s BackupServer_prepareUploadClient_Params) HasBlobs() bool {
+func (s BackupServer_uploadItems_Params) HasItems() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_prepareUploadClient_Params) SetBlobs(v BlobMetadata_List) error {
+func (s BackupServer_uploadItems_Params) SetItems(v TransferData_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewBlobs sets the blobs field to a newly
-// allocated BlobMetadata_List, preferring placement in s's segment.
-func (s BackupServer_prepareUploadClient_Params) NewBlobs(n int32) (BlobMetadata_List, error) {
-	l, err := NewBlobMetadata_List(capnp.Struct(s).Segment(), n)
+// NewItems sets the items field to a newly
+// allocated TransferData_List, preferring placement in s's segment.
+func (s BackupServer_uploadItems_Params) NewItems(n int32) (TransferData_List, error) {
+	l, err := NewTransferData_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return BlobMetadata_List{}, err
+		return TransferData_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// BackupServer_prepareUploadClient_Params_List is a list of BackupServer_prepareUploadClient_Params.
-type BackupServer_prepareUploadClient_Params_List = capnp.StructList[BackupServer_prepareUploadClient_Params]
+// BackupServer_uploadItems_Params_List is a list of BackupServer_uploadItems_Params.
+type BackupServer_uploadItems_Params_List = capnp.StructList[BackupServer_uploadItems_Params]
 
-// NewBackupServer_prepareUploadClient_Params creates a new list of BackupServer_prepareUploadClient_Params.
-func NewBackupServer_prepareUploadClient_Params_List(s *capnp.Segment, sz int32) (BackupServer_prepareUploadClient_Params_List, error) {
+// NewBackupServer_uploadItems_Params creates a new list of BackupServer_uploadItems_Params.
+func NewBackupServer_uploadItems_Params_List(s *capnp.Segment, sz int32) (BackupServer_uploadItems_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_prepareUploadClient_Params](l), err
+	return capnp.StructList[BackupServer_uploadItems_Params](l), err
 }
 
-// BackupServer_prepareUploadClient_Params_Future is a wrapper for a BackupServer_prepareUploadClient_Params promised by a client call.
-type BackupServer_prepareUploadClient_Params_Future struct{ *capnp.Future }
+// BackupServer_uploadItems_Params_Future is a wrapper for a BackupServer_uploadItems_Params promised by a client call.
+type BackupServer_uploadItems_Params_Future struct{ *capnp.Future }
 
-func (f BackupServer_prepareUploadClient_Params_Future) Struct() (BackupServer_prepareUploadClient_Params, error) {
+func (f BackupServer_uploadItems_Params_Future) Struct() (BackupServer_uploadItems_Params, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_prepareUploadClient_Params(p.Struct()), err
+	return BackupServer_uploadItems_Params(p.Struct()), err
 }
 
-type BackupServer_prepareUploadClient_Results capnp.Struct
+type BackupServer_uploadItems_Results capnp.Struct
 
-// BackupServer_prepareUploadClient_Results_TypeID is the unique identifier for the type BackupServer_prepareUploadClient_Results.
-const BackupServer_prepareUploadClient_Results_TypeID = 0x81057c224d90c916
+// BackupServer_uploadItems_Results_TypeID is the unique identifier for the type BackupServer_uploadItems_Results.
+const BackupServer_uploadItems_Results_TypeID = 0x81057c224d90c916
 
-func NewBackupServer_prepareUploadClient_Results(s *capnp.Segment) (BackupServer_prepareUploadClient_Results, error) {
+func NewBackupServer_uploadItems_Results(s *capnp.Segment) (BackupServer_uploadItems_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_prepareUploadClient_Results(st), err
+	return BackupServer_uploadItems_Results(st), err
 }
 
-func NewRootBackupServer_prepareUploadClient_Results(s *capnp.Segment) (BackupServer_prepareUploadClient_Results, error) {
+func NewRootBackupServer_uploadItems_Results(s *capnp.Segment) (BackupServer_uploadItems_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_prepareUploadClient_Results(st), err
+	return BackupServer_uploadItems_Results(st), err
 }
 
-func ReadRootBackupServer_prepareUploadClient_Results(msg *capnp.Message) (BackupServer_prepareUploadClient_Results, error) {
+func ReadRootBackupServer_uploadItems_Results(msg *capnp.Message) (BackupServer_uploadItems_Results, error) {
 	root, err := msg.Root()
-	return BackupServer_prepareUploadClient_Results(root.Struct()), err
+	return BackupServer_uploadItems_Results(root.Struct()), err
 }
 
-func (s BackupServer_prepareUploadClient_Results) String() string {
+func (s BackupServer_uploadItems_Results) String() string {
 	str, _ := text.Marshal(0x81057c224d90c916, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_prepareUploadClient_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_uploadItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_prepareUploadClient_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_prepareUploadClient_Results {
-	return BackupServer_prepareUploadClient_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_uploadItems_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_uploadItems_Results {
+	return BackupServer_uploadItems_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_prepareUploadClient_Results) ToPtr() capnp.Ptr {
+func (s BackupServer_uploadItems_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_prepareUploadClient_Results) IsValid() bool {
+func (s BackupServer_uploadItems_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_prepareUploadClient_Results) Message() *capnp.Message {
+func (s BackupServer_uploadItems_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_prepareUploadClient_Results) Segment() *capnp.Segment {
+func (s BackupServer_uploadItems_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BackupServer_prepareUploadClient_Results) Success() bool {
+func (s BackupServer_uploadItems_Results) Success() bool {
 	return capnp.Struct(s).Bit(0)
 }
 
-func (s BackupServer_prepareUploadClient_Results) SetSuccess(v bool) {
+func (s BackupServer_uploadItems_Results) SetSuccess(v bool) {
 	capnp.Struct(s).SetBit(0, v)
 }
 
-func (s BackupServer_prepareUploadClient_Results) Error() (string, error) {
+func (s BackupServer_uploadItems_Results) Error() (string, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.Text(), err
 }
 
-func (s BackupServer_prepareUploadClient_Results) HasError() bool {
+func (s BackupServer_uploadItems_Results) HasError() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_prepareUploadClient_Results) ErrorBytes() ([]byte, error) {
+func (s BackupServer_uploadItems_Results) ErrorBytes() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return p.TextBytes(), err
 }
 
-func (s BackupServer_prepareUploadClient_Results) SetError(v string) error {
+func (s BackupServer_uploadItems_Results) SetError(v string) error {
 	return capnp.Struct(s).SetText(0, v)
 }
 
-// BackupServer_prepareUploadClient_Results_List is a list of BackupServer_prepareUploadClient_Results.
-type BackupServer_prepareUploadClient_Results_List = capnp.StructList[BackupServer_prepareUploadClient_Results]
+// BackupServer_uploadItems_Results_List is a list of BackupServer_uploadItems_Results.
+type BackupServer_uploadItems_Results_List = capnp.StructList[BackupServer_uploadItems_Results]
 
-// NewBackupServer_prepareUploadClient_Results creates a new list of BackupServer_prepareUploadClient_Results.
-func NewBackupServer_prepareUploadClient_Results_List(s *capnp.Segment, sz int32) (BackupServer_prepareUploadClient_Results_List, error) {
+// NewBackupServer_uploadItems_Results creates a new list of BackupServer_uploadItems_Results.
+func NewBackupServer_uploadItems_Results_List(s *capnp.Segment, sz int32) (BackupServer_uploadItems_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_prepareUploadClient_Results](l), err
+	return capnp.StructList[BackupServer_uploadItems_Results](l), err
 }
 
-// BackupServer_prepareUploadClient_Results_Future is a wrapper for a BackupServer_prepareUploadClient_Results promised by a client call.
-type BackupServer_prepareUploadClient_Results_Future struct{ *capnp.Future }
+// BackupServer_uploadItems_Results_Future is a wrapper for a BackupServer_uploadItems_Results promised by a client call.
+type BackupServer_uploadItems_Results_Future struct{ *capnp.Future }
 
-func (f BackupServer_prepareUploadClient_Results_Future) Struct() (BackupServer_prepareUploadClient_Results, error) {
+func (f BackupServer_uploadItems_Results_Future) Struct() (BackupServer_uploadItems_Results, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_prepareUploadClient_Results(p.Struct()), err
+	return BackupServer_uploadItems_Results(p.Struct()), err
 }
 
-type BackupServer_listSpecialBlobs_Params capnp.Struct
+type BackupServer_listSpecialItems_Params capnp.Struct
 
-// BackupServer_listSpecialBlobs_Params_TypeID is the unique identifier for the type BackupServer_listSpecialBlobs_Params.
-const BackupServer_listSpecialBlobs_Params_TypeID = 0xefc8dce3c25753f0
+// BackupServer_listSpecialItems_Params_TypeID is the unique identifier for the type BackupServer_listSpecialItems_Params.
+const BackupServer_listSpecialItems_Params_TypeID = 0xefc8dce3c25753f0
 
-func NewBackupServer_listSpecialBlobs_Params(s *capnp.Segment) (BackupServer_listSpecialBlobs_Params, error) {
+func NewBackupServer_listSpecialItems_Params(s *capnp.Segment) (BackupServer_listSpecialItems_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return BackupServer_listSpecialBlobs_Params(st), err
+	return BackupServer_listSpecialItems_Params(st), err
 }
 
-func NewRootBackupServer_listSpecialBlobs_Params(s *capnp.Segment) (BackupServer_listSpecialBlobs_Params, error) {
+func NewRootBackupServer_listSpecialItems_Params(s *capnp.Segment) (BackupServer_listSpecialItems_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return BackupServer_listSpecialBlobs_Params(st), err
+	return BackupServer_listSpecialItems_Params(st), err
 }
 
-func ReadRootBackupServer_listSpecialBlobs_Params(msg *capnp.Message) (BackupServer_listSpecialBlobs_Params, error) {
+func ReadRootBackupServer_listSpecialItems_Params(msg *capnp.Message) (BackupServer_listSpecialItems_Params, error) {
 	root, err := msg.Root()
-	return BackupServer_listSpecialBlobs_Params(root.Struct()), err
+	return BackupServer_listSpecialItems_Params(root.Struct()), err
 }
 
-func (s BackupServer_listSpecialBlobs_Params) String() string {
+func (s BackupServer_listSpecialItems_Params) String() string {
 	str, _ := text.Marshal(0xefc8dce3c25753f0, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_listSpecialBlobs_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_listSpecialItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_listSpecialBlobs_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_listSpecialBlobs_Params {
-	return BackupServer_listSpecialBlobs_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_listSpecialItems_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_listSpecialItems_Params {
+	return BackupServer_listSpecialItems_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_listSpecialBlobs_Params) ToPtr() capnp.Ptr {
+func (s BackupServer_listSpecialItems_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_listSpecialBlobs_Params) IsValid() bool {
+func (s BackupServer_listSpecialItems_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_listSpecialBlobs_Params) Message() *capnp.Message {
+func (s BackupServer_listSpecialItems_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_listSpecialBlobs_Params) Segment() *capnp.Segment {
+func (s BackupServer_listSpecialItems_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
 
-// BackupServer_listSpecialBlobs_Params_List is a list of BackupServer_listSpecialBlobs_Params.
-type BackupServer_listSpecialBlobs_Params_List = capnp.StructList[BackupServer_listSpecialBlobs_Params]
+// BackupServer_listSpecialItems_Params_List is a list of BackupServer_listSpecialItems_Params.
+type BackupServer_listSpecialItems_Params_List = capnp.StructList[BackupServer_listSpecialItems_Params]
 
-// NewBackupServer_listSpecialBlobs_Params creates a new list of BackupServer_listSpecialBlobs_Params.
-func NewBackupServer_listSpecialBlobs_Params_List(s *capnp.Segment, sz int32) (BackupServer_listSpecialBlobs_Params_List, error) {
+// NewBackupServer_listSpecialItems_Params creates a new list of BackupServer_listSpecialItems_Params.
+func NewBackupServer_listSpecialItems_Params_List(s *capnp.Segment, sz int32) (BackupServer_listSpecialItems_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[BackupServer_listSpecialBlobs_Params](l), err
+	return capnp.StructList[BackupServer_listSpecialItems_Params](l), err
 }
 
-// BackupServer_listSpecialBlobs_Params_Future is a wrapper for a BackupServer_listSpecialBlobs_Params promised by a client call.
-type BackupServer_listSpecialBlobs_Params_Future struct{ *capnp.Future }
+// BackupServer_listSpecialItems_Params_Future is a wrapper for a BackupServer_listSpecialItems_Params promised by a client call.
+type BackupServer_listSpecialItems_Params_Future struct{ *capnp.Future }
 
-func (f BackupServer_listSpecialBlobs_Params_Future) Struct() (BackupServer_listSpecialBlobs_Params, error) {
+func (f BackupServer_listSpecialItems_Params_Future) Struct() (BackupServer_listSpecialItems_Params, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_listSpecialBlobs_Params(p.Struct()), err
+	return BackupServer_listSpecialItems_Params(p.Struct()), err
 }
 
-type BackupServer_listSpecialBlobs_Results capnp.Struct
+type BackupServer_listSpecialItems_Results capnp.Struct
 
-// BackupServer_listSpecialBlobs_Results_TypeID is the unique identifier for the type BackupServer_listSpecialBlobs_Results.
-const BackupServer_listSpecialBlobs_Results_TypeID = 0xbd5a9d53b241a36b
+// BackupServer_listSpecialItems_Results_TypeID is the unique identifier for the type BackupServer_listSpecialItems_Results.
+const BackupServer_listSpecialItems_Results_TypeID = 0xbd5a9d53b241a36b
 
-func NewBackupServer_listSpecialBlobs_Results(s *capnp.Segment) (BackupServer_listSpecialBlobs_Results, error) {
+func NewBackupServer_listSpecialItems_Results(s *capnp.Segment) (BackupServer_listSpecialItems_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_listSpecialBlobs_Results(st), err
+	return BackupServer_listSpecialItems_Results(st), err
 }
 
-func NewRootBackupServer_listSpecialBlobs_Results(s *capnp.Segment) (BackupServer_listSpecialBlobs_Results, error) {
+func NewRootBackupServer_listSpecialItems_Results(s *capnp.Segment) (BackupServer_listSpecialItems_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_listSpecialBlobs_Results(st), err
+	return BackupServer_listSpecialItems_Results(st), err
 }
 
-func ReadRootBackupServer_listSpecialBlobs_Results(msg *capnp.Message) (BackupServer_listSpecialBlobs_Results, error) {
+func ReadRootBackupServer_listSpecialItems_Results(msg *capnp.Message) (BackupServer_listSpecialItems_Results, error) {
 	root, err := msg.Root()
-	return BackupServer_listSpecialBlobs_Results(root.Struct()), err
+	return BackupServer_listSpecialItems_Results(root.Struct()), err
 }
 
-func (s BackupServer_listSpecialBlobs_Results) String() string {
+func (s BackupServer_listSpecialItems_Results) String() string {
 	str, _ := text.Marshal(0xbd5a9d53b241a36b, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_listSpecialBlobs_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_listSpecialItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_listSpecialBlobs_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_listSpecialBlobs_Results {
-	return BackupServer_listSpecialBlobs_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_listSpecialItems_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_listSpecialItems_Results {
+	return BackupServer_listSpecialItems_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_listSpecialBlobs_Results) ToPtr() capnp.Ptr {
+func (s BackupServer_listSpecialItems_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_listSpecialBlobs_Results) IsValid() bool {
+func (s BackupServer_listSpecialItems_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_listSpecialBlobs_Results) Message() *capnp.Message {
+func (s BackupServer_listSpecialItems_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_listSpecialBlobs_Results) Segment() *capnp.Segment {
+func (s BackupServer_listSpecialItems_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s BackupServer_listSpecialBlobs_Results) SpecialBlobs() (BlobMetadata_List, error) {
+func (s BackupServer_listSpecialItems_Results) Items() (TransferMetadata_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return BlobMetadata_List(p.List()), err
+	return TransferMetadata_List(p.List()), err
 }
 
-func (s BackupServer_listSpecialBlobs_Results) HasSpecialBlobs() bool {
+func (s BackupServer_listSpecialItems_Results) HasItems() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_listSpecialBlobs_Results) SetSpecialBlobs(v BlobMetadata_List) error {
+func (s BackupServer_listSpecialItems_Results) SetItems(v TransferMetadata_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewSpecialBlobs sets the specialBlobs field to a newly
-// allocated BlobMetadata_List, preferring placement in s's segment.
-func (s BackupServer_listSpecialBlobs_Results) NewSpecialBlobs(n int32) (BlobMetadata_List, error) {
-	l, err := NewBlobMetadata_List(capnp.Struct(s).Segment(), n)
+// NewItems sets the items field to a newly
+// allocated TransferMetadata_List, preferring placement in s's segment.
+func (s BackupServer_listSpecialItems_Results) NewItems(n int32) (TransferMetadata_List, error) {
+	l, err := NewTransferMetadata_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return BlobMetadata_List{}, err
+		return TransferMetadata_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// BackupServer_listSpecialBlobs_Results_List is a list of BackupServer_listSpecialBlobs_Results.
-type BackupServer_listSpecialBlobs_Results_List = capnp.StructList[BackupServer_listSpecialBlobs_Results]
+// BackupServer_listSpecialItems_Results_List is a list of BackupServer_listSpecialItems_Results.
+type BackupServer_listSpecialItems_Results_List = capnp.StructList[BackupServer_listSpecialItems_Results]
 
-// NewBackupServer_listSpecialBlobs_Results creates a new list of BackupServer_listSpecialBlobs_Results.
-func NewBackupServer_listSpecialBlobs_Results_List(s *capnp.Segment, sz int32) (BackupServer_listSpecialBlobs_Results_List, error) {
+// NewBackupServer_listSpecialItems_Results creates a new list of BackupServer_listSpecialItems_Results.
+func NewBackupServer_listSpecialItems_Results_List(s *capnp.Segment, sz int32) (BackupServer_listSpecialItems_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_listSpecialBlobs_Results](l), err
+	return capnp.StructList[BackupServer_listSpecialItems_Results](l), err
 }
 
-// BackupServer_listSpecialBlobs_Results_Future is a wrapper for a BackupServer_listSpecialBlobs_Results promised by a client call.
-type BackupServer_listSpecialBlobs_Results_Future struct{ *capnp.Future }
+// BackupServer_listSpecialItems_Results_Future is a wrapper for a BackupServer_listSpecialItems_Results promised by a client call.
+type BackupServer_listSpecialItems_Results_Future struct{ *capnp.Future }
 
-func (f BackupServer_listSpecialBlobs_Results_Future) Struct() (BackupServer_listSpecialBlobs_Results, error) {
+func (f BackupServer_listSpecialItems_Results_Future) Struct() (BackupServer_listSpecialItems_Results, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_listSpecialBlobs_Results(p.Struct()), err
+	return BackupServer_listSpecialItems_Results(p.Struct()), err
+}
+
+type BackupServer_downloadItems_Params capnp.Struct
+
+// BackupServer_downloadItems_Params_TypeID is the unique identifier for the type BackupServer_downloadItems_Params.
+const BackupServer_downloadItems_Params_TypeID = 0xe80d978164354d81
+
+func NewBackupServer_downloadItems_Params(s *capnp.Segment) (BackupServer_downloadItems_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return BackupServer_downloadItems_Params(st), err
+}
+
+func NewRootBackupServer_downloadItems_Params(s *capnp.Segment) (BackupServer_downloadItems_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return BackupServer_downloadItems_Params(st), err
+}
+
+func ReadRootBackupServer_downloadItems_Params(msg *capnp.Message) (BackupServer_downloadItems_Params, error) {
+	root, err := msg.Root()
+	return BackupServer_downloadItems_Params(root.Struct()), err
+}
+
+func (s BackupServer_downloadItems_Params) String() string {
+	str, _ := text.Marshal(0xe80d978164354d81, capnp.Struct(s))
+	return str
+}
+
+func (s BackupServer_downloadItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (BackupServer_downloadItems_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_downloadItems_Params {
+	return BackupServer_downloadItems_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s BackupServer_downloadItems_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s BackupServer_downloadItems_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s BackupServer_downloadItems_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s BackupServer_downloadItems_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s BackupServer_downloadItems_Params) Checksums() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return capnp.DataList(p.List()), err
+}
+
+func (s BackupServer_downloadItems_Params) HasChecksums() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s BackupServer_downloadItems_Params) SetChecksums(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewChecksums sets the checksums field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s BackupServer_downloadItems_Params) NewChecksums(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+
+// BackupServer_downloadItems_Params_List is a list of BackupServer_downloadItems_Params.
+type BackupServer_downloadItems_Params_List = capnp.StructList[BackupServer_downloadItems_Params]
+
+// NewBackupServer_downloadItems_Params creates a new list of BackupServer_downloadItems_Params.
+func NewBackupServer_downloadItems_Params_List(s *capnp.Segment, sz int32) (BackupServer_downloadItems_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	return capnp.StructList[BackupServer_downloadItems_Params](l), err
+}
+
+// BackupServer_downloadItems_Params_Future is a wrapper for a BackupServer_downloadItems_Params promised by a client call.
+type BackupServer_downloadItems_Params_Future struct{ *capnp.Future }
+
+func (f BackupServer_downloadItems_Params_Future) Struct() (BackupServer_downloadItems_Params, error) {
+	p, err := f.Future.Ptr()
+	return BackupServer_downloadItems_Params(p.Struct()), err
+}
+
+type BackupServer_downloadItems_Results capnp.Struct
+
+// BackupServer_downloadItems_Results_TypeID is the unique identifier for the type BackupServer_downloadItems_Results.
+const BackupServer_downloadItems_Results_TypeID = 0xc21d44f68983e24a
+
+func NewBackupServer_downloadItems_Results(s *capnp.Segment) (BackupServer_downloadItems_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return BackupServer_downloadItems_Results(st), err
+}
+
+func NewRootBackupServer_downloadItems_Results(s *capnp.Segment) (BackupServer_downloadItems_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2})
+	return BackupServer_downloadItems_Results(st), err
+}
+
+func ReadRootBackupServer_downloadItems_Results(msg *capnp.Message) (BackupServer_downloadItems_Results, error) {
+	root, err := msg.Root()
+	return BackupServer_downloadItems_Results(root.Struct()), err
+}
+
+func (s BackupServer_downloadItems_Results) String() string {
+	str, _ := text.Marshal(0xc21d44f68983e24a, capnp.Struct(s))
+	return str
+}
+
+func (s BackupServer_downloadItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (BackupServer_downloadItems_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_downloadItems_Results {
+	return BackupServer_downloadItems_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s BackupServer_downloadItems_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s BackupServer_downloadItems_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s BackupServer_downloadItems_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s BackupServer_downloadItems_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s BackupServer_downloadItems_Results) Items() (TransferData_List, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return TransferData_List(p.List()), err
+}
+
+func (s BackupServer_downloadItems_Results) HasItems() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s BackupServer_downloadItems_Results) SetItems(v TransferData_List) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewItems sets the items field to a newly
+// allocated TransferData_List, preferring placement in s's segment.
+func (s BackupServer_downloadItems_Results) NewItems(n int32) (TransferData_List, error) {
+	l, err := NewTransferData_List(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return TransferData_List{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+func (s BackupServer_downloadItems_Results) Missing() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(1)
+	return capnp.DataList(p.List()), err
+}
+
+func (s BackupServer_downloadItems_Results) HasMissing() bool {
+	return capnp.Struct(s).HasPtr(1)
+}
+
+func (s BackupServer_downloadItems_Results) SetMissing(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(1, v.ToPtr())
+}
+
+// NewMissing sets the missing field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s BackupServer_downloadItems_Results) NewMissing(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(1, l.ToPtr())
+	return l, err
+}
+
+// BackupServer_downloadItems_Results_List is a list of BackupServer_downloadItems_Results.
+type BackupServer_downloadItems_Results_List = capnp.StructList[BackupServer_downloadItems_Results]
+
+// NewBackupServer_downloadItems_Results creates a new list of BackupServer_downloadItems_Results.
+func NewBackupServer_downloadItems_Results_List(s *capnp.Segment, sz int32) (BackupServer_downloadItems_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 2}, sz)
+	return capnp.StructList[BackupServer_downloadItems_Results](l), err
+}
+
+// BackupServer_downloadItems_Results_Future is a wrapper for a BackupServer_downloadItems_Results promised by a client call.
+type BackupServer_downloadItems_Results_Future struct{ *capnp.Future }
+
+func (f BackupServer_downloadItems_Results_Future) Struct() (BackupServer_downloadItems_Results, error) {
+	p, err := f.Future.Ptr()
+	return BackupServer_downloadItems_Results(p.Struct()), err
 }
 
 type BackupServer_getStatus_Params capnp.Struct
 
 // BackupServer_getStatus_Params_TypeID is the unique identifier for the type BackupServer_getStatus_Params.
-const BackupServer_getStatus_Params_TypeID = 0xe80d978164354d81
+const BackupServer_getStatus_Params_TypeID = 0x89e9b469c145e92f
 
 func NewBackupServer_getStatus_Params(s *capnp.Segment) (BackupServer_getStatus_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -1950,7 +2303,7 @@ func ReadRootBackupServer_getStatus_Params(msg *capnp.Message) (BackupServer_get
 }
 
 func (s BackupServer_getStatus_Params) String() string {
-	str, _ := text.Marshal(0xe80d978164354d81, capnp.Struct(s))
+	str, _ := text.Marshal(0x89e9b469c145e92f, capnp.Struct(s))
 	return str
 }
 
@@ -1997,7 +2350,7 @@ func (f BackupServer_getStatus_Params_Future) Struct() (BackupServer_getStatus_P
 type BackupServer_getStatus_Results capnp.Struct
 
 // BackupServer_getStatus_Results_TypeID is the unique identifier for the type BackupServer_getStatus_Results.
-const BackupServer_getStatus_Results_TypeID = 0xc21d44f68983e24a
+const BackupServer_getStatus_Results_TypeID = 0xdb80fc19647b06f8
 
 func NewBackupServer_getStatus_Results(s *capnp.Segment) (BackupServer_getStatus_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -2015,7 +2368,7 @@ func ReadRootBackupServer_getStatus_Results(msg *capnp.Message) (BackupServer_ge
 }
 
 func (s BackupServer_getStatus_Results) String() string {
-	str, _ := text.Marshal(0xc21d44f68983e24a, capnp.Struct(s))
+	str, _ := text.Marshal(0xdb80fc19647b06f8, capnp.Struct(s))
 	return str
 }
 
@@ -2085,312 +2438,69 @@ func (p BackupServer_getStatus_Results_Future) Status() LocalServerStatus_Future
 	return LocalServerStatus_Future{Future: p.Future.Field(0, nil)}
 }
 
-type BackupServer_deleteBlobs_Params capnp.Struct
+type BackupServer_deleteItems_Params capnp.Struct
 
-// BackupServer_deleteBlobs_Params_TypeID is the unique identifier for the type BackupServer_deleteBlobs_Params.
-const BackupServer_deleteBlobs_Params_TypeID = 0x89e9b469c145e92f
+// BackupServer_deleteItems_Params_TypeID is the unique identifier for the type BackupServer_deleteItems_Params.
+const BackupServer_deleteItems_Params_TypeID = 0x92b37056794407b7
 
-func NewBackupServer_deleteBlobs_Params(s *capnp.Segment) (BackupServer_deleteBlobs_Params, error) {
+func NewBackupServer_deleteItems_Params(s *capnp.Segment) (BackupServer_deleteItems_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_deleteBlobs_Params(st), err
+	return BackupServer_deleteItems_Params(st), err
 }
 
-func NewRootBackupServer_deleteBlobs_Params(s *capnp.Segment) (BackupServer_deleteBlobs_Params, error) {
+func NewRootBackupServer_deleteItems_Params(s *capnp.Segment) (BackupServer_deleteItems_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_deleteBlobs_Params(st), err
+	return BackupServer_deleteItems_Params(st), err
 }
 
-func ReadRootBackupServer_deleteBlobs_Params(msg *capnp.Message) (BackupServer_deleteBlobs_Params, error) {
+func ReadRootBackupServer_deleteItems_Params(msg *capnp.Message) (BackupServer_deleteItems_Params, error) {
 	root, err := msg.Root()
-	return BackupServer_deleteBlobs_Params(root.Struct()), err
+	return BackupServer_deleteItems_Params(root.Struct()), err
 }
 
-func (s BackupServer_deleteBlobs_Params) String() string {
-	str, _ := text.Marshal(0x89e9b469c145e92f, capnp.Struct(s))
-	return str
-}
-
-func (s BackupServer_deleteBlobs_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (BackupServer_deleteBlobs_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_deleteBlobs_Params {
-	return BackupServer_deleteBlobs_Params(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s BackupServer_deleteBlobs_Params) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s BackupServer_deleteBlobs_Params) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s BackupServer_deleteBlobs_Params) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s BackupServer_deleteBlobs_Params) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s BackupServer_deleteBlobs_Params) Checksums() (capnp.DataList, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return capnp.DataList(p.List()), err
-}
-
-func (s BackupServer_deleteBlobs_Params) HasChecksums() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BackupServer_deleteBlobs_Params) SetChecksums(v capnp.DataList) error {
-	return capnp.Struct(s).SetPtr(0, v.ToPtr())
-}
-
-// NewChecksums sets the checksums field to a newly
-// allocated capnp.DataList, preferring placement in s's segment.
-func (s BackupServer_deleteBlobs_Params) NewChecksums(n int32) (capnp.DataList, error) {
-	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
-	if err != nil {
-		return capnp.DataList{}, err
-	}
-	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
-	return l, err
-}
-
-// BackupServer_deleteBlobs_Params_List is a list of BackupServer_deleteBlobs_Params.
-type BackupServer_deleteBlobs_Params_List = capnp.StructList[BackupServer_deleteBlobs_Params]
-
-// NewBackupServer_deleteBlobs_Params creates a new list of BackupServer_deleteBlobs_Params.
-func NewBackupServer_deleteBlobs_Params_List(s *capnp.Segment, sz int32) (BackupServer_deleteBlobs_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_deleteBlobs_Params](l), err
-}
-
-// BackupServer_deleteBlobs_Params_Future is a wrapper for a BackupServer_deleteBlobs_Params promised by a client call.
-type BackupServer_deleteBlobs_Params_Future struct{ *capnp.Future }
-
-func (f BackupServer_deleteBlobs_Params_Future) Struct() (BackupServer_deleteBlobs_Params, error) {
-	p, err := f.Future.Ptr()
-	return BackupServer_deleteBlobs_Params(p.Struct()), err
-}
-
-type BackupServer_deleteBlobs_Results capnp.Struct
-
-// BackupServer_deleteBlobs_Results_TypeID is the unique identifier for the type BackupServer_deleteBlobs_Results.
-const BackupServer_deleteBlobs_Results_TypeID = 0xdb80fc19647b06f8
-
-func NewBackupServer_deleteBlobs_Results(s *capnp.Segment) (BackupServer_deleteBlobs_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_deleteBlobs_Results(st), err
-}
-
-func NewRootBackupServer_deleteBlobs_Results(s *capnp.Segment) (BackupServer_deleteBlobs_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
-	return BackupServer_deleteBlobs_Results(st), err
-}
-
-func ReadRootBackupServer_deleteBlobs_Results(msg *capnp.Message) (BackupServer_deleteBlobs_Results, error) {
-	root, err := msg.Root()
-	return BackupServer_deleteBlobs_Results(root.Struct()), err
-}
-
-func (s BackupServer_deleteBlobs_Results) String() string {
-	str, _ := text.Marshal(0xdb80fc19647b06f8, capnp.Struct(s))
-	return str
-}
-
-func (s BackupServer_deleteBlobs_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (BackupServer_deleteBlobs_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_deleteBlobs_Results {
-	return BackupServer_deleteBlobs_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s BackupServer_deleteBlobs_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s BackupServer_deleteBlobs_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s BackupServer_deleteBlobs_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s BackupServer_deleteBlobs_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s BackupServer_deleteBlobs_Results) Success() bool {
-	return capnp.Struct(s).Bit(0)
-}
-
-func (s BackupServer_deleteBlobs_Results) SetSuccess(v bool) {
-	capnp.Struct(s).SetBit(0, v)
-}
-
-func (s BackupServer_deleteBlobs_Results) Error() (string, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.Text(), err
-}
-
-func (s BackupServer_deleteBlobs_Results) HasError() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s BackupServer_deleteBlobs_Results) ErrorBytes() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return p.TextBytes(), err
-}
-
-func (s BackupServer_deleteBlobs_Results) SetError(v string) error {
-	return capnp.Struct(s).SetText(0, v)
-}
-
-// BackupServer_deleteBlobs_Results_List is a list of BackupServer_deleteBlobs_Results.
-type BackupServer_deleteBlobs_Results_List = capnp.StructList[BackupServer_deleteBlobs_Results]
-
-// NewBackupServer_deleteBlobs_Results creates a new list of BackupServer_deleteBlobs_Results.
-func NewBackupServer_deleteBlobs_Results_List(s *capnp.Segment, sz int32) (BackupServer_deleteBlobs_Results_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_deleteBlobs_Results](l), err
-}
-
-// BackupServer_deleteBlobs_Results_Future is a wrapper for a BackupServer_deleteBlobs_Results promised by a client call.
-type BackupServer_deleteBlobs_Results_Future struct{ *capnp.Future }
-
-func (f BackupServer_deleteBlobs_Results_Future) Struct() (BackupServer_deleteBlobs_Results, error) {
-	p, err := f.Future.Ptr()
-	return BackupServer_deleteBlobs_Results(p.Struct()), err
-}
-
-type BackupServer_listAllBlobs_Params capnp.Struct
-
-// BackupServer_listAllBlobs_Params_TypeID is the unique identifier for the type BackupServer_listAllBlobs_Params.
-const BackupServer_listAllBlobs_Params_TypeID = 0x92b37056794407b7
-
-func NewBackupServer_listAllBlobs_Params(s *capnp.Segment) (BackupServer_listAllBlobs_Params, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return BackupServer_listAllBlobs_Params(st), err
-}
-
-func NewRootBackupServer_listAllBlobs_Params(s *capnp.Segment) (BackupServer_listAllBlobs_Params, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return BackupServer_listAllBlobs_Params(st), err
-}
-
-func ReadRootBackupServer_listAllBlobs_Params(msg *capnp.Message) (BackupServer_listAllBlobs_Params, error) {
-	root, err := msg.Root()
-	return BackupServer_listAllBlobs_Params(root.Struct()), err
-}
-
-func (s BackupServer_listAllBlobs_Params) String() string {
+func (s BackupServer_deleteItems_Params) String() string {
 	str, _ := text.Marshal(0x92b37056794407b7, capnp.Struct(s))
 	return str
 }
 
-func (s BackupServer_listAllBlobs_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s BackupServer_deleteItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (BackupServer_listAllBlobs_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_listAllBlobs_Params {
-	return BackupServer_listAllBlobs_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (BackupServer_deleteItems_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_deleteItems_Params {
+	return BackupServer_deleteItems_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s BackupServer_listAllBlobs_Params) ToPtr() capnp.Ptr {
+func (s BackupServer_deleteItems_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s BackupServer_listAllBlobs_Params) IsValid() bool {
+func (s BackupServer_deleteItems_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s BackupServer_listAllBlobs_Params) Message() *capnp.Message {
+func (s BackupServer_deleteItems_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s BackupServer_listAllBlobs_Params) Segment() *capnp.Segment {
+func (s BackupServer_deleteItems_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-
-// BackupServer_listAllBlobs_Params_List is a list of BackupServer_listAllBlobs_Params.
-type BackupServer_listAllBlobs_Params_List = capnp.StructList[BackupServer_listAllBlobs_Params]
-
-// NewBackupServer_listAllBlobs_Params creates a new list of BackupServer_listAllBlobs_Params.
-func NewBackupServer_listAllBlobs_Params_List(s *capnp.Segment, sz int32) (BackupServer_listAllBlobs_Params_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[BackupServer_listAllBlobs_Params](l), err
-}
-
-// BackupServer_listAllBlobs_Params_Future is a wrapper for a BackupServer_listAllBlobs_Params promised by a client call.
-type BackupServer_listAllBlobs_Params_Future struct{ *capnp.Future }
-
-func (f BackupServer_listAllBlobs_Params_Future) Struct() (BackupServer_listAllBlobs_Params, error) {
-	p, err := f.Future.Ptr()
-	return BackupServer_listAllBlobs_Params(p.Struct()), err
-}
-
-type BackupServer_listAllBlobs_Results capnp.Struct
-
-// BackupServer_listAllBlobs_Results_TypeID is the unique identifier for the type BackupServer_listAllBlobs_Results.
-const BackupServer_listAllBlobs_Results_TypeID = 0xfbd5cc8e0de9690d
-
-func NewBackupServer_listAllBlobs_Results(s *capnp.Segment) (BackupServer_listAllBlobs_Results, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_listAllBlobs_Results(st), err
-}
-
-func NewRootBackupServer_listAllBlobs_Results(s *capnp.Segment) (BackupServer_listAllBlobs_Results, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return BackupServer_listAllBlobs_Results(st), err
-}
-
-func ReadRootBackupServer_listAllBlobs_Results(msg *capnp.Message) (BackupServer_listAllBlobs_Results, error) {
-	root, err := msg.Root()
-	return BackupServer_listAllBlobs_Results(root.Struct()), err
-}
-
-func (s BackupServer_listAllBlobs_Results) String() string {
-	str, _ := text.Marshal(0xfbd5cc8e0de9690d, capnp.Struct(s))
-	return str
-}
-
-func (s BackupServer_listAllBlobs_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (BackupServer_listAllBlobs_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_listAllBlobs_Results {
-	return BackupServer_listAllBlobs_Results(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s BackupServer_listAllBlobs_Results) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s BackupServer_listAllBlobs_Results) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s BackupServer_listAllBlobs_Results) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s BackupServer_listAllBlobs_Results) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s BackupServer_listAllBlobs_Results) Checksums() (capnp.DataList, error) {
+func (s BackupServer_deleteItems_Params) Checksums() (capnp.DataList, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return capnp.DataList(p.List()), err
 }
 
-func (s BackupServer_listAllBlobs_Results) HasChecksums() bool {
+func (s BackupServer_deleteItems_Params) HasChecksums() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s BackupServer_listAllBlobs_Results) SetChecksums(v capnp.DataList) error {
+func (s BackupServer_deleteItems_Params) SetChecksums(v capnp.DataList) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewChecksums sets the checksums field to a newly
 // allocated capnp.DataList, preferring placement in s's segment.
-func (s BackupServer_listAllBlobs_Results) NewChecksums(n int32) (capnp.DataList, error) {
+func (s BackupServer_deleteItems_Params) NewChecksums(n int32) (capnp.DataList, error) {
 	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
 	if err != nil {
 		return capnp.DataList{}, err
@@ -2399,27 +2509,270 @@ func (s BackupServer_listAllBlobs_Results) NewChecksums(n int32) (capnp.DataList
 	return l, err
 }
 
-// BackupServer_listAllBlobs_Results_List is a list of BackupServer_listAllBlobs_Results.
-type BackupServer_listAllBlobs_Results_List = capnp.StructList[BackupServer_listAllBlobs_Results]
+// BackupServer_deleteItems_Params_List is a list of BackupServer_deleteItems_Params.
+type BackupServer_deleteItems_Params_List = capnp.StructList[BackupServer_deleteItems_Params]
 
-// NewBackupServer_listAllBlobs_Results creates a new list of BackupServer_listAllBlobs_Results.
-func NewBackupServer_listAllBlobs_Results_List(s *capnp.Segment, sz int32) (BackupServer_listAllBlobs_Results_List, error) {
+// NewBackupServer_deleteItems_Params creates a new list of BackupServer_deleteItems_Params.
+func NewBackupServer_deleteItems_Params_List(s *capnp.Segment, sz int32) (BackupServer_deleteItems_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[BackupServer_listAllBlobs_Results](l), err
+	return capnp.StructList[BackupServer_deleteItems_Params](l), err
 }
 
-// BackupServer_listAllBlobs_Results_Future is a wrapper for a BackupServer_listAllBlobs_Results promised by a client call.
-type BackupServer_listAllBlobs_Results_Future struct{ *capnp.Future }
+// BackupServer_deleteItems_Params_Future is a wrapper for a BackupServer_deleteItems_Params promised by a client call.
+type BackupServer_deleteItems_Params_Future struct{ *capnp.Future }
 
-func (f BackupServer_listAllBlobs_Results_Future) Struct() (BackupServer_listAllBlobs_Results, error) {
+func (f BackupServer_deleteItems_Params_Future) Struct() (BackupServer_deleteItems_Params, error) {
 	p, err := f.Future.Ptr()
-	return BackupServer_listAllBlobs_Results(p.Struct()), err
+	return BackupServer_deleteItems_Params(p.Struct()), err
+}
+
+type BackupServer_deleteItems_Results capnp.Struct
+
+// BackupServer_deleteItems_Results_TypeID is the unique identifier for the type BackupServer_deleteItems_Results.
+const BackupServer_deleteItems_Results_TypeID = 0xfbd5cc8e0de9690d
+
+func NewBackupServer_deleteItems_Results(s *capnp.Segment) (BackupServer_deleteItems_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return BackupServer_deleteItems_Results(st), err
+}
+
+func NewRootBackupServer_deleteItems_Results(s *capnp.Segment) (BackupServer_deleteItems_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
+	return BackupServer_deleteItems_Results(st), err
+}
+
+func ReadRootBackupServer_deleteItems_Results(msg *capnp.Message) (BackupServer_deleteItems_Results, error) {
+	root, err := msg.Root()
+	return BackupServer_deleteItems_Results(root.Struct()), err
+}
+
+func (s BackupServer_deleteItems_Results) String() string {
+	str, _ := text.Marshal(0xfbd5cc8e0de9690d, capnp.Struct(s))
+	return str
+}
+
+func (s BackupServer_deleteItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (BackupServer_deleteItems_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_deleteItems_Results {
+	return BackupServer_deleteItems_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s BackupServer_deleteItems_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s BackupServer_deleteItems_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s BackupServer_deleteItems_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s BackupServer_deleteItems_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s BackupServer_deleteItems_Results) Success() bool {
+	return capnp.Struct(s).Bit(0)
+}
+
+func (s BackupServer_deleteItems_Results) SetSuccess(v bool) {
+	capnp.Struct(s).SetBit(0, v)
+}
+
+func (s BackupServer_deleteItems_Results) Error() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s BackupServer_deleteItems_Results) HasError() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s BackupServer_deleteItems_Results) ErrorBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s BackupServer_deleteItems_Results) SetError(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
+// BackupServer_deleteItems_Results_List is a list of BackupServer_deleteItems_Results.
+type BackupServer_deleteItems_Results_List = capnp.StructList[BackupServer_deleteItems_Results]
+
+// NewBackupServer_deleteItems_Results creates a new list of BackupServer_deleteItems_Results.
+func NewBackupServer_deleteItems_Results_List(s *capnp.Segment, sz int32) (BackupServer_deleteItems_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1}, sz)
+	return capnp.StructList[BackupServer_deleteItems_Results](l), err
+}
+
+// BackupServer_deleteItems_Results_Future is a wrapper for a BackupServer_deleteItems_Results promised by a client call.
+type BackupServer_deleteItems_Results_Future struct{ *capnp.Future }
+
+func (f BackupServer_deleteItems_Results_Future) Struct() (BackupServer_deleteItems_Results, error) {
+	p, err := f.Future.Ptr()
+	return BackupServer_deleteItems_Results(p.Struct()), err
+}
+
+type BackupServer_listAllItems_Params capnp.Struct
+
+// BackupServer_listAllItems_Params_TypeID is the unique identifier for the type BackupServer_listAllItems_Params.
+const BackupServer_listAllItems_Params_TypeID = 0x85f244f956c37088
+
+func NewBackupServer_listAllItems_Params(s *capnp.Segment) (BackupServer_listAllItems_Params, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return BackupServer_listAllItems_Params(st), err
+}
+
+func NewRootBackupServer_listAllItems_Params(s *capnp.Segment) (BackupServer_listAllItems_Params, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
+	return BackupServer_listAllItems_Params(st), err
+}
+
+func ReadRootBackupServer_listAllItems_Params(msg *capnp.Message) (BackupServer_listAllItems_Params, error) {
+	root, err := msg.Root()
+	return BackupServer_listAllItems_Params(root.Struct()), err
+}
+
+func (s BackupServer_listAllItems_Params) String() string {
+	str, _ := text.Marshal(0x85f244f956c37088, capnp.Struct(s))
+	return str
+}
+
+func (s BackupServer_listAllItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (BackupServer_listAllItems_Params) DecodeFromPtr(p capnp.Ptr) BackupServer_listAllItems_Params {
+	return BackupServer_listAllItems_Params(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s BackupServer_listAllItems_Params) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s BackupServer_listAllItems_Params) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s BackupServer_listAllItems_Params) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s BackupServer_listAllItems_Params) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+
+// BackupServer_listAllItems_Params_List is a list of BackupServer_listAllItems_Params.
+type BackupServer_listAllItems_Params_List = capnp.StructList[BackupServer_listAllItems_Params]
+
+// NewBackupServer_listAllItems_Params creates a new list of BackupServer_listAllItems_Params.
+func NewBackupServer_listAllItems_Params_List(s *capnp.Segment, sz int32) (BackupServer_listAllItems_Params_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
+	return capnp.StructList[BackupServer_listAllItems_Params](l), err
+}
+
+// BackupServer_listAllItems_Params_Future is a wrapper for a BackupServer_listAllItems_Params promised by a client call.
+type BackupServer_listAllItems_Params_Future struct{ *capnp.Future }
+
+func (f BackupServer_listAllItems_Params_Future) Struct() (BackupServer_listAllItems_Params, error) {
+	p, err := f.Future.Ptr()
+	return BackupServer_listAllItems_Params(p.Struct()), err
+}
+
+type BackupServer_listAllItems_Results capnp.Struct
+
+// BackupServer_listAllItems_Results_TypeID is the unique identifier for the type BackupServer_listAllItems_Results.
+const BackupServer_listAllItems_Results_TypeID = 0xef2931b732b68c87
+
+func NewBackupServer_listAllItems_Results(s *capnp.Segment) (BackupServer_listAllItems_Results, error) {
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return BackupServer_listAllItems_Results(st), err
+}
+
+func NewRootBackupServer_listAllItems_Results(s *capnp.Segment) (BackupServer_listAllItems_Results, error) {
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
+	return BackupServer_listAllItems_Results(st), err
+}
+
+func ReadRootBackupServer_listAllItems_Results(msg *capnp.Message) (BackupServer_listAllItems_Results, error) {
+	root, err := msg.Root()
+	return BackupServer_listAllItems_Results(root.Struct()), err
+}
+
+func (s BackupServer_listAllItems_Results) String() string {
+	str, _ := text.Marshal(0xef2931b732b68c87, capnp.Struct(s))
+	return str
+}
+
+func (s BackupServer_listAllItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+	return capnp.Struct(s).EncodeAsPtr(seg)
+}
+
+func (BackupServer_listAllItems_Results) DecodeFromPtr(p capnp.Ptr) BackupServer_listAllItems_Results {
+	return BackupServer_listAllItems_Results(capnp.Struct{}.DecodeFromPtr(p))
+}
+
+func (s BackupServer_listAllItems_Results) ToPtr() capnp.Ptr {
+	return capnp.Struct(s).ToPtr()
+}
+func (s BackupServer_listAllItems_Results) IsValid() bool {
+	return capnp.Struct(s).IsValid()
+}
+
+func (s BackupServer_listAllItems_Results) Message() *capnp.Message {
+	return capnp.Struct(s).Message()
+}
+
+func (s BackupServer_listAllItems_Results) Segment() *capnp.Segment {
+	return capnp.Struct(s).Segment()
+}
+func (s BackupServer_listAllItems_Results) Checksums() (capnp.DataList, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return capnp.DataList(p.List()), err
+}
+
+func (s BackupServer_listAllItems_Results) HasChecksums() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s BackupServer_listAllItems_Results) SetChecksums(v capnp.DataList) error {
+	return capnp.Struct(s).SetPtr(0, v.ToPtr())
+}
+
+// NewChecksums sets the checksums field to a newly
+// allocated capnp.DataList, preferring placement in s's segment.
+func (s BackupServer_listAllItems_Results) NewChecksums(n int32) (capnp.DataList, error) {
+	l, err := capnp.NewDataList(capnp.Struct(s).Segment(), n)
+	if err != nil {
+		return capnp.DataList{}, err
+	}
+	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
+	return l, err
+}
+
+// BackupServer_listAllItems_Results_List is a list of BackupServer_listAllItems_Results.
+type BackupServer_listAllItems_Results_List = capnp.StructList[BackupServer_listAllItems_Results]
+
+// NewBackupServer_listAllItems_Results creates a new list of BackupServer_listAllItems_Results.
+func NewBackupServer_listAllItems_Results_List(s *capnp.Segment, sz int32) (BackupServer_listAllItems_Results_List, error) {
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
+	return capnp.StructList[BackupServer_listAllItems_Results](l), err
+}
+
+// BackupServer_listAllItems_Results_Future is a wrapper for a BackupServer_listAllItems_Results promised by a client call.
+type BackupServer_listAllItems_Results_Future struct{ *capnp.Future }
+
+func (f BackupServer_listAllItems_Results_Future) Struct() (BackupServer_listAllItems_Results, error) {
+	p, err := f.Future.Ptr()
+	return BackupServer_listAllItems_Results(p.Struct()), err
 }
 
 type BackupServer_addPeer_Params capnp.Struct
 
 // BackupServer_addPeer_Params_TypeID is the unique identifier for the type BackupServer_addPeer_Params.
-const BackupServer_addPeer_Params_TypeID = 0x85f244f956c37088
+const BackupServer_addPeer_Params_TypeID = 0x96a342f9f7a6c766
 
 func NewBackupServer_addPeer_Params(s *capnp.Segment) (BackupServer_addPeer_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -2437,7 +2790,7 @@ func ReadRootBackupServer_addPeer_Params(msg *capnp.Message) (BackupServer_addPe
 }
 
 func (s BackupServer_addPeer_Params) String() string {
-	str, _ := text.Marshal(0x85f244f956c37088, capnp.Struct(s))
+	str, _ := text.Marshal(0x96a342f9f7a6c766, capnp.Struct(s))
 	return str
 }
 
@@ -2501,7 +2854,7 @@ func (f BackupServer_addPeer_Params_Future) Struct() (BackupServer_addPeer_Param
 type BackupServer_addPeer_Results capnp.Struct
 
 // BackupServer_addPeer_Results_TypeID is the unique identifier for the type BackupServer_addPeer_Results.
-const BackupServer_addPeer_Results_TypeID = 0xef2931b732b68c87
+const BackupServer_addPeer_Results_TypeID = 0xc03394397a4f7e9e
 
 func NewBackupServer_addPeer_Results(s *capnp.Segment) (BackupServer_addPeer_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -2519,7 +2872,7 @@ func ReadRootBackupServer_addPeer_Results(msg *capnp.Message) (BackupServer_addP
 }
 
 func (s BackupServer_addPeer_Results) String() string {
-	str, _ := text.Marshal(0xef2931b732b68c87, capnp.Struct(s))
+	str, _ := text.Marshal(0xc03394397a4f7e9e, capnp.Struct(s))
 	return str
 }
 
@@ -2591,7 +2944,7 @@ func (f BackupServer_addPeer_Results_Future) Struct() (BackupServer_addPeer_Resu
 type BackupServer_updatePeer_Params capnp.Struct
 
 // BackupServer_updatePeer_Params_TypeID is the unique identifier for the type BackupServer_updatePeer_Params.
-const BackupServer_updatePeer_Params_TypeID = 0x96a342f9f7a6c766
+const BackupServer_updatePeer_Params_TypeID = 0xaa46602ae1eb5f0b
 
 func NewBackupServer_updatePeer_Params(s *capnp.Segment) (BackupServer_updatePeer_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
@@ -2609,7 +2962,7 @@ func ReadRootBackupServer_updatePeer_Params(msg *capnp.Message) (BackupServer_up
 }
 
 func (s BackupServer_updatePeer_Params) String() string {
-	str, _ := text.Marshal(0x96a342f9f7a6c766, capnp.Struct(s))
+	str, _ := text.Marshal(0xaa46602ae1eb5f0b, capnp.Struct(s))
 	return str
 }
 
@@ -2689,7 +3042,7 @@ func (f BackupServer_updatePeer_Params_Future) Struct() (BackupServer_updatePeer
 type BackupServer_updatePeer_Results capnp.Struct
 
 // BackupServer_updatePeer_Results_TypeID is the unique identifier for the type BackupServer_updatePeer_Results.
-const BackupServer_updatePeer_Results_TypeID = 0xc03394397a4f7e9e
+const BackupServer_updatePeer_Results_TypeID = 0xf7f0b93fc0a3b6b1
 
 func NewBackupServer_updatePeer_Results(s *capnp.Segment) (BackupServer_updatePeer_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -2707,7 +3060,7 @@ func ReadRootBackupServer_updatePeer_Results(msg *capnp.Message) (BackupServer_u
 }
 
 func (s BackupServer_updatePeer_Results) String() string {
-	str, _ := text.Marshal(0xc03394397a4f7e9e, capnp.Struct(s))
+	str, _ := text.Marshal(0xf7f0b93fc0a3b6b1, capnp.Struct(s))
 	return str
 }
 
@@ -2779,7 +3132,7 @@ func (f BackupServer_updatePeer_Results_Future) Struct() (BackupServer_updatePee
 type BackupServer_listPeers_Params capnp.Struct
 
 // BackupServer_listPeers_Params_TypeID is the unique identifier for the type BackupServer_listPeers_Params.
-const BackupServer_listPeers_Params_TypeID = 0xaa46602ae1eb5f0b
+const BackupServer_listPeers_Params_TypeID = 0xd154ab4cddec1ad6
 
 func NewBackupServer_listPeers_Params(s *capnp.Segment) (BackupServer_listPeers_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -2797,7 +3150,7 @@ func ReadRootBackupServer_listPeers_Params(msg *capnp.Message) (BackupServer_lis
 }
 
 func (s BackupServer_listPeers_Params) String() string {
-	str, _ := text.Marshal(0xaa46602ae1eb5f0b, capnp.Struct(s))
+	str, _ := text.Marshal(0xd154ab4cddec1ad6, capnp.Struct(s))
 	return str
 }
 
@@ -2844,7 +3197,7 @@ func (f BackupServer_listPeers_Params_Future) Struct() (BackupServer_listPeers_P
 type BackupServer_listPeers_Results capnp.Struct
 
 // BackupServer_listPeers_Results_TypeID is the unique identifier for the type BackupServer_listPeers_Results.
-const BackupServer_listPeers_Results_TypeID = 0xf7f0b93fc0a3b6b1
+const BackupServer_listPeers_Results_TypeID = 0xc5a328f721ad6e8f
 
 func NewBackupServer_listPeers_Results(s *capnp.Segment) (BackupServer_listPeers_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -2862,7 +3215,7 @@ func ReadRootBackupServer_listPeers_Results(msg *capnp.Message) (BackupServer_li
 }
 
 func (s BackupServer_listPeers_Results) String() string {
-	str, _ := text.Marshal(0xf7f0b93fc0a3b6b1, capnp.Struct(s))
+	str, _ := text.Marshal(0xc5a328f721ad6e8f, capnp.Struct(s))
 	return str
 }
 
@@ -2932,7 +3285,7 @@ func (f BackupServer_listPeers_Results_Future) Struct() (BackupServer_listPeers_
 type BackupServer_listClients_Params capnp.Struct
 
 // BackupServer_listClients_Params_TypeID is the unique identifier for the type BackupServer_listClients_Params.
-const BackupServer_listClients_Params_TypeID = 0xd154ab4cddec1ad6
+const BackupServer_listClients_Params_TypeID = 0xaf34818424bacdc6
 
 func NewBackupServer_listClients_Params(s *capnp.Segment) (BackupServer_listClients_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
@@ -2950,7 +3303,7 @@ func ReadRootBackupServer_listClients_Params(msg *capnp.Message) (BackupServer_l
 }
 
 func (s BackupServer_listClients_Params) String() string {
-	str, _ := text.Marshal(0xd154ab4cddec1ad6, capnp.Struct(s))
+	str, _ := text.Marshal(0xaf34818424bacdc6, capnp.Struct(s))
 	return str
 }
 
@@ -2997,7 +3350,7 @@ func (f BackupServer_listClients_Params_Future) Struct() (BackupServer_listClien
 type BackupServer_listClients_Results capnp.Struct
 
 // BackupServer_listClients_Results_TypeID is the unique identifier for the type BackupServer_listClients_Results.
-const BackupServer_listClients_Results_TypeID = 0xc5a328f721ad6e8f
+const BackupServer_listClients_Results_TypeID = 0xdcf2f519344fafeb
 
 func NewBackupServer_listClients_Results(s *capnp.Segment) (BackupServer_listClients_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
@@ -3015,7 +3368,7 @@ func ReadRootBackupServer_listClients_Results(msg *capnp.Message) (BackupServer_
 }
 
 func (s BackupServer_listClients_Results) String() string {
-	str, _ := text.Marshal(0xc5a328f721ad6e8f, capnp.Struct(s))
+	str, _ := text.Marshal(0xdcf2f519344fafeb, capnp.Struct(s))
 	return str
 }
 
@@ -3085,7 +3438,7 @@ func (f BackupServer_listClients_Results_Future) Struct() (BackupServer_listClie
 type BackupServer_updateClient_Params capnp.Struct
 
 // BackupServer_updateClient_Params_TypeID is the unique identifier for the type BackupServer_updateClient_Params.
-const BackupServer_updateClient_Params_TypeID = 0xaf34818424bacdc6
+const BackupServer_updateClient_Params_TypeID = 0xecf4f71935612610
 
 func NewBackupServer_updateClient_Params(s *capnp.Segment) (BackupServer_updateClient_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 16, PointerCount: 1})
@@ -3103,7 +3456,7 @@ func ReadRootBackupServer_updateClient_Params(msg *capnp.Message) (BackupServer_
 }
 
 func (s BackupServer_updateClient_Params) String() string {
-	str, _ := text.Marshal(0xaf34818424bacdc6, capnp.Struct(s))
+	str, _ := text.Marshal(0xecf4f71935612610, capnp.Struct(s))
 	return str
 }
 
@@ -3183,7 +3536,7 @@ func (f BackupServer_updateClient_Params_Future) Struct() (BackupServer_updateCl
 type BackupServer_updateClient_Results capnp.Struct
 
 // BackupServer_updateClient_Results_TypeID is the unique identifier for the type BackupServer_updateClient_Results.
-const BackupServer_updateClient_Results_TypeID = 0xdcf2f519344fafeb
+const BackupServer_updateClient_Results_TypeID = 0xbab98586a0941e8f
 
 func NewBackupServer_updateClient_Results(s *capnp.Segment) (BackupServer_updateClient_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -3201,7 +3554,7 @@ func ReadRootBackupServer_updateClient_Results(msg *capnp.Message) (BackupServer
 }
 
 func (s BackupServer_updateClient_Results) String() string {
-	str, _ := text.Marshal(0xdcf2f519344fafeb, capnp.Struct(s))
+	str, _ := text.Marshal(0xbab98586a0941e8f, capnp.Struct(s))
 	return str
 }
 
@@ -3273,7 +3626,7 @@ func (f BackupServer_updateClient_Results_Future) Struct() (BackupServer_updateC
 type BackupServer_addClient_Params capnp.Struct
 
 // BackupServer_addClient_Params_TypeID is the unique identifier for the type BackupServer_addClient_Params.
-const BackupServer_addClient_Params_TypeID = 0xecf4f71935612610
+const BackupServer_addClient_Params_TypeID = 0xab8516c2100e3de1
 
 func NewBackupServer_addClient_Params(s *capnp.Segment) (BackupServer_addClient_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 2})
@@ -3291,7 +3644,7 @@ func ReadRootBackupServer_addClient_Params(msg *capnp.Message) (BackupServer_add
 }
 
 func (s BackupServer_addClient_Params) String() string {
-	str, _ := text.Marshal(0xecf4f71935612610, capnp.Struct(s))
+	str, _ := text.Marshal(0xab8516c2100e3de1, capnp.Struct(s))
 	return str
 }
 
@@ -3381,7 +3734,7 @@ func (f BackupServer_addClient_Params_Future) Struct() (BackupServer_addClient_P
 type BackupServer_addClient_Results capnp.Struct
 
 // BackupServer_addClient_Results_TypeID is the unique identifier for the type BackupServer_addClient_Results.
-const BackupServer_addClient_Results_TypeID = 0xbab98586a0941e8f
+const BackupServer_addClient_Results_TypeID = 0xc2050ba289c7cbe0
 
 func NewBackupServer_addClient_Results(s *capnp.Segment) (BackupServer_addClient_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 8, PointerCount: 1})
@@ -3399,7 +3752,7 @@ func ReadRootBackupServer_addClient_Results(msg *capnp.Message) (BackupServer_ad
 }
 
 func (s BackupServer_addClient_Results) String() string {
-	str, _ := text.Marshal(0xbab98586a0941e8f, capnp.Struct(s))
+	str, _ := text.Marshal(0xc2050ba289c7cbe0, capnp.Struct(s))
 	return str
 }
 
@@ -3468,293 +3821,28 @@ func (f BackupServer_addClient_Results_Future) Struct() (BackupServer_addClient_
 	return BackupServer_addClient_Results(p.Struct()), err
 }
 
-type PeerShardMetadata capnp.Struct
-
-// PeerShardMetadata_TypeID is the unique identifier for the type PeerShardMetadata.
-const PeerShardMetadata_TypeID = 0xc67b0c713f48381e
-
-func NewPeerShardMetadata(s *capnp.Segment) (PeerShardMetadata, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
-	return PeerShardMetadata(st), err
-}
-
-func NewRootPeerShardMetadata(s *capnp.Segment) (PeerShardMetadata, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2})
-	return PeerShardMetadata(st), err
-}
-
-func ReadRootPeerShardMetadata(msg *capnp.Message) (PeerShardMetadata, error) {
-	root, err := msg.Root()
-	return PeerShardMetadata(root.Struct()), err
-}
-
-func (s PeerShardMetadata) String() string {
-	str, _ := text.Marshal(0xc67b0c713f48381e, capnp.Struct(s))
-	return str
-}
-
-func (s PeerShardMetadata) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (PeerShardMetadata) DecodeFromPtr(p capnp.Ptr) PeerShardMetadata {
-	return PeerShardMetadata(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s PeerShardMetadata) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s PeerShardMetadata) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s PeerShardMetadata) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s PeerShardMetadata) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s PeerShardMetadata) Checksum() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s PeerShardMetadata) HasChecksum() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s PeerShardMetadata) SetChecksum(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s PeerShardMetadata) Size() uint64 {
-	return capnp.Struct(s).Uint64(0)
-}
-
-func (s PeerShardMetadata) SetSize(v uint64) {
-	capnp.Struct(s).SetUint64(0, v)
-}
-
-func (s PeerShardMetadata) IsSpecial() bool {
-	return capnp.Struct(s).Bit(64)
-}
-
-func (s PeerShardMetadata) SetIsSpecial(v bool) {
-	capnp.Struct(s).SetBit(64, v)
-}
-
-func (s PeerShardMetadata) PieceIndex() uint32 {
-	return capnp.Struct(s).Uint32(12)
-}
-
-func (s PeerShardMetadata) SetPieceIndex(v uint32) {
-	capnp.Struct(s).SetUint32(12, v)
-}
-
-func (s PeerShardMetadata) ParentShardHash() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s PeerShardMetadata) HasParentShardHash() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s PeerShardMetadata) SetParentShardHash(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-func (s PeerShardMetadata) SequenceNumber() uint64 {
-	return capnp.Struct(s).Uint64(16)
-}
-
-func (s PeerShardMetadata) SetSequenceNumber(v uint64) {
-	capnp.Struct(s).SetUint64(16, v)
-}
-
-func (s PeerShardMetadata) TotalPieces() uint32 {
-	return capnp.Struct(s).Uint32(24)
-}
-
-func (s PeerShardMetadata) SetTotalPieces(v uint32) {
-	capnp.Struct(s).SetUint32(24, v)
-}
-
-// PeerShardMetadata_List is a list of PeerShardMetadata.
-type PeerShardMetadata_List = capnp.StructList[PeerShardMetadata]
-
-// NewPeerShardMetadata creates a new list of PeerShardMetadata.
-func NewPeerShardMetadata_List(s *capnp.Segment, sz int32) (PeerShardMetadata_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 2}, sz)
-	return capnp.StructList[PeerShardMetadata](l), err
-}
-
-// PeerShardMetadata_Future is a wrapper for a PeerShardMetadata promised by a client call.
-type PeerShardMetadata_Future struct{ *capnp.Future }
-
-func (f PeerShardMetadata_Future) Struct() (PeerShardMetadata, error) {
-	p, err := f.Future.Ptr()
-	return PeerShardMetadata(p.Struct()), err
-}
-
-type PeerShardData capnp.Struct
-
-// PeerShardData_TypeID is the unique identifier for the type PeerShardData.
-const PeerShardData_TypeID = 0xfd78a48f4ae862c0
-
-func NewPeerShardData(s *capnp.Segment) (PeerShardData, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 3})
-	return PeerShardData(st), err
-}
-
-func NewRootPeerShardData(s *capnp.Segment) (PeerShardData, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 3})
-	return PeerShardData(st), err
-}
-
-func ReadRootPeerShardData(msg *capnp.Message) (PeerShardData, error) {
-	root, err := msg.Root()
-	return PeerShardData(root.Struct()), err
-}
-
-func (s PeerShardData) String() string {
-	str, _ := text.Marshal(0xfd78a48f4ae862c0, capnp.Struct(s))
-	return str
-}
-
-func (s PeerShardData) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
-	return capnp.Struct(s).EncodeAsPtr(seg)
-}
-
-func (PeerShardData) DecodeFromPtr(p capnp.Ptr) PeerShardData {
-	return PeerShardData(capnp.Struct{}.DecodeFromPtr(p))
-}
-
-func (s PeerShardData) ToPtr() capnp.Ptr {
-	return capnp.Struct(s).ToPtr()
-}
-func (s PeerShardData) IsValid() bool {
-	return capnp.Struct(s).IsValid()
-}
-
-func (s PeerShardData) Message() *capnp.Message {
-	return capnp.Struct(s).Message()
-}
-
-func (s PeerShardData) Segment() *capnp.Segment {
-	return capnp.Struct(s).Segment()
-}
-func (s PeerShardData) Checksum() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(0)
-	return []byte(p.Data()), err
-}
-
-func (s PeerShardData) HasChecksum() bool {
-	return capnp.Struct(s).HasPtr(0)
-}
-
-func (s PeerShardData) SetChecksum(v []byte) error {
-	return capnp.Struct(s).SetData(0, v)
-}
-
-func (s PeerShardData) Data() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(1)
-	return []byte(p.Data()), err
-}
-
-func (s PeerShardData) HasData() bool {
-	return capnp.Struct(s).HasPtr(1)
-}
-
-func (s PeerShardData) SetData(v []byte) error {
-	return capnp.Struct(s).SetData(1, v)
-}
-
-func (s PeerShardData) IsSpecial() bool {
-	return capnp.Struct(s).Bit(0)
-}
-
-func (s PeerShardData) SetIsSpecial(v bool) {
-	capnp.Struct(s).SetBit(0, v)
-}
-
-func (s PeerShardData) PieceIndex() uint32 {
-	return capnp.Struct(s).Uint32(4)
-}
-
-func (s PeerShardData) SetPieceIndex(v uint32) {
-	capnp.Struct(s).SetUint32(4, v)
-}
-
-func (s PeerShardData) ParentShardHash() ([]byte, error) {
-	p, err := capnp.Struct(s).Ptr(2)
-	return []byte(p.Data()), err
-}
-
-func (s PeerShardData) HasParentShardHash() bool {
-	return capnp.Struct(s).HasPtr(2)
-}
-
-func (s PeerShardData) SetParentShardHash(v []byte) error {
-	return capnp.Struct(s).SetData(2, v)
-}
-
-func (s PeerShardData) SequenceNumber() uint64 {
-	return capnp.Struct(s).Uint64(8)
-}
-
-func (s PeerShardData) SetSequenceNumber(v uint64) {
-	capnp.Struct(s).SetUint64(8, v)
-}
-
-func (s PeerShardData) TotalPieces() uint32 {
-	return capnp.Struct(s).Uint32(16)
-}
-
-func (s PeerShardData) SetTotalPieces(v uint32) {
-	capnp.Struct(s).SetUint32(16, v)
-}
-
-// PeerShardData_List is a list of PeerShardData.
-type PeerShardData_List = capnp.StructList[PeerShardData]
-
-// NewPeerShardData creates a new list of PeerShardData.
-func NewPeerShardData_List(s *capnp.Segment, sz int32) (PeerShardData_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 3}, sz)
-	return capnp.StructList[PeerShardData](l), err
-}
-
-// PeerShardData_Future is a wrapper for a PeerShardData promised by a client call.
-type PeerShardData_Future struct{ *capnp.Future }
-
-func (f PeerShardData_Future) Struct() (PeerShardData, error) {
-	p, err := f.Future.Ptr()
-	return PeerShardData(p.Struct()), err
-}
-
 type PeerNode capnp.Client
 
 // PeerNode_TypeID is the unique identifier for the type PeerNode.
 const PeerNode_TypeID = 0xfe39e0e15b88669f
 
-func (c PeerNode) OfferShards(ctx context.Context, params func(PeerNode_offerShards_Params) error) (PeerNode_offerShards_Results_Future, capnp.ReleaseFunc) {
+func (c PeerNode) OfferItems(ctx context.Context, params func(PeerNode_offerItems_Params) error) (PeerNode_offerItems_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xfe39e0e15b88669f,
 			MethodID:      0,
 			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "offerShards",
+			MethodName:    "offerItems",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 1}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(PeerNode_offerShards_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(PeerNode_offerItems_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return PeerNode_offerShards_Results_Future{Future: ans.Future()}, release
+	return PeerNode_offerItems_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -3818,23 +3906,23 @@ func (c PeerNode) ReleasePiece(ctx context.Context, params func(PeerNode_release
 
 }
 
-func (c PeerNode) ListSpecialPieces(ctx context.Context, params func(PeerNode_listSpecialPieces_Params) error) (PeerNode_listSpecialPieces_Results_Future, capnp.ReleaseFunc) {
+func (c PeerNode) ListSpecialItems(ctx context.Context, params func(PeerNode_listSpecialItems_Params) error) (PeerNode_listSpecialItems_Results_Future, capnp.ReleaseFunc) {
 
 	s := capnp.Send{
 		Method: capnp.Method{
 			InterfaceID:   0xfe39e0e15b88669f,
 			MethodID:      4,
 			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "listSpecialPieces",
+			MethodName:    "listSpecialItems",
 		},
 	}
 	if params != nil {
 		s.ArgsSize = capnp.ObjectSize{DataSize: 0, PointerCount: 0}
-		s.PlaceArgs = func(s capnp.Struct) error { return params(PeerNode_listSpecialPieces_Params(s)) }
+		s.PlaceArgs = func(s capnp.Struct) error { return params(PeerNode_listSpecialItems_Params(s)) }
 	}
 
 	ans, release := capnp.Client(c).SendCall(ctx, s)
-	return PeerNode_listSpecialPieces_Results_Future{Future: ans.Future()}, release
+	return PeerNode_listSpecialItems_Results_Future{Future: ans.Future()}, release
 
 }
 
@@ -3931,7 +4019,7 @@ func (c PeerNode) GetFlowLimiter() fc.FlowLimiter {
 
 // A PeerNode_Server is a PeerNode with a local implementation.
 type PeerNode_Server interface {
-	OfferShards(context.Context, PeerNode_offerShards) error
+	OfferItems(context.Context, PeerNode_offerItems) error
 
 	PrepareUpload(context.Context, PeerNode_prepareUpload) error
 
@@ -3939,7 +4027,7 @@ type PeerNode_Server interface {
 
 	ReleasePiece(context.Context, PeerNode_releasePiece) error
 
-	ListSpecialPieces(context.Context, PeerNode_listSpecialPieces) error
+	ListSpecialItems(context.Context, PeerNode_listSpecialItems) error
 
 	Announce(context.Context, PeerNode_announce) error
 }
@@ -3968,10 +4056,10 @@ func PeerNode_Methods(methods []server.Method, s PeerNode_Server) []server.Metho
 			InterfaceID:   0xfe39e0e15b88669f,
 			MethodID:      0,
 			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "offerShards",
+			MethodName:    "offerItems",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.OfferShards(ctx, PeerNode_offerShards{call})
+			return s.OfferItems(ctx, PeerNode_offerItems{call})
 		},
 	})
 
@@ -4016,10 +4104,10 @@ func PeerNode_Methods(methods []server.Method, s PeerNode_Server) []server.Metho
 			InterfaceID:   0xfe39e0e15b88669f,
 			MethodID:      4,
 			InterfaceName: "api/schema.capnp:PeerNode",
-			MethodName:    "listSpecialPieces",
+			MethodName:    "listSpecialItems",
 		},
 		Impl: func(ctx context.Context, call *server.Call) error {
-			return s.ListSpecialPieces(ctx, PeerNode_listSpecialPieces{call})
+			return s.ListSpecialItems(ctx, PeerNode_listSpecialItems{call})
 		},
 	})
 
@@ -4038,21 +4126,21 @@ func PeerNode_Methods(methods []server.Method, s PeerNode_Server) []server.Metho
 	return methods
 }
 
-// PeerNode_offerShards holds the state for a server call to PeerNode.offerShards.
+// PeerNode_offerItems holds the state for a server call to PeerNode.offerItems.
 // See server.Call for documentation.
-type PeerNode_offerShards struct {
+type PeerNode_offerItems struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c PeerNode_offerShards) Args() PeerNode_offerShards_Params {
-	return PeerNode_offerShards_Params(c.Call.Args())
+func (c PeerNode_offerItems) Args() PeerNode_offerItems_Params {
+	return PeerNode_offerItems_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c PeerNode_offerShards) AllocResults() (PeerNode_offerShards_Results, error) {
+func (c PeerNode_offerItems) AllocResults() (PeerNode_offerItems_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_offerShards_Results(r), err
+	return PeerNode_offerItems_Results(r), err
 }
 
 // PeerNode_prepareUpload holds the state for a server call to PeerNode.prepareUpload.
@@ -4106,21 +4194,21 @@ func (c PeerNode_releasePiece) AllocResults() (PeerNode_releasePiece_Results, er
 	return PeerNode_releasePiece_Results(r), err
 }
 
-// PeerNode_listSpecialPieces holds the state for a server call to PeerNode.listSpecialPieces.
+// PeerNode_listSpecialItems holds the state for a server call to PeerNode.listSpecialItems.
 // See server.Call for documentation.
-type PeerNode_listSpecialPieces struct {
+type PeerNode_listSpecialItems struct {
 	*server.Call
 }
 
 // Args returns the call's arguments.
-func (c PeerNode_listSpecialPieces) Args() PeerNode_listSpecialPieces_Params {
-	return PeerNode_listSpecialPieces_Params(c.Call.Args())
+func (c PeerNode_listSpecialItems) Args() PeerNode_listSpecialItems_Params {
+	return PeerNode_listSpecialItems_Params(c.Call.Args())
 }
 
 // AllocResults allocates the results struct.
-func (c PeerNode_listSpecialPieces) AllocResults() (PeerNode_listSpecialPieces_Results, error) {
+func (c PeerNode_listSpecialItems) AllocResults() (PeerNode_listSpecialItems_Results, error) {
 	r, err := c.Call.AllocResults(capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_listSpecialPieces_Results(r), err
+	return PeerNode_listSpecialItems_Results(r), err
 }
 
 // PeerNode_announce holds the state for a server call to PeerNode.announce.
@@ -4149,157 +4237,157 @@ func NewPeerNode_List(s *capnp.Segment, sz int32) (PeerNode_List, error) {
 	return capnp.CapList[PeerNode](l), err
 }
 
-type PeerNode_offerShards_Params capnp.Struct
+type PeerNode_offerItems_Params capnp.Struct
 
-// PeerNode_offerShards_Params_TypeID is the unique identifier for the type PeerNode_offerShards_Params.
-const PeerNode_offerShards_Params_TypeID = 0xa411bcda0b0ef877
+// PeerNode_offerItems_Params_TypeID is the unique identifier for the type PeerNode_offerItems_Params.
+const PeerNode_offerItems_Params_TypeID = 0xa411bcda0b0ef877
 
-func NewPeerNode_offerShards_Params(s *capnp.Segment) (PeerNode_offerShards_Params, error) {
+func NewPeerNode_offerItems_Params(s *capnp.Segment) (PeerNode_offerItems_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_offerShards_Params(st), err
+	return PeerNode_offerItems_Params(st), err
 }
 
-func NewRootPeerNode_offerShards_Params(s *capnp.Segment) (PeerNode_offerShards_Params, error) {
+func NewRootPeerNode_offerItems_Params(s *capnp.Segment) (PeerNode_offerItems_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_offerShards_Params(st), err
+	return PeerNode_offerItems_Params(st), err
 }
 
-func ReadRootPeerNode_offerShards_Params(msg *capnp.Message) (PeerNode_offerShards_Params, error) {
+func ReadRootPeerNode_offerItems_Params(msg *capnp.Message) (PeerNode_offerItems_Params, error) {
 	root, err := msg.Root()
-	return PeerNode_offerShards_Params(root.Struct()), err
+	return PeerNode_offerItems_Params(root.Struct()), err
 }
 
-func (s PeerNode_offerShards_Params) String() string {
+func (s PeerNode_offerItems_Params) String() string {
 	str, _ := text.Marshal(0xa411bcda0b0ef877, capnp.Struct(s))
 	return str
 }
 
-func (s PeerNode_offerShards_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s PeerNode_offerItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (PeerNode_offerShards_Params) DecodeFromPtr(p capnp.Ptr) PeerNode_offerShards_Params {
-	return PeerNode_offerShards_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (PeerNode_offerItems_Params) DecodeFromPtr(p capnp.Ptr) PeerNode_offerItems_Params {
+	return PeerNode_offerItems_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s PeerNode_offerShards_Params) ToPtr() capnp.Ptr {
+func (s PeerNode_offerItems_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s PeerNode_offerShards_Params) IsValid() bool {
+func (s PeerNode_offerItems_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s PeerNode_offerShards_Params) Message() *capnp.Message {
+func (s PeerNode_offerItems_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s PeerNode_offerShards_Params) Segment() *capnp.Segment {
+func (s PeerNode_offerItems_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_offerShards_Params) Shards() (PeerShardMetadata_List, error) {
+func (s PeerNode_offerItems_Params) Items() (TransferMetadata_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return PeerShardMetadata_List(p.List()), err
+	return TransferMetadata_List(p.List()), err
 }
 
-func (s PeerNode_offerShards_Params) HasShards() bool {
+func (s PeerNode_offerItems_Params) HasItems() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_offerShards_Params) SetShards(v PeerShardMetadata_List) error {
+func (s PeerNode_offerItems_Params) SetItems(v TransferMetadata_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewShards sets the shards field to a newly
-// allocated PeerShardMetadata_List, preferring placement in s's segment.
-func (s PeerNode_offerShards_Params) NewShards(n int32) (PeerShardMetadata_List, error) {
-	l, err := NewPeerShardMetadata_List(capnp.Struct(s).Segment(), n)
+// NewItems sets the items field to a newly
+// allocated TransferMetadata_List, preferring placement in s's segment.
+func (s PeerNode_offerItems_Params) NewItems(n int32) (TransferMetadata_List, error) {
+	l, err := NewTransferMetadata_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return PeerShardMetadata_List{}, err
+		return TransferMetadata_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// PeerNode_offerShards_Params_List is a list of PeerNode_offerShards_Params.
-type PeerNode_offerShards_Params_List = capnp.StructList[PeerNode_offerShards_Params]
+// PeerNode_offerItems_Params_List is a list of PeerNode_offerItems_Params.
+type PeerNode_offerItems_Params_List = capnp.StructList[PeerNode_offerItems_Params]
 
-// NewPeerNode_offerShards_Params creates a new list of PeerNode_offerShards_Params.
-func NewPeerNode_offerShards_Params_List(s *capnp.Segment, sz int32) (PeerNode_offerShards_Params_List, error) {
+// NewPeerNode_offerItems_Params creates a new list of PeerNode_offerItems_Params.
+func NewPeerNode_offerItems_Params_List(s *capnp.Segment, sz int32) (PeerNode_offerItems_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[PeerNode_offerShards_Params](l), err
+	return capnp.StructList[PeerNode_offerItems_Params](l), err
 }
 
-// PeerNode_offerShards_Params_Future is a wrapper for a PeerNode_offerShards_Params promised by a client call.
-type PeerNode_offerShards_Params_Future struct{ *capnp.Future }
+// PeerNode_offerItems_Params_Future is a wrapper for a PeerNode_offerItems_Params promised by a client call.
+type PeerNode_offerItems_Params_Future struct{ *capnp.Future }
 
-func (f PeerNode_offerShards_Params_Future) Struct() (PeerNode_offerShards_Params, error) {
+func (f PeerNode_offerItems_Params_Future) Struct() (PeerNode_offerItems_Params, error) {
 	p, err := f.Future.Ptr()
-	return PeerNode_offerShards_Params(p.Struct()), err
+	return PeerNode_offerItems_Params(p.Struct()), err
 }
 
-type PeerNode_offerShards_Results capnp.Struct
+type PeerNode_offerItems_Results capnp.Struct
 
-// PeerNode_offerShards_Results_TypeID is the unique identifier for the type PeerNode_offerShards_Results.
-const PeerNode_offerShards_Results_TypeID = 0xddb3b89fc5816a43
+// PeerNode_offerItems_Results_TypeID is the unique identifier for the type PeerNode_offerItems_Results.
+const PeerNode_offerItems_Results_TypeID = 0xddb3b89fc5816a43
 
-func NewPeerNode_offerShards_Results(s *capnp.Segment) (PeerNode_offerShards_Results, error) {
+func NewPeerNode_offerItems_Results(s *capnp.Segment) (PeerNode_offerItems_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_offerShards_Results(st), err
+	return PeerNode_offerItems_Results(st), err
 }
 
-func NewRootPeerNode_offerShards_Results(s *capnp.Segment) (PeerNode_offerShards_Results, error) {
+func NewRootPeerNode_offerItems_Results(s *capnp.Segment) (PeerNode_offerItems_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_offerShards_Results(st), err
+	return PeerNode_offerItems_Results(st), err
 }
 
-func ReadRootPeerNode_offerShards_Results(msg *capnp.Message) (PeerNode_offerShards_Results, error) {
+func ReadRootPeerNode_offerItems_Results(msg *capnp.Message) (PeerNode_offerItems_Results, error) {
 	root, err := msg.Root()
-	return PeerNode_offerShards_Results(root.Struct()), err
+	return PeerNode_offerItems_Results(root.Struct()), err
 }
 
-func (s PeerNode_offerShards_Results) String() string {
+func (s PeerNode_offerItems_Results) String() string {
 	str, _ := text.Marshal(0xddb3b89fc5816a43, capnp.Struct(s))
 	return str
 }
 
-func (s PeerNode_offerShards_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s PeerNode_offerItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (PeerNode_offerShards_Results) DecodeFromPtr(p capnp.Ptr) PeerNode_offerShards_Results {
-	return PeerNode_offerShards_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (PeerNode_offerItems_Results) DecodeFromPtr(p capnp.Ptr) PeerNode_offerItems_Results {
+	return PeerNode_offerItems_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s PeerNode_offerShards_Results) ToPtr() capnp.Ptr {
+func (s PeerNode_offerItems_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s PeerNode_offerShards_Results) IsValid() bool {
+func (s PeerNode_offerItems_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s PeerNode_offerShards_Results) Message() *capnp.Message {
+func (s PeerNode_offerItems_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s PeerNode_offerShards_Results) Segment() *capnp.Segment {
+func (s PeerNode_offerItems_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_offerShards_Results) NeededIndices() (capnp.UInt32List, error) {
+func (s PeerNode_offerItems_Results) NeededIndices() (capnp.UInt32List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return capnp.UInt32List(p.List()), err
 }
 
-func (s PeerNode_offerShards_Results) HasNeededIndices() bool {
+func (s PeerNode_offerItems_Results) HasNeededIndices() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_offerShards_Results) SetNeededIndices(v capnp.UInt32List) error {
+func (s PeerNode_offerItems_Results) SetNeededIndices(v capnp.UInt32List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
 // NewNeededIndices sets the neededIndices field to a newly
 // allocated capnp.UInt32List, preferring placement in s's segment.
-func (s PeerNode_offerShards_Results) NewNeededIndices(n int32) (capnp.UInt32List, error) {
+func (s PeerNode_offerItems_Results) NewNeededIndices(n int32) (capnp.UInt32List, error) {
 	l, err := capnp.NewUInt32List(capnp.Struct(s).Segment(), n)
 	if err != nil {
 		return capnp.UInt32List{}, err
@@ -4308,21 +4396,21 @@ func (s PeerNode_offerShards_Results) NewNeededIndices(n int32) (capnp.UInt32Lis
 	return l, err
 }
 
-// PeerNode_offerShards_Results_List is a list of PeerNode_offerShards_Results.
-type PeerNode_offerShards_Results_List = capnp.StructList[PeerNode_offerShards_Results]
+// PeerNode_offerItems_Results_List is a list of PeerNode_offerItems_Results.
+type PeerNode_offerItems_Results_List = capnp.StructList[PeerNode_offerItems_Results]
 
-// NewPeerNode_offerShards_Results creates a new list of PeerNode_offerShards_Results.
-func NewPeerNode_offerShards_Results_List(s *capnp.Segment, sz int32) (PeerNode_offerShards_Results_List, error) {
+// NewPeerNode_offerItems_Results creates a new list of PeerNode_offerItems_Results.
+func NewPeerNode_offerItems_Results_List(s *capnp.Segment, sz int32) (PeerNode_offerItems_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[PeerNode_offerShards_Results](l), err
+	return capnp.StructList[PeerNode_offerItems_Results](l), err
 }
 
-// PeerNode_offerShards_Results_Future is a wrapper for a PeerNode_offerShards_Results promised by a client call.
-type PeerNode_offerShards_Results_Future struct{ *capnp.Future }
+// PeerNode_offerItems_Results_Future is a wrapper for a PeerNode_offerItems_Results promised by a client call.
+type PeerNode_offerItems_Results_Future struct{ *capnp.Future }
 
-func (f PeerNode_offerShards_Results_Future) Struct() (PeerNode_offerShards_Results, error) {
+func (f PeerNode_offerItems_Results_Future) Struct() (PeerNode_offerItems_Results, error) {
 	p, err := f.Future.Ptr()
-	return PeerNode_offerShards_Results(p.Struct()), err
+	return PeerNode_offerItems_Results(p.Struct()), err
 }
 
 type PeerNode_prepareUpload_Params capnp.Struct
@@ -4372,25 +4460,25 @@ func (s PeerNode_prepareUpload_Params) Message() *capnp.Message {
 func (s PeerNode_prepareUpload_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_prepareUpload_Params) Shards() (PeerShardMetadata_List, error) {
+func (s PeerNode_prepareUpload_Params) Items() (TransferMetadata_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return PeerShardMetadata_List(p.List()), err
+	return TransferMetadata_List(p.List()), err
 }
 
-func (s PeerNode_prepareUpload_Params) HasShards() bool {
+func (s PeerNode_prepareUpload_Params) HasItems() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_prepareUpload_Params) SetShards(v PeerShardMetadata_List) error {
+func (s PeerNode_prepareUpload_Params) SetItems(v TransferMetadata_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewShards sets the shards field to a newly
-// allocated PeerShardMetadata_List, preferring placement in s's segment.
-func (s PeerNode_prepareUpload_Params) NewShards(n int32) (PeerShardMetadata_List, error) {
-	l, err := NewPeerShardMetadata_List(capnp.Struct(s).Segment(), n)
+// NewItems sets the items field to a newly
+// allocated TransferMetadata_List, preferring placement in s's segment.
+func (s PeerNode_prepareUpload_Params) NewItems(n int32) (TransferMetadata_List, error) {
+	l, err := NewTransferMetadata_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return PeerShardMetadata_List{}, err
+		return TransferMetadata_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
@@ -4550,16 +4638,16 @@ func (s PeerNode_challengePiece_Params) Message() *capnp.Message {
 func (s PeerNode_challengePiece_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_challengePiece_Params) ShardChecksum() ([]byte, error) {
+func (s PeerNode_challengePiece_Params) Checksum() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s PeerNode_challengePiece_Params) HasShardChecksum() bool {
+func (s PeerNode_challengePiece_Params) HasChecksum() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_challengePiece_Params) SetShardChecksum(v []byte) error {
+func (s PeerNode_challengePiece_Params) SetChecksum(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
@@ -4712,16 +4800,16 @@ func (s PeerNode_releasePiece_Params) Message() *capnp.Message {
 func (s PeerNode_releasePiece_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_releasePiece_Params) ShardChecksum() ([]byte, error) {
+func (s PeerNode_releasePiece_Params) Checksum() ([]byte, error) {
 	p, err := capnp.Struct(s).Ptr(0)
 	return []byte(p.Data()), err
 }
 
-func (s PeerNode_releasePiece_Params) HasShardChecksum() bool {
+func (s PeerNode_releasePiece_Params) HasChecksum() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_releasePiece_Params) SetShardChecksum(v []byte) error {
+func (s PeerNode_releasePiece_Params) SetChecksum(v []byte) error {
 	return capnp.Struct(s).SetData(0, v)
 }
 
@@ -4832,157 +4920,157 @@ func (f PeerNode_releasePiece_Results_Future) Struct() (PeerNode_releasePiece_Re
 	return PeerNode_releasePiece_Results(p.Struct()), err
 }
 
-type PeerNode_listSpecialPieces_Params capnp.Struct
+type PeerNode_listSpecialItems_Params capnp.Struct
 
-// PeerNode_listSpecialPieces_Params_TypeID is the unique identifier for the type PeerNode_listSpecialPieces_Params.
-const PeerNode_listSpecialPieces_Params_TypeID = 0xb84185b603d81424
+// PeerNode_listSpecialItems_Params_TypeID is the unique identifier for the type PeerNode_listSpecialItems_Params.
+const PeerNode_listSpecialItems_Params_TypeID = 0xb84185b603d81424
 
-func NewPeerNode_listSpecialPieces_Params(s *capnp.Segment) (PeerNode_listSpecialPieces_Params, error) {
+func NewPeerNode_listSpecialItems_Params(s *capnp.Segment) (PeerNode_listSpecialItems_Params, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return PeerNode_listSpecialPieces_Params(st), err
+	return PeerNode_listSpecialItems_Params(st), err
 }
 
-func NewRootPeerNode_listSpecialPieces_Params(s *capnp.Segment) (PeerNode_listSpecialPieces_Params, error) {
+func NewRootPeerNode_listSpecialItems_Params(s *capnp.Segment) (PeerNode_listSpecialItems_Params, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0})
-	return PeerNode_listSpecialPieces_Params(st), err
+	return PeerNode_listSpecialItems_Params(st), err
 }
 
-func ReadRootPeerNode_listSpecialPieces_Params(msg *capnp.Message) (PeerNode_listSpecialPieces_Params, error) {
+func ReadRootPeerNode_listSpecialItems_Params(msg *capnp.Message) (PeerNode_listSpecialItems_Params, error) {
 	root, err := msg.Root()
-	return PeerNode_listSpecialPieces_Params(root.Struct()), err
+	return PeerNode_listSpecialItems_Params(root.Struct()), err
 }
 
-func (s PeerNode_listSpecialPieces_Params) String() string {
+func (s PeerNode_listSpecialItems_Params) String() string {
 	str, _ := text.Marshal(0xb84185b603d81424, capnp.Struct(s))
 	return str
 }
 
-func (s PeerNode_listSpecialPieces_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s PeerNode_listSpecialItems_Params) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (PeerNode_listSpecialPieces_Params) DecodeFromPtr(p capnp.Ptr) PeerNode_listSpecialPieces_Params {
-	return PeerNode_listSpecialPieces_Params(capnp.Struct{}.DecodeFromPtr(p))
+func (PeerNode_listSpecialItems_Params) DecodeFromPtr(p capnp.Ptr) PeerNode_listSpecialItems_Params {
+	return PeerNode_listSpecialItems_Params(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s PeerNode_listSpecialPieces_Params) ToPtr() capnp.Ptr {
+func (s PeerNode_listSpecialItems_Params) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s PeerNode_listSpecialPieces_Params) IsValid() bool {
+func (s PeerNode_listSpecialItems_Params) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s PeerNode_listSpecialPieces_Params) Message() *capnp.Message {
+func (s PeerNode_listSpecialItems_Params) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s PeerNode_listSpecialPieces_Params) Segment() *capnp.Segment {
+func (s PeerNode_listSpecialItems_Params) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
 
-// PeerNode_listSpecialPieces_Params_List is a list of PeerNode_listSpecialPieces_Params.
-type PeerNode_listSpecialPieces_Params_List = capnp.StructList[PeerNode_listSpecialPieces_Params]
+// PeerNode_listSpecialItems_Params_List is a list of PeerNode_listSpecialItems_Params.
+type PeerNode_listSpecialItems_Params_List = capnp.StructList[PeerNode_listSpecialItems_Params]
 
-// NewPeerNode_listSpecialPieces_Params creates a new list of PeerNode_listSpecialPieces_Params.
-func NewPeerNode_listSpecialPieces_Params_List(s *capnp.Segment, sz int32) (PeerNode_listSpecialPieces_Params_List, error) {
+// NewPeerNode_listSpecialItems_Params creates a new list of PeerNode_listSpecialItems_Params.
+func NewPeerNode_listSpecialItems_Params_List(s *capnp.Segment, sz int32) (PeerNode_listSpecialItems_Params_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 0}, sz)
-	return capnp.StructList[PeerNode_listSpecialPieces_Params](l), err
+	return capnp.StructList[PeerNode_listSpecialItems_Params](l), err
 }
 
-// PeerNode_listSpecialPieces_Params_Future is a wrapper for a PeerNode_listSpecialPieces_Params promised by a client call.
-type PeerNode_listSpecialPieces_Params_Future struct{ *capnp.Future }
+// PeerNode_listSpecialItems_Params_Future is a wrapper for a PeerNode_listSpecialItems_Params promised by a client call.
+type PeerNode_listSpecialItems_Params_Future struct{ *capnp.Future }
 
-func (f PeerNode_listSpecialPieces_Params_Future) Struct() (PeerNode_listSpecialPieces_Params, error) {
+func (f PeerNode_listSpecialItems_Params_Future) Struct() (PeerNode_listSpecialItems_Params, error) {
 	p, err := f.Future.Ptr()
-	return PeerNode_listSpecialPieces_Params(p.Struct()), err
+	return PeerNode_listSpecialItems_Params(p.Struct()), err
 }
 
-type PeerNode_listSpecialPieces_Results capnp.Struct
+type PeerNode_listSpecialItems_Results capnp.Struct
 
-// PeerNode_listSpecialPieces_Results_TypeID is the unique identifier for the type PeerNode_listSpecialPieces_Results.
-const PeerNode_listSpecialPieces_Results_TypeID = 0xdd55290ddfaf7157
+// PeerNode_listSpecialItems_Results_TypeID is the unique identifier for the type PeerNode_listSpecialItems_Results.
+const PeerNode_listSpecialItems_Results_TypeID = 0xdd55290ddfaf7157
 
-func NewPeerNode_listSpecialPieces_Results(s *capnp.Segment) (PeerNode_listSpecialPieces_Results, error) {
+func NewPeerNode_listSpecialItems_Results(s *capnp.Segment) (PeerNode_listSpecialItems_Results, error) {
 	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_listSpecialPieces_Results(st), err
+	return PeerNode_listSpecialItems_Results(st), err
 }
 
-func NewRootPeerNode_listSpecialPieces_Results(s *capnp.Segment) (PeerNode_listSpecialPieces_Results, error) {
+func NewRootPeerNode_listSpecialItems_Results(s *capnp.Segment) (PeerNode_listSpecialItems_Results, error) {
 	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1})
-	return PeerNode_listSpecialPieces_Results(st), err
+	return PeerNode_listSpecialItems_Results(st), err
 }
 
-func ReadRootPeerNode_listSpecialPieces_Results(msg *capnp.Message) (PeerNode_listSpecialPieces_Results, error) {
+func ReadRootPeerNode_listSpecialItems_Results(msg *capnp.Message) (PeerNode_listSpecialItems_Results, error) {
 	root, err := msg.Root()
-	return PeerNode_listSpecialPieces_Results(root.Struct()), err
+	return PeerNode_listSpecialItems_Results(root.Struct()), err
 }
 
-func (s PeerNode_listSpecialPieces_Results) String() string {
+func (s PeerNode_listSpecialItems_Results) String() string {
 	str, _ := text.Marshal(0xdd55290ddfaf7157, capnp.Struct(s))
 	return str
 }
 
-func (s PeerNode_listSpecialPieces_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
+func (s PeerNode_listSpecialItems_Results) EncodeAsPtr(seg *capnp.Segment) capnp.Ptr {
 	return capnp.Struct(s).EncodeAsPtr(seg)
 }
 
-func (PeerNode_listSpecialPieces_Results) DecodeFromPtr(p capnp.Ptr) PeerNode_listSpecialPieces_Results {
-	return PeerNode_listSpecialPieces_Results(capnp.Struct{}.DecodeFromPtr(p))
+func (PeerNode_listSpecialItems_Results) DecodeFromPtr(p capnp.Ptr) PeerNode_listSpecialItems_Results {
+	return PeerNode_listSpecialItems_Results(capnp.Struct{}.DecodeFromPtr(p))
 }
 
-func (s PeerNode_listSpecialPieces_Results) ToPtr() capnp.Ptr {
+func (s PeerNode_listSpecialItems_Results) ToPtr() capnp.Ptr {
 	return capnp.Struct(s).ToPtr()
 }
-func (s PeerNode_listSpecialPieces_Results) IsValid() bool {
+func (s PeerNode_listSpecialItems_Results) IsValid() bool {
 	return capnp.Struct(s).IsValid()
 }
 
-func (s PeerNode_listSpecialPieces_Results) Message() *capnp.Message {
+func (s PeerNode_listSpecialItems_Results) Message() *capnp.Message {
 	return capnp.Struct(s).Message()
 }
 
-func (s PeerNode_listSpecialPieces_Results) Segment() *capnp.Segment {
+func (s PeerNode_listSpecialItems_Results) Segment() *capnp.Segment {
 	return capnp.Struct(s).Segment()
 }
-func (s PeerNode_listSpecialPieces_Results) Shards() (PeerShardMetadata_List, error) {
+func (s PeerNode_listSpecialItems_Results) Items() (TransferMetadata_List, error) {
 	p, err := capnp.Struct(s).Ptr(0)
-	return PeerShardMetadata_List(p.List()), err
+	return TransferMetadata_List(p.List()), err
 }
 
-func (s PeerNode_listSpecialPieces_Results) HasShards() bool {
+func (s PeerNode_listSpecialItems_Results) HasItems() bool {
 	return capnp.Struct(s).HasPtr(0)
 }
 
-func (s PeerNode_listSpecialPieces_Results) SetShards(v PeerShardMetadata_List) error {
+func (s PeerNode_listSpecialItems_Results) SetItems(v TransferMetadata_List) error {
 	return capnp.Struct(s).SetPtr(0, v.ToPtr())
 }
 
-// NewShards sets the shards field to a newly
-// allocated PeerShardMetadata_List, preferring placement in s's segment.
-func (s PeerNode_listSpecialPieces_Results) NewShards(n int32) (PeerShardMetadata_List, error) {
-	l, err := NewPeerShardMetadata_List(capnp.Struct(s).Segment(), n)
+// NewItems sets the items field to a newly
+// allocated TransferMetadata_List, preferring placement in s's segment.
+func (s PeerNode_listSpecialItems_Results) NewItems(n int32) (TransferMetadata_List, error) {
+	l, err := NewTransferMetadata_List(capnp.Struct(s).Segment(), n)
 	if err != nil {
-		return PeerShardMetadata_List{}, err
+		return TransferMetadata_List{}, err
 	}
 	err = capnp.Struct(s).SetPtr(0, l.ToPtr())
 	return l, err
 }
 
-// PeerNode_listSpecialPieces_Results_List is a list of PeerNode_listSpecialPieces_Results.
-type PeerNode_listSpecialPieces_Results_List = capnp.StructList[PeerNode_listSpecialPieces_Results]
+// PeerNode_listSpecialItems_Results_List is a list of PeerNode_listSpecialItems_Results.
+type PeerNode_listSpecialItems_Results_List = capnp.StructList[PeerNode_listSpecialItems_Results]
 
-// NewPeerNode_listSpecialPieces_Results creates a new list of PeerNode_listSpecialPieces_Results.
-func NewPeerNode_listSpecialPieces_Results_List(s *capnp.Segment, sz int32) (PeerNode_listSpecialPieces_Results_List, error) {
+// NewPeerNode_listSpecialItems_Results creates a new list of PeerNode_listSpecialItems_Results.
+func NewPeerNode_listSpecialItems_Results_List(s *capnp.Segment, sz int32) (PeerNode_listSpecialItems_Results_List, error) {
 	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 0, PointerCount: 1}, sz)
-	return capnp.StructList[PeerNode_listSpecialPieces_Results](l), err
+	return capnp.StructList[PeerNode_listSpecialItems_Results](l), err
 }
 
-// PeerNode_listSpecialPieces_Results_Future is a wrapper for a PeerNode_listSpecialPieces_Results promised by a client call.
-type PeerNode_listSpecialPieces_Results_Future struct{ *capnp.Future }
+// PeerNode_listSpecialItems_Results_Future is a wrapper for a PeerNode_listSpecialItems_Results promised by a client call.
+type PeerNode_listSpecialItems_Results_Future struct{ *capnp.Future }
 
-func (f PeerNode_listSpecialPieces_Results_Future) Struct() (PeerNode_listSpecialPieces_Results, error) {
+func (f PeerNode_listSpecialItems_Results_Future) Struct() (PeerNode_listSpecialItems_Results, error) {
 	p, err := f.Future.Ptr()
-	return PeerNode_listSpecialPieces_Results(p.Struct()), err
+	return PeerNode_listSpecialItems_Results(p.Struct()), err
 }
 
 type PeerNode_announce_Params capnp.Struct
@@ -5178,228 +5266,231 @@ func (f PeerNode_announce_Results_Future) Struct() (PeerNode_announce_Results, e
 	return PeerNode_announce_Results(p.Struct()), err
 }
 
-const schema_df5e7a9b8c1d2e3f = "x\xda\xc4Z}\x90\x14\xe5\xd1\xef~f\xf7f\xef\xfb" +
-	"\xe6\x9d\x05\xe4\xe0X}\xdf\xf3-\xa0\x10\x11\xa1\x02X" +
-	"\xd6}\x80)\x0f8\xb8\xb9\x15\x09$$\xce\xed>\xc7" +
-	"-\xec\xed.3\xb3*g\x94\x9c\x09A(\x95@a" +
-	"T\"Q\xc4K\x89\xc1 *\x08\x06+@\xc0\x80%" +
-	"\x15!BI\x94\x12LH\xa4\xc4R\x88\x04I\x94M" +
-	"\xf5\xcc\xce\xc7\xde-\xdeI\x14\xff\xdb\xeb\xe9\xe9\xa7\x9f" +
-	"\xee~\xba\x7f\xcfonTeQ\xad\xef\xba\xd2w+" +
-	"\x80)\xbb\xfd\x05\x99\xfe\xfb~\xd6\xf8\xbf?\xf4w\x82" +
-	"2\x04\x11\xc0\x8f\"\xc0\xf53\x02\x07\x11P\x8e\x05\xee" +
-	"\x00\xcc\xdc\x97\xfa\xfd\xad\xe7'\x9dY\x0c\xd2\x10Ga" +
-	"O`\x1e)\x1c\x08\xd4\x00f\xae=y\xd3\xce\xd8\x8b" +
-	"'\x97z\x15N\x07\x96\x91\x02\x16\x92B\xd7\xa1U\x8f" +
-	"M\x9b\x96Z\x06\x92\x84\x99\x9a\x91U\xf7\xff\xa2\xe3\xfb" +
-	"\xef\x82\x9f\x89\x00\xf2\xd8\xc2\x83r]!\xfd\xba\xb1\x90" +
-	"V{I\x9c\xb4\xf0\xd6\xd4\x0b+-c>\xb2\xb5\xa6" +
-	"p%\x82/\xd3\xfa\x87_\x9d;_\xbf\xee\xe7\xe4)" +
-	"\xb3\xd7y\xa0\xf0^Z\xe7\xd1\xc2\x8d\x80\x99\xf1#\x06" +
-	"\xcc:uC\xd1\xc3 U\x92#\x02)\x8c-j&" +
-	"\x85\xba\"RHV\xdc\xdbV\x7f\xe5\x81\xd5\xa0T\xa2" +
-	"m\xfdD\xd1lR8]D\x9e\xaa\x7f\x1a\xbd\xe2\xb5" +
-	"\x0b\xbb\x1e\x03EB\xc1\xe3*\x99\x92\xa5\xe2\xf7\xe4\xaa" +
-	"bzg`\xf1L\x04\xcc\x9c\xeezp\\\xec\xfe\xbb" +
-	"\xd7\x90\xb6\xcf\xd56\xcd.,\xa9Dyi\x09\xfd\\" +
-	"\\bj\xef\xff\xbf\xb5\xda\xef\"7\xad%m\xe6\xb1" +
-	"M\xfb\x90\xcf\x97\x9e\x91\xfde\xf4\x0b\xcb\xc8\xd3;>" +
-	"-+\xfe\xf3v\xe9\xa9\xecV\xcc\xbd\xae)3\x83\xbe" +
-	"\xbe\x8c<]\xf2\x8f\xdb\xcb\xce\x9c\x9e\xd1\xe5U8R" +
-	"f\x06\xfd$)\\\xb8}Nx\xe2\x80g\xbb<\x8f" +
-	"\x0b\xcb5z\xdc\xaf\x9c\xde/\xfe\xc1\x07\xc7\x87\xdf\xf6" +
-	"\xedg<q\x1e_\xdeAq\xbea\xed\x89\xd0o\xc6" +
-	"\xdc\xb3\xc1\x9b\xce\xab\xcb_\xa3W\xc7\x9b\xaf\xbe\xba\xff" +
-	"\xe5\xea\x9ft\x8e\xd9\x98\x93\x88X\xf9J\xd2XXN" +
-	"\xdeW\x07\xdf\x12\xb6,\xae\xdbj9g\x1a\xefW\xb1" +
-	"\x9a\x8c\xb7\xfbvM\xf9p\x93o[6\x03\xd6\xbb\xfe" +
-	"\x0a3\x89R\x05\x15\xc0\xf2!\xab\x9e\xf8\xe9\xe2m/" +
-	"\xe7\x14\xe4\x02K\xe3nSc\xfa\xd3\xa1\xce[\xa7\\" +
-	"\xd8\x9ec\xe3\x88\xa5q\xc2\xd4\x98\xbf\xae\xee\xf9\xf0\x9a" +
-	"\xd9\xafx\xb7P'\xbdL\x0a\x8aT\x03x\xee[\x1b" +
-	"\x9e\x995\xfc\xe3W\x14\x09\x03\x9eL\x14P\xfc\x17K" +
-	"\x07\xe5\x15\x92Y[\xd2\x12\x010\xf3\xcb{\xa6w\x8c" +
-	"_u\xfd\x8e\x1c\x87\xd2\xfd\xccP/\xeeG\xcbM~" +
-	"\xef\xc7K\xff9\xa9j\x97w\xb9\xe3\xfdL\x7f>\xec" +
-	"G\x11[\x9ex\xf6\xaasC\xd7\xed\xf1*\x94\xf67" +
-	"\x03V\xd5\x9f\x14\x86\x8c\xbb\xb9fA\xc9]\xafv\xab" +
-	"$\xf3\x88\\\xdf\xd8\xbf\x12\xe59\xfd\xe9\xe7\xac\xfe\xcb" +
-	"\xa9\x94\x0eW\x9e::\xf5\xd7\xb7\x1c\xf0$\xef\xfc\x80" +
-	"e\x14\xdfG>\x9b\xb7\xe5\xf4\xdf\x0b\x0e\x83$y\xea" +
-	"\x97\x8ab\xc0\x19\xf9\xec\x00\xf3h\x0e\x10\x05\xd9_)" +
-	"\x02d\xfe\x98~u\xd6\xff\xbc\xd6q\xd8\xeb\xd7\x87\x03" +
-	"M\xc7\xcf\x0f$\xbf\x86\x17\x1c\xde\xd7\x94\xf9\xed\x91\x9c" +
-	"P\x0f\xab\xec \x8d\xb1\x95\xb4\xf7)\x1b\x86J/\xed" +
-	"\x8b\xbc\xed\xad\xc3\x15\x96\xc2\x9aJ2\xf1i\xc1]\xd1" +
-	"\x81\x9f\xfd\xe8\xed\x9c\xf0\xed\xaf47\x7f\xd44\xf1\xc1" +
-	"\xc6\xe9c\x06\x9e=\xf3N\x8e\xc6\xf8A\xabI\xa3a" +
-	"\x10i\xcc\\\xb0\xf1\xdd\xd2a3\x8ez\x17\xe9\x1a\xf4" +
-	"$)l\x1eD\x8bL\x9c\xd7\xb9\xe7\xf1\xad/\xe4(" +
-	"\x9c\x18d\x96\xfbiSax\xffP\x19\x9b\xd9\xf9\xb7" +
-	"\x9c\xa2\x1el\xe6p\xec`R\xe8l\x1c\x1b\xed|\xb8" +
-	"\xf4}OHc\x83\xcd\xf3P\xf1\xff\xea\xd8\x81\xe7>" +
-	"9e\xbbg\xe6d\xc6`s\x8b\xea`*\xf7%\xf7" +
-	"o\x19\xfd\xd2u\xc3>\xca\xd9\x00V\x99\xcb\x97V\xd1" +
-	"\x06>\x0e\xcf\xdc\xf5\x97w\xf6~\xe4\xb5^\xf5<Y" +
-	"\xdf\xb4e\xdd\x8e\x9am\x1f\x9f\xf3:6\xab\xcaL\x01" +
-	"\xaf\"\xc7Jc'K\x1f|\xfd\xd0\xbf\xbd\x0a\x0fU" +
-	"\x99\xc1\xe92\x15v\xb4\xbc?y\xf9Sw~\x9e\xb7" +
-	"g\x1d\xa9\xfa\x97|\xa2\xca,\xc8*\xb3t\x1eo\xbd" +
-	"\xef\xbb\xc7\x8f\x8d\xbf\xd0\xa3@:C\x07\xe5\x07B\xa4" +
-	"\xb94\xb4\x04\xe5\x87\xae\x14aDFM\xc5\xae\xd5#" +
-	"m\xbc\xa0]\x1d\x19QS\x89\xd4\x84z52?\x9d" +
-	"\x0as\xedv\xae\x8dLi<\xa5j|F*\x9eT" +
-	"\xa3\x13\xe31\x9e0\xaa\x9b\xb9\x9e\x8e\x1b\xa8+\x01\xc1" +
-	"\x07\xe0C\x00iX=\x80R-\xa02\x8a!b\x90" +
-	"b$]3\x1a@\x19*\xa02\x86\xe1\"=\x1d\x89" +
-	"p]G\x04\x86\x08\x18\xe2\x9a\x96\xd4\xb0\x04\x18\x96P" +
-	"S\xce:\xe1\xcb\xef\x84\x1a\x8d6q\xaeU7\xa9\xe5" +
-	"\x9a\xda\xae+>g\xddRZ7 \xa0\x12d\xb8H" +
-	"\x8dF5Z\xa3\xbbU\x7f~\xabQ\x1e\xe7\x06\xaf\x8f" +
-	"'[\xf4\xea&\x95\x0c\x03xM7\x03(%\x02*" +
-	"C\x19f\"m<2_O\xb7\x03\xeaX\x06\xd8$" +
-	" \x96\x02\xa3\x9f\xce*\xcc]%\x9el\x99\xa4\x1a\xa8" +
-	"6!zc4\xd9\x8d\x87d\x07\xe9\xba\xe1\x00\xca\x08" +
-	"\x01\x95q\xdeU\x00L\xf3\xa5\x80\xe5Q\xd5P\xed?" +
-	"z\xdbQ<\xa6\x1bu\xf1\xb8gK\xa8\xf7\xf6N:" +
-	"\x15U\x0d\x9e\x0d\xaf\x19\x04\xa5\xc4q\xf9\xa6J\x00\xa5" +
-	"V@e\xaa\x9b\xd6\x86\x09\x00\xca$\x01\x95&\x86\x12" +
-	"\xc3 \x0d\x08\xa9\xb1\x03@\x99*\xa0\xf2\x1d\x86B," +
-	"\x8a\x85\xc0\xb0\x10\xb0F7T#\xedf\xa4]\xbd3" +
-	"l$5\x15j\xe6\xf2p\xac\x83\xdbzy\x0a\x80<" +
-	"\x9a\x96\x8c\xf2\x91j\"\x91L'\"\xdc\xde\x90\xd7=" +
-	"\xcd\xe3\x8a\xed_c\x8b\xeb\x8a\xc4\x98\xe5\xdf\x0c\x8a\xfd" +
-	"-\x02*\xb71\xccP\x98x\xa2.\x0a\xa1\xdcz\x89" +
-	"$\x13\x86\x1a1\x1a@L\xb4&]\xa9\x1a\x8f\xb7\xa8" +
-	"\x91\xf9\x94\x14\xc9=\\\x80(\xf5\xd1q\xf3\xbc\x08\xc6" +
-	"E\xeb\xb6\xdb\xd9\xc8SQ\xd6\xc1k \xbf\xa8\xa6\xae" +
-	"p\xec<J\x09Z%\xa0\xf2\x84\x9b\xa05T\xb8\x8f" +
-	"\x09\xa8<\xedIP\x17e\xed\x09\x01\x95\x0d\x0c%\x81" +
-	"\x05Q\x00\x90\xd6ST\x9e\x16Py\x91\xa1\xe4\xc3 " +
-	"\xfa\x00\xa4M\x94\xca\xe7\x04T\xb63\x94\xfc,\x88~" +
-	"\x00i\xdbj\x00e\xbb\x80\xca\xde\x9c\xfcfR\xe9\x96" +
-	"x,2\x85\x03.\xb4\x03\xd6=\xe7qU7\xc2\x9c" +
-	"'(~\xbd\xd6A$\xadi<a\x84\x91\x9e\xd23" +
-	"!O\x91\x08N\\\xa6&#j\xdc*\xe4\xb0\xa1\x1a" +
-	"BZ\xef\x16\x1e*\x90G\x04T\x9e\xa2\x02aV|" +
-	"\xd6\xb6xB\xc1\x04+>\xeb\x9f\x07P6\x08\xa8l" +
-	"\xa5\xf8\xf8\xac\xf8l>\xe8\xeeZ\xf2\xf9\xad\xf8\xecY" +
-	"\x06\xa0\xec\x15Py\x93\xe2#X\xf19@6\xdf\x10" +
-	"Py\x87a&\x9d2b\xed<\xcc!\x14I&\xa2" +
-	"\xba\xe3\xbf\x914\xd4x\xb8M\x05Q\x8b\xea\x18\x00\x86" +
-	"\x01\xc0Lk:\x1e_\xd8\xccS\x18\x8fET\x83G" +
-	"\xc3\xa16\xd5\xfb<\xa5jFL\x8d\xc7\x19)\xd9:" +
-	"\xa4\x82\xaeN[R7x\xb4\x89#\xd7\xccG:\x80" +
-	"\xf3lA\x9a\xa7y\xb4~!\x88\x06\xd7{\xc42\xb7" +
-	"k5r#\xa4R\xc7\xa10z\xce\xd9d\xf7\x9c9" +
-	"\xc7\x8c\x1a\xd7\xcd\x02*\xb7P\x14k\xad(*\xf5\xee" +
-	"\xd9\xcb\xdb\xcdtO\xb2\x17\xe9)\x1e\x89\xa9\xf1\x1eu" +
-	"\x9f\xe7,%[[\xed\xad\xe5\x9b\x02\x13\xb2\xa7\xa9\x9a" +
-	"a\x8dn\x85/\xdb\xa5+\\\xe0\x05\x98\xd3\xaf\xfd=" +
-	"W\x89\xb4\xa9\xf18O\xcc\xe5M1n\x9f[\xa3\xdb" +
-	"T\x18\xee\x1e\xdc\xfc\xbd9\x8f\xf7\x1a\x8fsU\xcfZ" +
-	"m\x0a\xa9\xdd\xdd\xd7\xb2\x93\xe6\x0a\x86\x19\xd3\xfd\x89m" +
-	"T<\x14\xbc/0\xdf\xa3\xf5\xd3zzu\x8d\xd5\xc6" +
-	"/e\xb0\xe7\x9b\x82\xa3\xdd\xd0\x86Zh\xb0\xb8\x91u" +
-	"\xae;\x17\x8dl\x9eI\xe3]*\xb7\x99_\xeeY\x93" +
-	"\xa7\x00(\x8aa\xab*\xcddYSTh\xd7\xbfD" +
-	"\xd5\xd8S\xd43\xf85w\xf0;s\x7f\x82g\xee_" +
-	"$\xe75\xc9\xd6V\x9d\x1b_\xe0xw\x94\x94\x03\xd0" +
-	"r}\xf8j\x00Z\x9e\xed\xe7\x14\xd2eY\xbaG\xe1" +
-	"gSf\xe1\x9e\xe6\x1a\xcb\x05o\x11\xcf\xf3@\xb9l" +
-	"\xd7\xa9\x87\xf2\xbeU3\xcb\xd9rC\xa2\x15\xcd\x19\\" +
-	"k[\x977a%@x\x03\x0a\x18\xde\x8a\xce\x16\xe5" +
-	"\xcdX\x0f\x10~\x8e\xc4\xdb\xd1-_y\x1b6\x03\x84" +
-	"\xb7\x92|7\xba\xc3X\xde\x89\x13\x00\xc2\xdbI\xbe\x97" +
-	"\xe4>\xc1\x9c7\xf2\x1eS\x7f7\xc9\xdf \xb9\xdfg" +
-	"\x8e\x1cy?N\x06\x08\xbfN\xf2\xb7H^\x80A," +
-	"\x00\x90\x0fa\x07@\xf8M\x92\x1f#\xb9\xc8\x82&\xff" +
-	"p\x14W\x03\x84\x8f\x91\xfc\x14\xc9\x03B\x10\x03\x00\xf2" +
-	"I|\x12 |\x8a\xe4\x9f\x92\xbc0\x10\xc4B\x00\xf9" +
-	"\xaci\xe7\x13\x14\xb0\x991\x94\x8a\x0a\x83X\x04 \x7f" +
-	"\x8e\xcb\x00\x9a\x99\x80\xe1\x12\x12\x17\x17\x05\xb1\x18@." +
-	"d\x1a@8@\xf2 \xc9K\x8a\x83X\x02 Kl" +
-	"%@8H\xf2+I^\xea\x0fb)\x80\\\xc5Z" +
-	"\x00\xc2\x83I>\x94\xe4e\x05A,\x03\x90\xaf6\xe5" +
-	"\xd5$\x1fE\xf2r1\x88\xe5\x00\xf25\xa6\xfd\x11$" +
-	"\x1f\xc7r\xce}\x0f\xd8\xdf\x07L\xd2\x1a\xd3LP\x02" +
-	"\x98\xf8\x1apJ2m\xb4$\xd3\x89(\x86\xb3O\xc5" +
-	"\x9cW\xb3\xed\x02j\xb8\xde\xa8F\xb93\xa8\xed\x07\xc8" +
-	"\xf5&U\xd7y\xd43\xc4#\xc9D\x82G\x8c\x18\x84" +
-	"\x92\x09}\xfa|G\x1eK\x18|\xae\x163pa\x9d" +
-	"a\xf0\xf6\x94\xe1\x01\x05\xf9\xe1l.\x08\xe9\xbe\x1f\xc8" +
-	"\x82\x8f>\xb6\x1c\xcf\xe5\xc1\x1d\x96\x97\xeb\xe4\xcf\xe5F" +
-	"\xd8L\xab\xdbt\xf2@\x82 s\xb2_\xe1\xd2y\x80" +
-	"X\xd1\xb7\xdeb\xb5T\xdd\xbd\xf4\xe6\x01\xf1\xd5\x0c\x17" +
-	"E,=\xb7\x9f8Dc\xb7~\"\xe4\xf4\x13\x13\xd3" +
-	"4rC\x8d\xaa\x82\x05\xbb\x06;\xf67\x13\xeczQ" +
-	"@e\x87\x1b\xbeW\x08\x7fl\x15P\xd9\xed\x81];" +
-	"\x09\xf1\xef\x10Py\x9d\xfa\x89`\x81\xd7}\xb3=8" +
-	"\xd5\x06\xf7\x07\xeeuq\xaa\x03\xee\x8f\xd0@}K@" +
-	"\xe5\xaf\xd4F\x0a\xcc6\"\x1d'D{L@\xe5T" +
-	"\x1f\xa0\\&\xa6[=\x18\xd0\x85s)\x1a\x87\x0d\x89" +
-	"(\x08\xfcN/\x9a\xa5:kCU\x8b\xde\xac\xeam" +
-	"\x8e\xbd\x8c\xce\x17\xa4y\"\xc2\xa1fZ\xba\xbd\x85k" +
-	"\xb9\xb0\xb9)\xc6A\x8cp\xb7\xba\xbfD\xealX\x93" +
-	"\x0f\xf4Z\xef\x84\xcc\x97(\xfa\xa3\x04\xbf\x875C\x9b" +
-	"T\x92\x17\xe0l`r\x0cED\x87>E\x9bY\x97" +
-	"\xe7\xe0\x93\xc0\xe4Y(\"s\x88 \xb4)J\xb9\x11" +
-	"\x97\x01\x93\x1bPD\xc1!\xa1\xd0f\x14\xe5\x1b\xb1\x19" +
-	"\x98<\x16E\xf49<;\xda\x94\x9a<\x0c[\x80\xc9" +
-	"W\xa1\x88~\x878G\x9b0\x92\xfb\xe1<`r)" +
-	"\x8aX\xe0\x90\xf8hsU2b=0\xe9\xac\x88\xa2" +
-	"\xc3\xac\xa3MuJ'g\x03\x93\x8e\x8b\x18pxb" +
-	"\xb4\x89*\xe9P30i\xbf\x88\x85\x0e\x0d\x896\xbf" +
-	")\xedl\x01&m\x13\xb1\xc8!\x89\xd1f\xf7\xa4g" +
-	"\xe7\x01\x93\xbaD,v\x185\xb4\xb9^\xe9Q\xb2\xb9" +
-	"B\xcc\x98H\xbe>\x9e\x04\xa1E\xaf\xc5\x8c\x8d\x1e\xd0" +
-	"\xc6\xa1\"O\x18\xb5\xd6\x1d\x9dJ\x0a\xed\xb9\x0eP\x8b" +
-	"\x19\xfb\xc8\x03\xd2\xbb6\x81\x03b\xd2\xb4e\xd3\x1f\xd6" +
-	"d\xaf5'\x03\x9d\xb1Z\xba\x92Y\x8d\x0a\x04\xf3O" +
-	"\x1b-[v\xecZ\x011a\xe8\x8e\xf2\xc48\x94\xc7" +
-	",gld\x05h\xd4b\x13\xf6Z|\xf6\x1e]b" +
-	"\xe9\xbfD\xd4\xbd\xdd)\x1c\xcc\xf352r\x17\x01|" +
-	"\xd9\xeb\xc6Ww\x1b\xbb(G\xf7\xf5\xd1\x8e}\xb9\xb0" +
-	"8$\xce\xe5\xc0\xd4=\xef!\xb4\xbc\xd8\x0d\xd5^J" +
-	"\x9c{\xb9[7\xf3P\x0f\xf0\xacy\xc0s\x82\xf3(" +
-	"\x8f6$ \x14\x8dQ7\xce\xae\x17\xe8\xc6\x85\xf6~" +
-	".\xf2\xde\xad/a%_o\xd8\xa0\xfbu\xd8\xd7\xdb" +
-	"\xe5\xc9.h\xcf\xcd\xb49\x1f\xcd8\xc1\xe5?0\xcb" +
-	"2*4H\x9b\x04T\xbe\xc7\xfa\x04C\xbf\x04\x1d\x9a" +
-	"\x97\x0fw\xb2\xf5\x8d]\xb6\xb2dF_\xde\xb3\xd8\x89" +
-	"|P\xcd\xdb\x10S\xa4\xe5\x94\xb1\xfd\x15\xafo\xcd\"" +
-	"\x87\xfe\xceG\xba^2\xa3\x9fEj5Zt\x92\xfa" +
-	"E(M\xca\x07\xd3\xec\xea\xc8Ei\x98\x0f\xa5\xb1|" +
-	"(\x0d\xf3\xa14_\x1fQZ\x0eE\xf5\xcd\xa14\xd6" +
-	"\xbd\xed \xb7\x98ZB[\xf6\x97p\xb4\xbf\xf1I\x9b" +
-	"\x08d\xac'\xace\x7f|D\xfb\x93\xb0\xb4F\x03&" +
-	"=DH\xcb\xfe\xd2\x8c\xf6\x97rii\x070\xa9S" +
-	"D\xc1\xfe6\xee~\xde\x94\xd2\x04N\xda\x09e\xd9\xdf" +
-	"\xae\xd1\xfe\xe8(\xa9+\x81Is\x08c\xd9\xff`\x80" +
-	"\xf6?\x12H\xcad`RC\x16\xb8\xd8\x17'\x0fr" +
-	"\x81\x909\x08ksnvf\xd7\xae\xc5\x8c=\xa5\x09" +
-	"J\x98\x02/\xae1\x95L\x04b\x7f*\x00B9M" +
-	"\x88\xff\x09\x00\x00\xff\xffks\xb4\x11"
+const schema_df5e7a9b8c1d2e3f = "x\xda\xbcZ}pSWv?\xe7=\xd9\x92l\xcb" +
+	"\xf2\xdb'\xb3\xd8\x83-\xd2q;\xc0\x00\x1bX2!" +
+	"\xec0\xfe\x80\xb4k\xc0\x8b\x9e\x05\xa1\xd0\xd2\xee\xb3t" +
+	"\x8d\x05\xb2$\xde{\x0a\x8b\xb7,uZ\xcaB\x93\xdd" +
+	"\xc2\xa4\xdd\x0d]7!\x84NHp\x09\xf9 \x90\x92" +
+	"N\xa0!\x814\x99\x864a\x92&4\x906\x1f\x0c" +
+	"d\x82iR`\x9a\xa0\xce\xb9O\xefC\xb2\x8c\x9d\x86" +
+	"\xf0\x9fu\xeey\xe7\x9c{\xee\xf9\xba\xbf\xeb[\xcf\xfb" +
+	"[<3\x02\xb7K (\xc7\xcb\xcas\xe3N\xfcU" +
+	"\xc7o\xfdIY?(\x8d\x88\x00e\xe8\x05\xf8~\xbf" +
+	"o;\x02\xca\xdb|\xeb\x00s}+?\xde4;\xf2" +
+	"\xd3~\x90$!\xd7<\xbd\xe1\xde\xbf\xed\xfb\xa3\xf7\x01" +
+	"P\xfe\xd4wI\xbe\xea\xf3\x02\xc8_\xf8n\x07\xcc\xfd" +
+	"<\xf3\xcfw]\x9d\x7fi\x13H\x8d\x08\xe0!A\xe8" +
+	"\xdf\x8e\xe0\xc9}\xef\xdc\x9dG\x12O\x9f\xdb\xe2Z\x19" +
+	"\xf2\xf5\xd1\xca\xb3\xde\xf9\xeb\xef\xca<\xb5\xdd\\1\xb5" +
+	"\x9f\xf6mE.\xbe\x190\xd7\xfd\xf2\xdf_\xbe\xda\xb6" +
+	"\xebo\xdc\x0c\xb7\xf8W\x13\xc34?1\xdc1\xf5\xbb" +
+	"\xcb/\xfc\xa0\xe2W \xd5\x13\x83H\x0c\x1d\xfeNb" +
+	"X\xee\xdf\x07\x98K\xd7\xdc\xd3\xd36\xf1\xe4\x0eP\xea" +
+	"\xd1\xd2\xfe\x95\x7f\x051\xf8+H\x82\xfao3\xb7\xbd" +
+	"r\xed\xe8o@\x91Ptv\xc8E\xc9\x93+>\x90" +
+	"o\xab\xa0ofT,C\xc0\xdc\xd0\xee_\xccN\xdc" +
+	"\xbba\x80\xb8=\x0e7\x17\xbb\xad\xb2\x1e\xe5\x9d\x95\xf4" +
+	"\xe7@%\xe7^w\xa5\xba\xf2\xdf\x0fK\x8f\xe4\xad\xe3" +
+	"\xe6K\x81.R\xde\x10 \xe5\x9b\xff\xfb\xee\xeaKC" +
+	"Kw\xbb\x19:\x02\xdc\x01+\x89\xe1\xda\xdd+\xa3\xf3" +
+	"\xbe;\xb8\xdb\xb5\xbc!\xa0\xd1\xf2\x16\xfe}\xe5\x1f\x9f" +
+	"?;\xe5\xc7\xbf\xfb\x18\x9d\x9f`q\x0c\x06\xee!\x8e" +
+	"C\x01\xda\xff\xd9\xb9\xd55G\xc7mz\xdc:a\x81" +
+	"8\x96V\xf7\x11\x87ZM\x1c?\xd8\xf9a\xf8\x1ff" +
+	"\xfdl\xaf\xdb\xc7\x18\xe46HAR\xf2\xd2k\xcf5" +
+	"\xfdy\xff\xac}\xae\xf3k\xa5uO\xae)\xf4\xb6x" +
+	"`S\xebA\xd3|\xbe2#\xc8\xcf\xbc\xd7st\xe1" +
+	"\xa7\xfb=\x87\xf2n\xcf\x9f\\\x90\x1b6-H\x81\xf5" +
+	"\xcb\xc6\xfb\x1f\xfa\x8bM\x87\x9e+\x08\xbd\xfb\x82;\x88" +
+	"c\x80s,~4\xdc\x7f\xd7\xc2k\x87\x0bd\\5" +
+	"e\x94\xd5\x10\xc7\x9a]\xadOF\x07V<\xef6]" +
+	"\xady\x8e\x18\xd6\xd64\x03^\xbe}\xefc\xcb\xa7\\" +
+	"|^\x91\xd0\xe7:\xdar:\xda\x9d5o\xc8\x835" +
+	"\xf4\xc5\x9e\x9a\xcd\"`\xee\xef~\xb6\xb8\xef\x8e\xfb\xbf" +
+	"\xffB\x81A\xdbB\xdc\xdb\x03!Rw\xe6_^\xde" +
+	"\xf2pe\xd9\xd1\x02\x8e\xab!\xd3\xa0Z\xe2X\xf0\xc1" +
+	"\x9fm\xf9\x9f\xf9\x0dG\xf3\x06qg\xab\xb5\x0fs\x83" +
+	"8\xc3/S\x83\xb7\\\x9e\xb4\xeb\x98\xdb\xe2Ok\xb9" +
+	"\x84\xab\xb5\xe4\xecS\xf5\x17N/z|\xc9I\x97\xb3" +
+	"'\x8f\xe3\xc9\xf2\xeb/W\x1f\x18\xfa\xb8\xfc\x14H\x92" +
+	"X\x90\x89\xb5\xe3.\xc9\xb7\x8c#\xce\x86q\xbf'\xca" +
+	"\xcb\xc7{\x01r\xff\x9a}i\xf9w^\xe9;\xe5V" +
+	"\xd4:\x9e+\xea\x18O\x8a\xa6\x94\x9f:\x11\xc9\xfd\xe3" +
+	";\x05\xde\xdd0\x9e\x07\xc6\x96\xf1d\xeb\xc2\xbd\x93\xa4" +
+	"gO\xc4\xdeu\x07\xe7\x87&\xc3\x10\x17q\xa5\xfc\xa7" +
+	"\xf1\xba/\xff\xf4\xdd\x82\xec\xac3\xcf\xb8\x8e\x18\xce\xef" +
+	"[<\xab\xee\x8bK\xef\xb9\x19:\xeaxuY\xc9\x19" +
+	"\x96\xad\xdd\xf7~`\xf2\xd2\xd3n\x15\xf7\xd5\x991\xc0" +
+	"\x19\xe6\xad\xee?\xf6\xe0\xc1\xa7\x0a\x18^\xab\xe3\x05\xe0" +
+	"\x1d\xce\xd0\xbdw\xc5?}0q\xf0?@\x92\xd0u" +
+	"\xc4\xe4y9P\x7fI\xae\xab\xa7\xbfj\xebiC\xe7" +
+	"\x9bk_\xff\xcb\xf9\xeb>*J^\xf3\x98\xd6\xd6\x7f" +
+	"\x07\xe5\xfez\xee\x85\xfa\x97){\xa7\x8c\x0bW\x0b\xcb" +
+	"\xfa?r[\xbf|\x02O\x8c\xc4\x04\xd2\xdd\xdfq[" +
+	"\xbc\xffW\x81O\xdc\x0c\x03\x13\xb8\xf5\x83\x9c\xa1\xe6w" +
+	"\xd4\xdb\xea.\x7f~\xa1 =\xcfN\xe0\x0e\x18\x9a@" +
+	"\xc9\xb7\xf9\xde\x033\x9f\x9d1\xf93\xb7\x88\xfb\x1aL" +
+	"\x074\x90\x88\x8b\xd1eG\xff\xf3\xbd\xe3\x9f\xb9\xe2\xe1" +
+	"d\xc3\x93\x14\x0f\xfb\x0f\xecz\xa1\xf9\xd0\xc5\xcb\x05\xd1" +
+	"x\xa4\x81\xdbw\xb2\x81\xf6\x1bH\x9c\x0b\xfc\xe2\xd5\xb7" +
+	"\xfe\xb7\x80cZ#W?\xb7\x918\x1e\xec\xfe\xf9\x1f" +
+	"\x9c=s\xc7\xb5a1\xf5@\xe3\x1b\xf2\xeeF\xe2\xdf" +
+	"\xd9\xb8\x19\xe5\xc1\xb0\x17\xa6\xe6\xd4L\xe2{z\xac\x87" +
+	"\x95\xf5\xaa\xd3cj&\x95\x99\xd3\xa6\xc6\xd6d3Q" +
+	"\xa6\xdd\xcd\xb4\xe9\xd9L2\xad\xc6\xdb\x0d\xd6\xab7u" +
+	"2=\x9b4PW|\xa2\x07\xc0\x83\x00\xd2\xe46\x00" +
+	"\xa5ID\xe5V\x01\x11Cd\x914m&\x802I" +
+	"De\x96\x80\x1b\xf5l,\xc6t\x1d\x11\x04D\xc00" +
+	"\xd3\xb4\xb4\x86U `\x15\xd5\xe9\xbcr\xc1V\xbeD" +
+	"SSz7\x0bkK\xd6gX\x04Q\xf1\x91\x93%" +
+	"i\x05\x00\xa2\x14\xe8\x04\xc8\xc5\x92\x09\x962\xda\x92 " +
+	"\xa6\xbbr\x19\xc6\xb4h\x8f\xaa\x01\xc6G\xdbJ2\xa1" +
+	"\x1b\xad\xc9\xa4\xb9\x97\x88\xaa\xa9\xbd\xa8\xdb\xdfxJ\x7f" +
+	"\xb3\x8a\x19QC5\xb2zS3\xffB\x1fMI\x9c" +
+	"%\x99\xc1\\:t\x00\xc5c\xfb\x8b6\xa0T\x89\xa8" +
+	"L\x120\x17\xeba\xb15z\xb6\x17P\xc7j\xc0\x88" +
+	"\x88\x18\x00\x81\xfe\x1c\xcd,5\x1e\x8f0\xa65E\xd4" +
+	" \xa9p+\xa0\x03\xf1\x89\xa8\x84\x04\xdc\xa8\xc6\xe3\x1a" +
+	"9\xbf\xd8\xdd\x8eT\x92\xf2\xa3t\x9cMWS\xa9t" +
+	"6\x15c\x96c\x94*[\xe4\x9d\x1a\x802_D%" +
+	"\"\xa0d\x1drG\x17\x80\xb2HD\xe5\xf7\x05\x94\x04" +
+	"!\xc4Oi\xe9\x02\x00e\x89\x88\xca\x8f\x05\xcc\x91\xbb" +
+	"Y\xaa5\x0e\xe1B#b\xe9\x94\xa1\xc6\x8cv\xf0\xa6" +
+	"\xba\xd3\x0eUM&\xbb\xd4\xd8\x1a\x00@\xc9\x09a:" +
+	"\xf41\x1a\xce\xa3S4FtFQ$\x96\x88\xbdy" +
+	"<\xb0\xda\xc9.\x8a\xbc\xf1\xb6\x9c\x07\xea\x01\x94\xfbE" +
+	"T\x1er\xa2|\x80N\xf27\"*\x8f\x92\x03\xd0t" +
+	"\xc0\xee9\x00\xcaC\"*{\x05\x94D!\x84\"\x80" +
+	"\xb4\x87\xbc\xf2\xa8\x88\xca\xd3\x02J\x1e\x0c\xa1\x07@\xda" +
+	"\xdf\x07\xa0<!\xa2rX@\xa9L\x08a\x19\x80t" +
+	"h\x07\x80rXD\xe5\xb8\x80b\"\x8e~\x10\xd0\x0f" +
+	"\x98\xcbd\xbb\x92\x89\xd8B\x06\xb8\xderX\xb3\xce\xc3" +
+	"\xd2\xf6_R\xd5\x8d(c)\xf2\x9fE\xebU\x7f\x12" +
+	"5\xd2\x9a\x0a\xcd\xabX4\xd1\xc7ly\xb1\xac\xa6\xb1" +
+	"\x94\x11EZ\xa55\xd1\xb5h\xf9E\xb4\xfd\xb2(\x1d" +
+	"S\x93f\xe4Q2\x88Y\xbd\xc8=\x14 \xbf\x16Q" +
+	"y\x84\x02D0\xfd\xb3\xb3\xcb\xe5\x0aA4\xfd\xb3\xe7" +
+	"I\x00e\xaf\x88\xcaA\xf2\x8f\xc7\xf4\xcf3o8\xbb" +
+	"\x96<e\xa6\x7f\x8em\x05P\x8e\x8b\xa8\xbcI\xfe\x11" +
+	"M\xff\x9c$\x99\xaf\x8b\xa8\xbc'`.\x9b1\x12\xbd" +
+	",\xca \x1cK\xa7\xe2\xbam\xbf\x916\xd4d\xb4G" +
+	"\x05\xaf\x16\xd7\xd1\x07\x02\xfa\xa8\xa5d\x93\xc9\xf5\x9d," +
+	"\x83\xc9DL5X<\x1a\xeeQ\xdd\xeb\x19U3\x12" +
+	"j2)\x10\x93\xc5C,\xe8\xf0\xf4\xa4u\x83\xc5#" +
+	"\x0c\xcd\x92\x13\xd7\x01\xec\xb5\xb5Y\x96e\xf1\xb6\xf5\xe0" +
+	"5\x98>\xcc\x97%\xe26\xdd\xdd\xcd4\xbbNx\x8b" +
+	"\xb2xf>p\x9b\x04\x0c'\x88\xc9*\x105N\xc3" +
+	"\x03,(\x15e\xc3u\xc4z\xd4d\x92\xa5V\xb1H" +
+	"\x82Y\x19b\x14\x15\xa4)N\x8a\x04\xe3\xaa\xa1\xf2\x12" +
+	"\x14\xb8\xbe\xed\x1aK2U\xcfK\x8d\x84\xd5\xe2\x1a\xb4" +
+	" _\xe4\xc6\xbb\x8b\x1c\xc00\xd1#\xf6\x9c\xb8j\xb0" +
+	"|\x81\xe3%\xd4]\x8d(\x17[DT\x169\xb9\xd8" +
+	">\xc7U\xa1\xac\\\xec\xe8s*\x94+\x99\x8a\x13g" +
+	"\xc4$\x19\xbd\x04\x9b\xf5\xc2\xea\x0cn\x1b;KUL" +
+	"2\xf2\x87\"*K\x04\xc4|\xc1T\xc8\xc6\x88\x88\xca" +
+	"\x1f\x0ac\xca\xf2Q\x8d\x1dC\x17/\xd5\x95\xae\x13n" +
+	"\xf6,6b\xb8\x0dk\xb2\xa6_\x1cM\xd7\x0bQ\xe2" +
+	"\x8ffX,\xa1\x8e\xd0\x98G\x0fk+F\\S\xc9" +
+	"\x02g\x02\xb1\xdc?\x83\xdc?UDev\xe9\xa0l" +
+	"Nww\xeb\xcc\x18\xbbG)F\xf3\x11`\xb7\x9e\x1b" +
+	">\x18\x95\xd8}Fc\x19UcK\xf9\x91\xda9\xfd" +
+	"m\xaa\x1ev\xc0\x05\x07\xd6\xd9l\x9a\xf0\x0d\xcb\x97P" +
+	"\xb0\xd3\xf6T7\xf2&\xdcb\x09\x95\xf7c=@t" +
+	"/\x8a\x18=\x88\xf6\xce\xe4g\xb0\x0d \xfa\x04\x91\x0f" +
+	"\xa3\x93\xfe\xf2!\xec\x04\x88\x1e$\xfa\x8b\xe8tc\xf9" +
+	"\x08\xce\x01\x88\x1e&\xfaq\xa2{D\xdep\xe4c\x9c" +
+	"\xffE\xa2\xbfN\xf42\x0f\xef9\xf2k\xb8\x00 \xfa" +
+	"*\xd1\xdf&z9\x86\xb0\x1c@~\x0b\xfb\x00\xa2o" +
+	"\x12\xfd\x0c\xd1\xbdB\x88Fq\xf94\xee\x00\x88\x9e!" +
+	"\xfa\x05\xa2\xfb\xc4\x10\xfa\x00\xe4s\xf80@\xf4\x02\xd1" +
+	"\xaf\x10\xdd\xef\x0b\xa1\x1f@\xfe\x82\xcb\xf9\x1cE\xec\x14" +
+	"\x04\x94*\xfc!\xac\x00\x90\xbf\xc2\xad\x00\x9d\x82\x88\xd1" +
+	"*\"WV\x84\xb0\x12@\xf6\x0b\x1a@\xd4G\xf4\x10" +
+	"\xd1\xab*CX\x05 K\xc2v\x80h\x88\xe8\x13\x89" +
+	"\x1e(\x0ba\x00@n\x10\xba\x00\xa2\x13\x88>\x89\xe8" +
+	"\xd5\xe5!\xac\x06\x90\x7f\x9b\xd3\x9b\x88~+\xd1\x83\xde" +
+	"\x10\x06\x01\xe4i\\\xfeT\xa2\xcf\x16\x0a\xea\xe6\xb0a" +
+	"r\x0c\xe5\xaa;\xa1\xf1\xa9\x040\xf5-\x0c*\xe9\xac" +
+	"\xd1\x95\xce\xa6\xe2\x18\xcd\xafz\x0b>\xcd\x17\x09hf" +
+	"z\x87\x1agv\xa7\xb6\x16\x90\xe9\x11U\xd7Y\xdc\xd5" +
+	"\xc5c\xe9T\x8a\xc5\x8c\x04\x84\xd3)}\xf1\x1a\x9b\x9e" +
+	"H\x19l\x95\x960p}\xaba\xb0\xde\x8c\xe1\x9a\x0a" +
+	"J\xcf\xb3\x85SH\xf1~ ?}\x8c\xbd\xd7\xf0n" +
+	"\xd8\xc9\xc2f\xaa\xdd\xacdw\x9a\xdcM\xaf3\xf1\xf4" +
+	"\xbaT\xe1\xd5\xd3[\xb4\xf3\x99y\xf5-\xae&;\x97" +
+	"l\x9am6\xd9Q:\xd9\xc6\xde\x84\xae'R\xabF" +
+	"\xbaz]\xa7\xfe\xd1a\xe8\x8eKF(|t5u" +
+	"\xd4[\xb0UQ\xd9\xf3\x8c\xa6\xa5\xf8\xde)\x14\x7f\x10" +
+	"\xe6_P\xad\x9c%\x96\xb9@\"\xb4\xa0\x0ey\x1b\xae" +
+	"\x00A\xde\x82^t\x80A\xb4Pby\x03v\x81 " +
+	"g\xd1\x8b\x82\x0dL\xa0\x05\xc2\xc9\x09\xdc\x0a\x82\xcc\xd0" +
+	"\x8b\xa2\x0d\x8d\xa0\x85\x88\xc9\xcbQ\x03AV\xd0\x8b\x0e" +
+	"\"\x8c\x16\x82$\xdf\x89\x9d \xc8s\xd1\x8be6*" +
+	"\x8c\x16~!\xcf\xe0z'\xa3\x17\xcbm\x9c\x19-\xe8" +
+	"Dn\xc0\xd5 \xc8\xb5\xe8E\xaf\x0d\x18\xa3\x85\xe6\xc9" +
+	"~l\x03A\xfa\xca\x8b>\x1b-E\x0b:\x91\x86V" +
+	"\x80 \x9d\xf3\xa2\xdf\xc6\xdd\xd0B\xe8\xa4\xd3\x9d H" +
+	"oy\xb1\xc2\x06@\xd1\xc2\xb3\xa4\x13] HG\xbc" +
+	"XiC<h\xe1\x99\xd23\xabA\x90\x06\xbdXe" +
+	"c\xafh\x01\x87\xd2N\x92\xf9\x807gM\xf4 \xf6" +
+	"\xea-t?1\xc3\x17\xbc\x8c\xff\xb6\x1a'Z\x9d\x13" +
+	"\xa0\x05sV\x98C\x98\xd3Z0gA\x0e\x80\xf4\xcb" +
+	"\xc2\x13\xdcRZ\x93\xc9v\x08\x9a\xec\x1b\xf3\xb5\x81+" +
+	"4\xc7f\x10\xf9O+\x84L9\xd6\\\x06\xde\x94\xa1" +
+	"\xdb\xcc\xf3\x92\x10\xa4\xf4n\xc1\x9c\x95\xea\x80F\x0bF" +
+	"p\xd4<(\xbc\xbf\xf0\x01\xec\x9b\x0d\x00\xa3\xdd3\xec" +
+	"9\xe3\x86W \xcfhC\x965\xe1\xdf\xa8\x0b\xda\x08" +
+	"\x10S\xa9\x822\xc7\xb9\x9eY\xdd\xb5\xc6y\xb0\x00\xc4" +
+	"\x9a\xaf7\x93\xdb\x18^\x09\x94\xa4I\xc0\x8d&\xb8\xe6" +
+	"\xda\x8d\xfd\x942\xfaus\xf8hX\x02\x92\xb91\x91" +
+	"\xe1\x8a\xbeN\xa6\x07\x8b\xe7O\xcd\x85\xb2\xa5\x18\x8b\xb3" +
+	"x{\x0a\xc2\xf1D\x8c\xd9\xea|E\xe5\xbe\x04\x049" +
+	"_5T\x0eA:\x017\xc5\x098\xbb\xe7L\x9b\xe2" +
+	"D\\\xb0\x97\x19j\xd1Vj`\x84\x9b\xb5X\xacR" +
+	"\xeb`\x86\x1aW\x0d\xe4j'\xdajO.pp\x0f" +
+	"K\xeb;\xa4\xf5M\x11\x9534\xf4z\xcc\xfb\xe4i" +
+	"\"\xbe-\xa2\xf2_4\xf1FL|\xe5,\xddF\xcf" +
+	"\x88\xa8\\p\xc6]\xe9\xdc\x0a\x00\xe5\x13\x11\x95\xcfi" +
+	"\xd6E\x13_\x19\xba\x07@\xb9(\xa2\xf2%\x0d\xba\x02" +
+	"\x1ft\xa5\xabtG\xbd\"b\xd4\xc3\xc7\xdcrs\xcc" +
+	"E\xec\x02\xe8\xa4i\xb6\x0aK_\xa8\x82\xbak\x1c\x0b" +
+	"\x1a\xeb3\x0c\x83\xce\xcb# \x06i\xb0\xd2\xcd\x80\x01" +
+	"L\xda\xc0\\\x86\xd2\xbd=\x15\x07\x91\xfd\xc4\x8d\xcf\xd0" +
+	"\xe0\xd4\x83\xaa\x16\xff\xa1\xaa\xf78`\x82\xce\xd6fY" +
+	"*\xc6\xa0\xf9G\xd9\xde.\xa6\x15\x02A\x11*yt" +
+	"\xec\x96\xa0\xb1\x97\xb5\x92p\xc9\xff#\xb2\xc64\xe0P" +
+	"\x85\x11\x0bK\xcc\xd7\x84\x8a\xc7rQ-\x01\xee\xdel" +
+	"8e,\xe0|\xa9\xbaqc\xbc1\x1cn\x08\x8f\x09" +
+	"\xd6wARNX\xdc\xb4Q\xd8\xf5\xa6p3\xde`" +
+	"\xf2U\x16\x99\x09\xf3\xd2Pi=z\xa3\xf5v'\xed" +
+	"\xa7)k\x0f\x8d\x94\xd6\x93\"Zo\xbb\xd2\x80\x06\x82" +
+	"\xf4\xd74PZO\xc6h=\x8aK[\xfa@\x90\xfa" +
+	"\xbd(Z\xcf\xe0\xce\xa3\xa5\x94\xa5)\xab\x97\x86I\xeb" +
+	"\x11\x1a\xad\xc7DI\xdd\x0a\x82\xb4\x92FI\xeb\xdf\x03" +
+	"\xd0\xfa7\x00IY\x00\x82\xd4>l\x02\xb3\x9a8\x84" +
+	"y\x1bo)\xb8\x14\xf2\xa1\xa2\x05s\xd6\x8cA\x83\x10" +
+	"'\x94\x9e\xd3\xacg\x06\xa0_\x11\xc4\xff\x0b\x00\x00\xff" +
+	"\xff\x84\x19\xb5\x9d"
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
 		String: schema_df5e7a9b8c1d2e3f,
 		Nodes: []uint64{
 			0x81057c224d90c916,
+			0x817b503885e75d7a,
 			0x85f244f956c37088,
 			0x89e9b469c145e92f,
-			0x8a704e4e9c94d5a5,
 			0x92b37056794407b7,
 			0x96a342f9f7a6c766,
 			0x970a3bec59172c39,
 			0x9ad120426882106f,
 			0x9cc2feca9132d361,
 			0x9d7d8c69388ea5f1,
-			0xa14563bf72a123cd,
 			0xa411bcda0b0ef877,
 			0xa555f1f20e76f387,
 			0xa5ad1743535d7600,
 			0xaa46602ae1eb5f0b,
+			0xab8516c2100e3de1,
 			0xac7e34ae1fe5a13b,
 			0xaf34818424bacdc6,
 			0xb84185b603d81424,
@@ -5409,9 +5500,9 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xbd5a9d53b241a36b,
 			0xbdf02a5900aaac37,
 			0xc03394397a4f7e9e,
+			0xc2050ba289c7cbe0,
 			0xc21d44f68983e24a,
 			0xc5a328f721ad6e8f,
-			0xc67b0c713f48381e,
 			0xd154ab4cddec1ad6,
 			0xd606e7f1b66afc98,
 			0xd67aca1259c675cf,
@@ -5421,6 +5512,8 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xdcf2f519344fafeb,
 			0xdd55290ddfaf7157,
 			0xddb3b89fc5816a43,
+			0xdead20e2be5aac66,
+			0xe677448bd0153feb,
 			0xe68157020e1f162a,
 			0xe80d978164354d81,
 			0xecf4f71935612610,
@@ -5428,7 +5521,6 @@ func RegisterSchema(reg *schemas.Registry) {
 			0xefc8dce3c25753f0,
 			0xf7f0b93fc0a3b6b1,
 			0xfbd5cc8e0de9690d,
-			0xfd78a48f4ae862c0,
 			0xfe39e0e15b88669f,
 		},
 		Compressed: true,

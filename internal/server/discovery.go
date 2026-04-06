@@ -44,7 +44,7 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context, mode string) {
 		for {
 			// Advertise our presence
 			discoveryutil.Advertise(ctx, routingDiscovery, DiscoveryServiceTag)
-			
+
 			if e.Verbose {
 				log.Printf("DiscoveryWorker: Announced our presence to the DHT (%s)", DiscoveryServiceTag)
 			}
@@ -58,17 +58,17 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context, mode string) {
 					if peer.ID == e.Host.ID() {
 						continue
 					}
-					
+
 					// Attempt to connect to discovered peers.
 					// libp2p's Host.Connect is smart and won't re-dial existing connections.
 					if err := e.Host.Connect(ctx, peer); err == nil {
 						if e.Verbose {
 							log.Printf("DiscoveryWorker: Successfully connected to discovered peer: %s", peer.ID.String())
 						}
-						
+
 						// Once connected, our RPC handler will eventually see them
 						// via Announce or they can be manually added.
-						// We don't auto-register them in the DB yet to avoid cluttering 
+						// We don't auto-register them in the DB yet to avoid cluttering
 						// until they actually trade data or the user trusts them.
 					}
 				}

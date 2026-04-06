@@ -10,9 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"p2p-backup/internal/crypto"
-
 	"github.com/klauspost/compress/zstd"
+	"p2p-backup/internal/crypto"
 )
 
 // Restorer handles downloading and decrypting files from the backup server.
@@ -233,27 +232,18 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 		}
 		batchHashes := chunkHashes[i:end]
 
-		foundBlobs, err := r.RPCClient.PullBlobBatch(ctx, batchHashes)
+		foundBlobs, missingHashes, err := r.RPCClient.DownloadItems(ctx, batchHashes)
 		if err != nil {
-			return fmt.Errorf("failed to pull blob batch: %w", err)
+			return fmt.Errorf("failed to download items from server: %w", err)
 		}
 
-		if len(foundBlobs) < len(batchHashes) {
-			// Find missing
-			foundMap := make(map[string]bool)
-			for _, b := range foundBlobs {
-				foundMap[b.Hash] = true
-			}
-			for _, h := range batchHashes {
-				if !foundMap[h] {
-					return fmt.Errorf("server is missing required chunk: %s", h)
-				}
-			}
+		if len(missingHashes) > 0 {
+			return fmt.Errorf("server is missing %d required chunks for this file (e.g., %s)", len(missingHashes), missingHashes[0])
 		}
 
 		chunkDataMap := make(map[string][]byte)
 		for _, b := range foundBlobs {
-			chunkDataMap[b.Hash] = b.Data
+			chunkDataMap[b.Meta.Hash] = b.Data
 		}
 
 		for j, hash := range batchHashes {

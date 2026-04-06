@@ -4,16 +4,28 @@ using Go = import "/go.capnp";
 $Go.package("rpc");
 $Go.import("p2p-backup/internal/rpc");
 
-# Metadata for a single encrypted blob
-struct BlobMetadata {
-  checksum @0 :Data;     # BLAKE3 hash of the encrypted blob (32 bytes)
-  size @1 :UInt64;       # Size of the encrypted blob in bytes
-  special @2 :Bool;      # True for critical metadata (e.g., the encrypted SQLite DB)
+# Metadata for any item (client blob or peer shard) sent over the network
+struct TransferMetadata {
+  checksum @0 :Data;     # Hash of the item (32 bytes)
+  size @1 :UInt64;       # Total byte size
+  type @2 :TransferType; # Enum: clientBlob or peerShard
+  isSpecial @3 :Bool;    # True for critical metadata (e.g., DB pieces)
+  
+  # Shard-specific fields (used only if type == peerShard)
+  pieceIndex @4 :UInt32; 
+  parentShardHash @5 :Data;
+  sequenceNumber @6 :UInt64;
+  totalPieces @7 :UInt32;
 }
 
-# A chunk of encrypted data
-struct BlobData {
-  checksum @0 :Data;
+enum TransferType {
+  clientBlob @0;
+  peerShard @1;
+}
+
+# A generic chunk of data for any item type
+struct TransferData {
+  meta @0 :TransferMetadata;
   data @1 :Data;
 }
 
@@ -58,85 +70,55 @@ struct ClientInfo {
 
 # Interface exposed by the Server to the local Client
 interface BackupServer @0xd606e7f1b66afc98 {
-  # 1. Offer a list of blobs. Server replies with indices of blobs it needs.
-  offerBlobs @0 (blobs :List(BlobMetadata)) -> (neededIndices :List(UInt32));
+  # 1. Offer a list of items. Server replies with indices of items it needs.
+  offerItems @0 (items :List(TransferMetadata)) -> (neededIndices :List(UInt32));
   
-  # 2. Control Plane: Notify server of upcoming out-of-band blob streams.
-  prepareUploadClient @1 (blobs :List(BlobMetadata)) -> (success :Bool, error :Text);
+  # 2. Upload a batch of files (legacy/metadata).
+  uploadItems @1 (items :List(TransferData)) -> (success :Bool, error :Text);
   
-  # 3. Disaster Recovery: Get a list of all "special" blobs (the encrypted SQLite DBs).
-  listSpecialBlobs @2 () -> (specialBlobs :List(BlobMetadata));
+  # 3. Disaster Recovery: Get a list of all "special" blobs.
+  listSpecialItems @2 () -> (items :List(TransferMetadata));
   
-  # @3 (downloadBlobs) removed: handled out-of-band via raw stream
+  # 4. Restore: Download specific items by their checksums.
+  downloadItems @3 (checksums :List(Data)) -> (items :List(TransferData), missing :List(Data));
 
-  # 5. Monitoring: Get current server status and swarm replication metrics.
-  getStatus @3 () -> (status :LocalServerStatus);
+  # 5. Monitoring metrics.
+  getStatus @4 () -> (status :LocalServerStatus);
 
-  # 6. Garbage Collection: Mark specific blobs as deleted (to be purged after retention period).
-  deleteBlobs @4 (checksums :List(Data)) -> (success :Bool, error :Text);
+  # 6. Garbage Collection.
+  deleteItems @5 (checksums :List(Data)) -> (success :Bool, error :Text);
 
-  # 7. Garbage Collection: Get a list of all blob hashes currently stored for this client.
-  listAllBlobs @5 () -> (checksums :List(Data));
+  # 7. List all hashes currently stored for this client.
+  listAllItems @6 () -> (checksums :List(Data));
 
-  # 8. Manage Peers: Add a new peer by IP address/port.
-  addPeer @6 (address :Text) -> (success :Bool, error :Text);
+  # 8-10. Peer Management
+  addPeer @7 (address :Text) -> (success :Bool, error :Text);
+  updatePeer @8 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
+  listPeers @9 () -> (peers :List(PeerInfo));
 
-  # 9. Manage Peers: Set peer status (e.g. trusted/blocked) and storage limit.
-  updatePeer @7 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
-
-  # 10. Manage Peers: List all active peers.
-  listPeers @8 () -> (peers :List(PeerInfo));
-
-  # 11. Manage Clients: List all known clients.
-  listClients @9 () -> (clients :List(ClientInfo));
-
-  # 12. Manage Clients: Update client status and quota.
-  updateClient @10 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
-
-  # 13. Manage Clients: Add a new client by Public Key.
-  addClient @11 (publicKey :Text, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
+  # 11-13. Client Management
+  listClients @10 () -> (clients :List(ClientInfo));
+  updateClient @11 (id :UInt64, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
+  addClient @12 (publicKey :Text, status :Text, maxStorageSize :UInt64) -> (success :Bool, error :Text);
 }
-
-# Metadata for an erasure-coded shard sent to a peer
-struct PeerShardMetadata {
-  checksum @0 :Data;     # Hash of the encrypted shard piece
-  size @1 :UInt64;       # Size of the shard piece
-  isSpecial @2 :Bool;    # True if this is critical metadata (e.g. Server DB)
-  pieceIndex @3 :UInt32; # RS index (0 to N+K-1)
-  parentShardHash @4 :Data; # Hash of the full original shard
-  sequenceNumber @5 :UInt64; # Version/Timestamp for discovery
-  totalPieces @6 :UInt32;    # Total parts in this shard version
-  }
-
-  # Data for an erasure-coded shard
-  struct PeerShardData {
-  checksum @0 :Data;
-  data @1 :Data;
-  isSpecial @2 :Bool;
-  pieceIndex @3 :UInt32;
-  parentShardHash @4 :Data;
-  sequenceNumber @5 :UInt64;
-  totalPieces @6 :UInt32;
-  }
 
 # Interface exposed by remote Peers to the Server
 interface PeerNode @0xfe39e0e15b88669f {
-  offerShards @0 (shards :List(PeerShardMetadata)) -> (neededIndices :List(UInt32));
+  # 1. Symmetric offer pattern for shard distribution.
+  offerItems @0 (items :List(TransferMetadata)) -> (neededIndices :List(UInt32));
   
   # 2. Control Plane: Notify peer of upcoming out-of-band data streams
-  prepareUpload @1 (shards :List(PeerShardMetadata)) -> (success :Bool, error :Text);
+  prepareUpload @1 (items :List(TransferMetadata)) -> (success :Bool, error :Text);
   
-  # Evaluate PoS hash fingerprints over explicit intervals natively
-  challengePiece @2 (shardChecksum :Data, offset :UInt64) -> (data :Data);
+  # 3. Integrity: Evaluate PoS hash fingerprints.
+  challengePiece @2 (checksum :Data, offset :UInt64) -> (data :Data);
 
-  # Garbage Collection: Tell a peer we no longer need them to store this piece.
-  releasePiece @3 (shardChecksum :Data) -> (success :Bool, error :Text);
+  # 4. GC: Release a specific piece.
+  releasePiece @3 (checksum :Data) -> (success :Bool, error :Text);
 
-  # @4 (downloadPiece) removed: handled out-of-band via raw stream
+  # 5. Disaster Recovery: List shard pieces tagged as "Special" for the calling node.
+  listSpecialItems @4 () -> (items :List(TransferMetadata));
 
-  # Disaster Recovery: List shard pieces tagged as "Special" for the calling node.
-  listSpecialPieces @4 () -> (shards :List(PeerShardMetadata));
-
-  # Peer Discovery: Tell a peer our own listen address so they can dial us back (or use the callback directly).
+  # 6. Peer Discovery.
   announce @5 (listenAddress :Text, contactInfo :Text, callback :PeerNode) -> (success :Bool);
 }

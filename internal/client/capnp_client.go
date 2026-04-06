@@ -1,18 +1,12 @@
 package client
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"sync"
-
-	"p2p-backup/internal/crypto"
-	"p2p-backup/internal/rpc"
 
 	capnp "capnproto.org/go/capnp/v3"
 	capnprpc "capnproto.org/go/capnp/v3/rpc"
@@ -20,6 +14,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+	"p2p-backup/internal/crypto"
+	"p2p-backup/internal/rpc"
 )
 
 type customCodec struct {
@@ -110,18 +106,18 @@ func NewCapnpRPCClient(ctx context.Context, p2pHost host.Host, serverAddrStr str
 	}, nil
 }
 
-func (c *CapnpRPCClient) OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([]uint32, error) {
-	req, release := c.clientStub.OfferBlobs(ctx, func(p rpc.BackupServer_offerBlobs_Params) error {
-		capnpBlobs, err := p.NewBlobs(int32(len(blobs)))
+func (c *CapnpRPCClient) OfferItems(ctx context.Context, items []rpc.Metadata) (rpc.UploadPlan, error) {
+	req, release := c.clientStub.OfferItems(ctx, func(p rpc.BackupServer_offerItems_Params) error {
+		capnpItems, err := p.NewItems(int32(len(items)))
 		if err != nil {
 			return err
 		}
-		for i, b := range blobs {
-			cb := capnpBlobs.At(i)
-			hashBytes, _ := hex.DecodeString(b.Hash)
-			cb.SetChecksum(hashBytes)
-			cb.SetSize(uint64(b.Size))
-			cb.SetSpecial(b.Special)
+		for i, item := range items {
+			cm, err := rpc.MetadataToCapnp(p.Segment(), item)
+			if err != nil {
+				return err
+			}
+			capnpItems.Set(i, cm)
 		}
 		return nil
 	})
@@ -129,24 +125,25 @@ func (c *CapnpRPCClient) OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) (
 
 	res, err := req.Struct()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read OfferBlobs results: %w", err)
+		return rpc.UploadPlan{}, fmt.Errorf("failed to read OfferItems results: %w", err)
 	}
 
 	neededList, err := res.NeededIndices()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read needed indices: %w", err)
+		return rpc.UploadPlan{}, fmt.Errorf("failed to read needed indices: %w", err)
 	}
 
-	neededIndices := make([]uint32, neededList.Len())
+	var plan rpc.UploadPlan
+	plan.NeededIndices = make([]int32, neededList.Len())
 	for i := 0; i < neededList.Len(); i++ {
-		neededIndices[i] = neededList.At(i)
+		plan.NeededIndices[i] = int32(neededList.At(i))
 	}
 
-	return neededIndices, nil
+	return plan, nil
 }
 
-func (c *CapnpRPCClient) DeleteBlobs(ctx context.Context, hashes []string) error {
-	req, release := c.clientStub.DeleteBlobs(ctx, func(p rpc.BackupServer_deleteBlobs_Params) error {
+func (c *CapnpRPCClient) DeleteItems(ctx context.Context, hashes []string) error {
+	req, release := c.clientStub.DeleteItems(ctx, func(p rpc.BackupServer_deleteItems_Params) error {
 		capnpHashes, err := p.NewChecksums(int32(len(hashes)))
 		if err != nil {
 			return err
@@ -161,7 +158,7 @@ func (c *CapnpRPCClient) DeleteBlobs(ctx context.Context, hashes []string) error
 
 	res, err := req.Struct()
 	if err != nil {
-		return fmt.Errorf("failed to read DeleteBlobs results: %w", err)
+		return fmt.Errorf("failed to read DeleteItems results: %w", err)
 	}
 
 	if !res.Success() {
@@ -172,15 +169,15 @@ func (c *CapnpRPCClient) DeleteBlobs(ctx context.Context, hashes []string) error
 	return nil
 }
 
-func (c *CapnpRPCClient) ListAllBlobs(ctx context.Context) ([]string, error) {
-	req, release := c.clientStub.ListAllBlobs(ctx, func(p rpc.BackupServer_listAllBlobs_Params) error {
+func (c *CapnpRPCClient) ListAllItems(ctx context.Context) ([]string, error) {
+	req, release := c.clientStub.ListAllItems(ctx, func(p rpc.BackupServer_listAllItems_Params) error {
 		return nil
 	})
 	defer release()
 
 	res, err := req.Struct()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read ListAllBlobs results: %w", err)
+		return nil, fmt.Errorf("failed to read ListAllItems results: %w", err)
 	}
 
 	capnpHashes, err := res.Checksums()
@@ -197,106 +194,31 @@ func (c *CapnpRPCClient) ListAllBlobs(ctx context.Context) ([]string, error) {
 	return hashes, nil
 }
 
-func (c *CapnpRPCClient) PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error {
-	req, release := c.clientStub.PrepareUploadClient(ctx, func(p rpc.BackupServer_prepareUploadClient_Params) error {
-		capnpBlobs, err := p.NewBlobs(int32(len(blobs)))
-		if err != nil {
-			return err
-		}
-		for i, b := range blobs {
-			cb := capnpBlobs.At(i)
-			hashBytes, _ := hex.DecodeString(b.Hash)
-			cb.SetChecksum(hashBytes)
-			cb.SetSize(uint64(b.Size))
-			cb.SetSpecial(b.Special)
-		}
-		return nil
-	})
-	defer release()
-
-	res, err := req.Struct()
-	if err != nil {
-		return fmt.Errorf("failed to read PrepareUpload results: %w", err)
-	}
-
-	if !res.Success() {
-		errMsg, _ := res.Error()
-		return fmt.Errorf("server rejected upload: %s", errMsg)
-	}
-
-	return nil
-}
-
-func (c *CapnpRPCClient) PushBlobBatch(ctx context.Context, jobs []rpc.UploadJob) error {
+func (c *CapnpRPCClient) UploadItemsStreamed(ctx context.Context, items []rpc.StreamItem) error {
 	if c.p2pHost == nil {
 		return fmt.Errorf("raw data stream unavailable (no libp2p host)")
 	}
 
-	stream, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/data/1.0.0")
+	s, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/stream/1.0.0")
 	if err != nil {
-		return fmt.Errorf("failed to open batch upload stream: %w", err)
+		return fmt.Errorf("failed to open unified stream: %w", err)
 	}
-	defer stream.Close()
+	defer s.Close()
 
-	// 1. Write Header: [OpCode (1b)][Count (4b)]
-	if err := rpc.WriteBatchHeader(stream, rpc.OpCodePushBatch, uint32(len(jobs))); err != nil {
-		return fmt.Errorf("failed to write batch header: %w", err)
-	}
-
-	// 2. Loop and write each item using unified framing
-	// Note: Client doesn't have an Engine, so we create a small temporary pool or pass nil if the helper handles it.
-	// Actually, let's just use a simple local buffer for the client since it's not a high-concurrency server.
-	tempPool := &sync.Pool{
-		New: func() any { return make([]byte, 4*1024*1024) },
+	sender := rpc.NewStreamSender(s)
+	if err := sender.SendBatch(ctx, items); err != nil {
+		return err
 	}
 
-	for _, job := range jobs {
-		err = rpc.WriteFrame(stream, job.Hash, job.Size, bytes.NewReader(job.Data), tempPool)
-		if err != nil {
-			return fmt.Errorf("failed to write item frame for %s: %w", job.Hash, err)
-		}
+	// 5. Read ACK byte from server to ensure batch was processed
+	ack := make([]byte, 1)
+	if _, err := io.ReadFull(s, ack); err != nil {
+		return fmt.Errorf("failed to read server ACK: %w", err)
 	}
 
-	// 3. Read Acknowledgment: [uint32 successCount]
-	ackBuf := make([]byte, 4)
-	if _, err := io.ReadFull(stream, ackBuf); err != nil {
-		return fmt.Errorf("failed to read server batch acknowledgment: %w", err)
+	if ack[0] != 0 {
+		return fmt.Errorf("server batch processing failed (status %d)", ack[0])
 	}
-	successCount := binary.BigEndian.Uint32(ackBuf)
-
-	if successCount != uint32(len(jobs)) {
-		return fmt.Errorf("server only ingested %d/%d blobs in batch", successCount, len(jobs))
-	}
-
-	return nil
-}
-
-func (c *CapnpRPCClient) PushBlob(ctx context.Context, hashHex string, data []byte) error {
-	if c.p2pHost == nil {
-		return fmt.Errorf("raw data stream unavailable (no libp2p host)")
-	}
-
-	stream, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/data/1.0.0")
-	if err != nil {
-		return fmt.Errorf("failed to open upload stream: %w", err)
-	}
-	defer stream.Close()
-
-	checksumBytes, _ := hex.DecodeString(hashHex)
-	header := make([]byte, 41)
-	header[0] = 0x03 // OpCodePushBlob
-	copy(header[1:33], checksumBytes)
-	binary.BigEndian.PutUint64(header[33:41], uint64(len(data)))
-
-	if _, err := stream.Write(header); err != nil {
-		return fmt.Errorf("failed to write stream header: %w", err)
-	}
-
-	if _, err := stream.Write(data); err != nil {
-		return fmt.Errorf("failed to write stream data: %w", err)
-	}
-
-	// No ack needed for raw PushBlob stream in this implementation, the server closes on its end.
 	return nil
 }
 
@@ -391,9 +313,25 @@ func (c *CapnpRPCClient) ListPeers(ctx context.Context) ([]PeerMeta, error) {
 	return peers, nil
 }
 
-func (c *CapnpRPCClient) ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error) {
-	// Optional feature to implement fully later.
-	return nil, fmt.Errorf("ListSpecialBlobs not implemented on client yet")
+func (c *CapnpRPCClient) ListSpecialItems(ctx context.Context) ([]rpc.Metadata, error) {
+	req, release := c.clientStub.ListSpecialItems(ctx, nil)
+	defer release()
+
+	res, err := req.Struct()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ListSpecialItems results: %w", err)
+	}
+
+	capnpItems, err := res.Items()
+	if err != nil {
+		return nil, err
+	}
+
+	var items []rpc.Metadata
+	for i := 0; i < capnpItems.Len(); i++ {
+		items = append(items, rpc.MetadataFromCapnp(capnpItems.At(i)))
+	}
+	return items, nil
 }
 
 func (c *CapnpRPCClient) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
@@ -422,91 +360,69 @@ func (c *CapnpRPCClient) GetStatus(ctx context.Context) (rpc.StatusInfo, error) 
 	}, nil
 }
 
-func (c *CapnpRPCClient) PullBlobBatch(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, error) {
-	if c.p2pHost == nil {
-		return nil, fmt.Errorf("raw data stream unavailable (no libp2p host)")
-	}
-
-	stream, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/data/1.0.0")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open data stream: %w", err)
-	}
-	defer stream.Close()
-
-	// 1. Write Header: [OpCode (1b)][Count (4b)]
-	if err := rpc.WriteBatchHeader(stream, rpc.OpCodePullBatch, uint32(len(hashes))); err != nil {
-		return nil, fmt.Errorf("failed to write batch header: %w", err)
-	}
-
-	// 2. Write Hashes: [Checksum (32b)]...
-	for _, h := range hashes {
-		hashBytes, _ := hex.DecodeString(h)
-		if _, err := stream.Write(hashBytes); err != nil {
-			return nil, fmt.Errorf("failed to write hash %s: %w", h, err)
-		}
-	}
-
-	// 3. Read Responses: [Sync(2b)][Size (8b)][Data]... using unified framing
-	var results []rpc.LocalBlobData
-	tempPool := &sync.Pool{
-		New: func() any { return make([]byte, 4*1024*1024) },
-	}
-
-	for _, h := range hashes {
-		data, err := rpc.ReadFrame(stream, h, -1, tempPool)
+func (c *CapnpRPCClient) DownloadItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error) {
+	req, release := c.clientStub.DownloadItems(ctx, func(p rpc.BackupServer_downloadItems_Params) error {
+		capnpHashes, err := p.NewChecksums(int32(len(hashes)))
 		if err != nil {
-			return nil, fmt.Errorf("failed to read frame for %s: %w", h, err)
+			return err
 		}
-		if len(data) > 0 {
-			results = append(results, rpc.LocalBlobData{Hash: h, Data: data})
+		for i, h := range hashes {
+			hashBytes, _ := hex.DecodeString(h)
+			capnpHashes.Set(i, hashBytes)
 		}
-	}
+		return nil
+	})
+	defer release()
 
-	// 4. Read final Acknowledgment: [uint32 successCount]
-	ackBuf := make([]byte, 4)
-	if _, err := io.ReadFull(stream, ackBuf); err != nil {
-		return nil, fmt.Errorf("failed to read server pull acknowledgment: %w", err)
-	}
-
-	return results, nil
-}
-
-func (c *CapnpRPCClient) PullBlob(ctx context.Context, hashHex string) ([]byte, error) {
-	if c.p2pHost == nil {
-		return nil, fmt.Errorf("raw data stream unavailable (no libp2p host)")
-	}
-
-	stream, err := c.p2pHost.NewStream(ctx, c.serverID, "/bdr/data/1.0.0")
+	res, err := req.Struct()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open data stream: %w", err)
-	}
-	defer stream.Close()
-
-	checksumBytes, _ := hex.DecodeString(hashHex)
-	header := make([]byte, 41)
-	header[0] = 0x04 // OpCodePullBlob
-	copy(header[1:33], checksumBytes)
-
-	if _, err := stream.Write(header); err != nil {
-		return nil, fmt.Errorf("failed to write stream header: %w", err)
+		return nil, nil, fmt.Errorf("failed to read DownloadItems results: %w", err)
 	}
 
-	sizeBuf := make([]byte, 8)
-	if _, err := io.ReadFull(stream, sizeBuf); err != nil {
-		return nil, fmt.Errorf("failed to read response size header: %w", err)
-	}
-	size := binary.BigEndian.Uint64(sizeBuf)
-	if size == 0 {
-		return nil, fmt.Errorf("blob not found on server")
+	capnpItems, err := res.Items()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read downloaded items: %w", err)
 	}
 
-	data := make([]byte, size)
-	if _, err := io.ReadFull(stream, data); err != nil {
-		return nil, fmt.Errorf("failed to read blob data: %w", err)
+	var foundItems []rpc.ItemData
+	for i := 0; i < capnpItems.Len(); i++ {
+		ci := capnpItems.At(i)
+		cm, err := ci.Meta()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read item %d metadata: %w", i, err)
+		}
+		meta := rpc.MetadataFromCapnp(cm)
+		dataBytes, _ := ci.Data()
+
+		// Copy data
+		dataCopy := make([]byte, len(dataBytes))
+		copy(dataCopy, dataBytes)
+
+		actualHash := crypto.Hash(dataCopy)
+		if hex.EncodeToString(actualHash) != meta.Hash {
+			return nil, nil, fmt.Errorf("downloaded item %s failed checksum validation", meta.Hash)
+		}
+
+		foundItems = append(foundItems, rpc.ItemData{
+			Meta: meta,
+			Data: dataCopy,
+		})
 	}
 
-	return data, nil
+	capnpMissing, err := res.Missing()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read missing items: %w", err)
+	}
+
+	var missingHashes []string
+	for i := 0; i < capnpMissing.Len(); i++ {
+		hashBytes, _ := capnpMissing.At(i)
+		missingHashes = append(missingHashes, hex.EncodeToString(hashBytes))
+	}
+
+	return foundItems, missingHashes, nil
 }
+
 func (c *CapnpRPCClient) ListClients(ctx context.Context) ([]ClientMeta, error) {
 	req, release := c.clientStub.ListClients(ctx, nil)
 	defer release()

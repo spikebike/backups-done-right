@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
-	"fmt"
+	"encoding/hex"
+	"io"
+
 	"p2p-backup/internal/rpc"
 	"p2p-backup/internal/server"
 )
@@ -39,16 +41,13 @@ type ClientMeta struct {
 
 // RPCClient defines the interface for communicating with the backup server.
 type RPCClient interface {
-	OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([]uint32, error)
-	PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error
-	PushBlob(ctx context.Context, hashHex string, data []byte) error
-	PushBlobBatch(ctx context.Context, jobs []rpc.UploadJob) error
-	ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
+	OfferItems(ctx context.Context, items []rpc.Metadata) (rpc.UploadPlan, error)
+	UploadItemsStreamed(ctx context.Context, items []rpc.StreamItem) error
+	ListSpecialItems(ctx context.Context) ([]rpc.Metadata, error)
 	GetStatus(ctx context.Context) (rpc.StatusInfo, error)
-	PullBlob(ctx context.Context, hashHex string) ([]byte, error)
-	PullBlobBatch(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, error)
-	DeleteBlobs(ctx context.Context, hashes []string) error
-	ListAllBlobs(ctx context.Context) ([]string, error)
+	DownloadItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error)
+	DeleteItems(ctx context.Context, hashes []string) error
+	ListAllItems(ctx context.Context) ([]string, error)
 	AddPeer(ctx context.Context, address string) error
 	UpdatePeer(ctx context.Context, id int64, status string, maxGB uint64) error
 	ListPeers(ctx context.Context) ([]PeerMeta, error)
@@ -60,14 +59,13 @@ type RPCClient interface {
 
 type MockRPCClient struct {
 	engine interface {
-		OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error)
-		PrepareUpload(ctx context.Context, clientPubKey string, metas []rpc.PendingStreamMeta) error
-		IngestBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData, isGC bool) error
-		ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
+		OfferItems(ctx context.Context, pubKey string, items []rpc.Metadata) (rpc.UploadPlan, error)
+		IngestItemsStreamed(ctx context.Context, clientPubKey string, hash string, size uint64, r io.Reader) error
+		ListSpecialItems(ctx context.Context, pubKey string) ([]rpc.Metadata, error)
 		GetStatus(ctx context.Context) (rpc.StatusInfo, error)
-		GetBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, []string, error)
-		DeleteBlobs(ctx context.Context, hashes []string) error
-		ListAllBlobs(ctx context.Context) ([]string, error)
+		GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error)
+		DeleteItems(ctx context.Context, hashes []string) error
+		ListAllItems(ctx context.Context) ([]string, error)
 		AddPeer(ctx context.Context, address string) error
 		UpdatePeer(ctx context.Context, id int64, status string, maxStorageBytes int64) error
 		ListPeers(ctx context.Context) ([]server.PeerDBInfo, error)
@@ -78,14 +76,13 @@ type MockRPCClient struct {
 }
 
 func NewMockRPCClient(engine interface {
-	OfferBlobs(ctx context.Context, clientPubKey string, blobs []rpc.BlobMeta) ([]uint32, error)
-	PrepareUpload(ctx context.Context, clientPubKey string, metas []rpc.PendingStreamMeta) error
-	IngestBlobs(ctx context.Context, clientPubKey string, blobs []rpc.LocalBlobData, isGC bool) error
-	ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error)
+	OfferItems(ctx context.Context, pubKey string, items []rpc.Metadata) (rpc.UploadPlan, error)
+	IngestItemsStreamed(ctx context.Context, clientPubKey string, hash string, size uint64, r io.Reader) error
+	ListSpecialItems(ctx context.Context, pubKey string) ([]rpc.Metadata, error)
 	GetStatus(ctx context.Context) (rpc.StatusInfo, error)
-	GetBlobs(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, []string, error)
-	DeleteBlobs(ctx context.Context, hashes []string) error
-	ListAllBlobs(ctx context.Context) ([]string, error)
+	GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error)
+	DeleteItems(ctx context.Context, hashes []string) error
+	ListAllItems(ctx context.Context) ([]string, error)
 	AddPeer(ctx context.Context, address string) error
 	UpdatePeer(ctx context.Context, id int64, status string, maxStorageBytes int64) error
 	ListPeers(ctx context.Context) ([]server.PeerDBInfo, error)
@@ -96,71 +93,54 @@ func NewMockRPCClient(engine interface {
 	return &MockRPCClient{engine: engine}
 }
 
-func (m *MockRPCClient) OfferBlobs(ctx context.Context, blobs []rpc.BlobMeta) ([]uint32, error) {
+func (m *MockRPCClient) OfferItems(ctx context.Context, items []rpc.Metadata) (rpc.UploadPlan, error) {
 	if m.engine != nil {
-		return m.engine.OfferBlobs(ctx, "insecure-local-client", blobs)
+		return m.engine.OfferItems(ctx, "insecure-local-client", items)
 	}
-	// Mock: Server needs all blobs
-	needed := make([]uint32, len(blobs))
-	for i := range blobs {
-		needed[i] = uint32(i)
+	// Default mock behavior
+	var plan rpc.UploadPlan
+	for i := range items {
+		plan.NeededIndices = append(plan.NeededIndices, int32(i))
 	}
-	return needed, nil
+	return plan, nil
 }
 
-func (m *MockRPCClient) PrepareUploadClient(ctx context.Context, blobs []rpc.BlobMeta) error {
+func (m *MockRPCClient) UploadItemsStreamed(ctx context.Context, items []rpc.StreamItem) error {
 	if m.engine != nil {
-		var metas []rpc.PendingStreamMeta
-		// In mock, we can just pass the data directly in PushBlob
-		return m.engine.PrepareUpload(ctx, "insecure-local-client", metas)
+		for _, item := range items {
+			if err := m.engine.IngestItemsStreamed(ctx, "insecure-local-client", hex.EncodeToString(item.Header.Hash[:]), item.Header.Size, item.Data); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	return nil
 }
 
-func (m *MockRPCClient) PushBlob(ctx context.Context, hashHex string, data []byte) error {
+func (m *MockRPCClient) ListSpecialItems(ctx context.Context) ([]rpc.Metadata, error) {
 	if m.engine != nil {
-		blobs := []rpc.LocalBlobData{{Hash: hashHex, Data: data}}
-		return m.engine.IngestBlobs(ctx, "insecure-local-client", blobs, false)
+		return m.engine.ListSpecialItems(ctx, "insecure-local-client")
+	}
+	return nil, nil
+}
+
+func (m *MockRPCClient) DownloadItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error) {
+	if m.engine != nil {
+		return m.engine.GetItems(ctx, hashes)
+	}
+	return nil, hashes, nil
+}
+
+func (m *MockRPCClient) DeleteItems(ctx context.Context, hashes []string) error {
+	if m.engine != nil {
+		return m.engine.DeleteItems(ctx, hashes)
 	}
 	return nil
 }
 
-func (m *MockRPCClient) PushBlobBatch(ctx context.Context, jobs []rpc.UploadJob) error {
+func (m *MockRPCClient) ListAllItems(ctx context.Context) ([]string, error) {
 	if m.engine != nil {
-		var blobs []rpc.LocalBlobData
-		for _, j := range jobs {
-			blobs = append(blobs, rpc.LocalBlobData{Hash: j.Hash, Data: j.Data})
-		}
-		return m.engine.IngestBlobs(ctx, "insecure-local-client", blobs, false)
-	}
-	return nil
-}
-
-func (m *MockRPCClient) PullBlob(ctx context.Context, hashHex string) ([]byte, error) {
-	if m.engine != nil {
-		blobs, _, err := m.engine.GetBlobs(ctx, []string{hashHex})
-		if err != nil || len(blobs) == 0 {
-			return nil, fmt.Errorf("blob not found")
-		}
-		return blobs[0].Data, nil
-	}
-	return nil, fmt.Errorf("mock error: engine not set")
-}
-
-func (m *MockRPCClient) PullBlobBatch(ctx context.Context, hashes []string) ([]rpc.LocalBlobData, error) {
-	if m.engine != nil {
-		blobs, _, err := m.engine.GetBlobs(ctx, hashes)
-		if err != nil {
-			return nil, err
-		}
-		return blobs, nil
-	}
-	return nil, fmt.Errorf("mock error: engine not set")
-}
-
-func (m *MockRPCClient) ListSpecialBlobs(ctx context.Context) ([]rpc.BlobMeta, error) {
-	if m.engine != nil {
-		return m.engine.ListSpecialBlobs(ctx)
+		return m.engine.ListAllItems(ctx)
 	}
 	return nil, nil
 }
@@ -170,20 +150,6 @@ func (m *MockRPCClient) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 		return m.engine.GetStatus(ctx)
 	}
 	return rpc.StatusInfo{}, nil
-}
-
-func (m *MockRPCClient) DeleteBlobs(ctx context.Context, hashes []string) error {
-	if m.engine != nil {
-		return m.engine.DeleteBlobs(ctx, hashes)
-	}
-	return nil
-}
-
-func (m *MockRPCClient) ListAllBlobs(ctx context.Context) ([]string, error) {
-	if m.engine != nil {
-		return m.engine.ListAllBlobs(ctx)
-	}
-	return nil, nil
 }
 
 func (m *MockRPCClient) AddPeer(ctx context.Context, address string) error {

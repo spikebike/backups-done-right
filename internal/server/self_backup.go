@@ -1,8 +1,9 @@
 package server
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"p2p-backup/internal/crypto"
-	"p2p-backup/internal/rpc"
 )
 
 // PeerDiscoveryInfo stores endpoint information for a peer during recovery.
@@ -63,15 +63,12 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 		return
 	}
 
-	// 2. Read and Compress snapshot
+	// 2. Read snapshot
 	dbData, err := os.ReadFile(tempSnapshot)
 	if err != nil {
 		log.Printf("SelfBackupWorker: failed to read snapshot: %v", err)
 		return
 	}
-
-	encoder, _ := zstd.NewWriter(nil)
-	compressedDB := encoder.EncodeAll(dbData, nil)
 
 	// 3. Collect Peer discovery info
 	rows, err := e.DB.QueryContext(ctx, "SELECT public_key, ip_address, status FROM peers WHERE status != 'blocked'")
@@ -101,22 +98,46 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 	}
 
 	// 4. Construct Recovery Bundle
-	// Format: [4-byte JSON len][4-byte compressed DB len][JSON][Compressed DB]
-	bundleLen := 8 + len(peerMapJSON) + len(compressedDB)
-	
-	// Padding Logic: Ensure the final encrypted piece is a multiple of 256KB.
+	var buf bytes.Buffer
+	enc, _ := zstd.NewWriter(&buf)
+	tw := tar.NewWriter(enc)
+
+	if dbData != nil {
+		hdr := &tar.Header{Name: "server.db", Size: int64(len(dbData)), Mode: 0644}
+		tw.WriteHeader(hdr)
+		tw.Write(dbData)
+	}
+
+	if peerMapJSON != nil {
+		hdr := &tar.Header{Name: "peers.json", Size: int64(len(peerMapJSON)), Mode: 0644}
+		tw.WriteHeader(hdr)
+		tw.Write(peerMapJSON)
+	}
+
+	if e.ConfigPath != "" {
+		configData, err := os.ReadFile(e.ConfigPath)
+		if err == nil {
+			hdr := &tar.Header{Name: "server.yaml", Size: int64(len(configData)), Mode: 0644}
+			tw.WriteHeader(hdr)
+			tw.Write(configData)
+		}
+	}
+
+	tw.Close()
+	enc.Close()
+
+	bundleLen := buf.Len()
+
+	// Padding Logic: Ensure the final encrypted piece is exactly 256MB.
 	// overhead = 24 (nonce) + 16 (tag) = 40 bytes.
-	const blockSize = 256 * 1024
+	const blockSize = 256 * 1024 * 1024
 	const overhead = 40
-	
+
 	targetSize := ((bundleLen + overhead + blockSize - 1) / blockSize) * blockSize
 	paddingLen := targetSize - overhead - bundleLen
 
 	bundle := make([]byte, bundleLen+paddingLen)
-	binary.BigEndian.PutUint32(bundle[0:4], uint32(len(peerMapJSON)))
-	binary.BigEndian.PutUint32(bundle[4:8], uint32(len(compressedDB)))
-	copy(bundle[8:8+len(peerMapJSON)], peerMapJSON)
-	copy(bundle[8+len(peerMapJSON):8+len(peerMapJSON)+len(compressedDB)], compressedDB)
+	copy(bundle[:bundleLen], buf.Bytes())
 
 	if paddingLen > 0 {
 		if _, err := crypto.ReadRand(bundle[bundleLen:]); err != nil {
@@ -128,40 +149,57 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 	// 5. Encrypt Bundle
 	ciphertext, err := crypto.Encrypt(e.MasterKey, bundle)
 	if err != nil {
-		log.Printf("SelfBackupWorker: failed to encrypt bundle: %v", err)
-		return
+	        log.Printf("SelfBackupWorker: failed to encrypt bundle: %v", err)
+	        return
 	}
 
-	// 6. Ingest into a Special Shard
+	// 5.5 Sign the ciphertext to prove authenticity
+	signature := crypto.SignRecoveryShard(e.MasterKey, ciphertext)
+	// Prepend signature (64 bytes)
+	signedCiphertext := make([]byte, 64+len(ciphertext))
+	copy(signedCiphertext[:64], signature)
+	copy(signedCiphertext[64:], ciphertext)
+	ciphertext = signedCiphertext
+
+	// 6. Ingest into a Special Dedicated Shard
 	blobHash := crypto.Hash(ciphertext)
 	blobHashHex := fmt.Sprintf("%x", blobHash)
 	nowSeq := uint64(time.Now().Unix())
 
-	blobs := []rpc.LocalBlobData{
-		{
-			Hash:           blobHashHex,
-			Data:           ciphertext,
-			IsSpecial:      true,
-			SequenceNumber: nowSeq,
-		},
-	}
-
-	err = e.IngestBlobs(ctx, "system-self-backup", blobs, true)
+	e.mu.Lock()
+	res, err := e.DB.ExecContext(ctx, "INSERT INTO shards (status, size, sequence, mirrored, total_pieces) VALUES ('sealed', ?, ?, 1, 1)", len(ciphertext), nowSeq)
 	if err != nil {
-		log.Printf("SelfBackupWorker: failed to ingest backup: %v", err)
+		e.mu.Unlock()
+		log.Printf("SelfBackupWorker: failed to create dedicated mirrored shard: %v", err)
+		return
+	}
+	shardID, _ := res.LastInsertId()
+	
+	_, err = e.DB.ExecContext(ctx, "INSERT OR IGNORE INTO blobs (hash, size, special) VALUES (?, ?, 1)", blobHashHex, len(ciphertext))
+	if err != nil {
+		e.mu.Unlock()
+		log.Printf("SelfBackupWorker: failed to insert blob: %v", err)
 		return
 	}
 
-	// Find the shard(s) where this blob was stored and mark them as mirrored/special
-	_, err = e.DB.ExecContext(ctx, `
-		UPDATE shards SET mirrored = 1, sequence = ?
-		WHERE id IN (SELECT shard_id FROM blob_locations WHERE blob_hash = ?)
-	`, nowSeq, blobHashHex)
+	_, err = e.DB.ExecContext(ctx, "INSERT INTO blob_locations (blob_hash, shard_id, offset, length, sequence) VALUES (?, ?, 0, ?, 0)", blobHashHex, shardID, len(ciphertext))
 	if err != nil {
-		log.Printf("SelfBackupWorker: failed to mark shards as special: %v", err)
+		e.mu.Unlock()
+		log.Printf("SelfBackupWorker: failed to insert blob location: %v", err)
+		return
+	}
+	e.mu.Unlock()
+
+	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
+	if err := os.WriteFile(shardPath, ciphertext, 0644); err != nil {
+		log.Printf("SelfBackupWorker: failed to write shard file: %v", err)
+		return
 	}
 
+	e.wg.Add(1)
+	go e.encodeShard(shardID)
+
 	if e.Verbose {
-		log.Printf("SelfBackupWorker: Server database backup completed. Hash: %s", blobHashHex)
+		log.Printf("SelfBackupWorker: Server database backup completed in dedicated shard %d. Hash: %s", shardID, blobHashHex)
 	}
 }

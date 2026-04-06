@@ -1,13 +1,13 @@
 package main
 
 import (
-	"crypto/tls"
-	"fmt"
-	"net"
 	"crypto/ed25519"
+	"crypto/tls"
+	"encoding/asn1"
+	"fmt"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"encoding/asn1"
+	"net"
 )
 
 func main() {
@@ -20,30 +20,34 @@ func main() {
 
 	// multistream-select handshake
 	_, err = conn.Write([]byte("\x13/multistream/1.0.0\n"))
-	if err != nil { return }
-	
+	if err != nil {
+		return
+	}
+
 	buf := make([]byte, 1024)
 	conn.Read(buf)
-	
+
 	// request tls
 	_, err = conn.Write([]byte("\x0b/tls/1.0.0\n"))
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	conn.Read(buf) // read ack
 
 	tlsConn := tls.Client(conn, &tls.Config{
 		InsecureSkipVerify: true,
-		NextProtos: []string{"libp2p"},
+		NextProtos:         []string{"libp2p"},
 	})
-	
+
 	if err := tlsConn.Handshake(); err != nil {
 		fmt.Println("TLS Handshake err:", err)
 		return
 	}
-	
+
 	state := tlsConn.ConnectionState()
 	if len(state.PeerCertificates) > 0 {
 		cert := state.PeerCertificates[0]
-		
+
 		extensionOID := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 53594, 1, 1}
 		for _, ext := range cert.Extensions {
 			if ext.Id.Equal(extensionOID) {
