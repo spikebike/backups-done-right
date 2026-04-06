@@ -337,7 +337,7 @@ func main() {
 	go engine.StartGCWorker(ctx)
 
 	if cfg.Discovery.Enabled {
-		go engine.StartDiscoveryWorker(ctx, cfg.Discovery.Mode)
+		go engine.StartDiscoveryWorker(ctx)
 	}
 
 	p2pHost.SetStreamHandler("/bdr/rpc/1.0.0", func(s network.Stream) {

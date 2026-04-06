@@ -23,6 +23,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"golang.org/x/time/rate"
 	"lukechampine.com/blake3"
 	"p2p-backup/internal/config"
@@ -76,6 +77,7 @@ type Engine struct {
 	streamSemaphore       chan struct{}
 	pendingInboundStreams sync.Map
 	StreamBufferPool      sync.Pool
+	DHT                   *dht.IpfsDHT // Shared DHT for peer lookups
 }
 
 // NewEngine creates a new server Engine.
@@ -1439,29 +1441,38 @@ func (e *Engine) AddPeer(ctx context.Context, address string) error {
 		return fmt.Errorf("multiaddress must include /p2p/ PeerID component: %w", err)
 	}
 
-	if err := e.Host.Connect(ctx, *addrInfo); err != nil {
-		return fmt.Errorf("failed to dial peer at %s: %w", address, err)
-	}
-
 	pubKeyHex, err := crypto.PubKeyHexFromPeerID(addrInfo.ID)
 	if err != nil {
 		return fmt.Errorf("failed to extract public key from peer ID: %w", err)
 	}
 
-	// SQLite UPSERT
-	query := `
-		INSERT INTO peers (ip_address, public_key, status)
-		VALUES (?, ?, 'untrusted')
-		ON CONFLICT(public_key) DO UPDATE SET 
-			ip_address=excluded.ip_address
-	`
-	// Store the base address without the peer ID for easier connection later
+	// 1. Validate and register in database first (Resilient Registration)
+	// Store the base address without the peer ID for cleaner dialing later
 	baseAddr, _ := multiaddr.SplitFunc(maddr, func(c multiaddr.Component) bool {
 		return c.Protocol().Code == multiaddr.P_P2P
 	})
 
+	query := `
+		INSERT INTO peers (ip_address, public_key, status, first_seen, last_seen, is_manual)
+		VALUES (?, ?, 'untrusted', CURRENT_TIMESTAMP, NULL, 1)
+		ON CONFLICT(public_key) DO UPDATE SET 
+			ip_address=excluded.ip_address,
+			is_manual=1
+	`
 	_, err = e.DB.ExecContext(ctx, query, baseAddr.String(), pubKeyHex)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to register peer in database: %w", err)
+	}
+
+	// 2. Best-effort initial connection
+	if err := e.Host.Connect(ctx, *addrInfo); err != nil {
+		log.Printf("AddPeer: Registered peer %s, but initial connection failed: %v. Will retry in background.", pubKeyHex, err)
+		return nil
+	}
+
+	// 3. Success: mark them as seen if connected
+	_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET last_seen = CURRENT_TIMESTAMP WHERE public_key = ?", pubKeyHex)
+	return nil
 }
 
 // AddOrUpdatePeer registers a peer based on handshake data without dialing out.
@@ -1699,6 +1710,7 @@ type PeerDBInfo struct {
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
 	ContactInfo         string
+	IsManual            bool
 	TotalShards         uint64
 	CurrentShards       uint64
 	ChallengesMade      uint32
@@ -1710,7 +1722,7 @@ type PeerDBInfo struct {
 func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	// Query all peers from the registry.
 	// We include peers we dial out to AND peers that dial in to us.
-	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, COALESCE(first_seen, last_seen), last_seen, max_storage_size, current_storage_size, outbound_storage_size, contact_info, total_shards, current_shards FROM peers ORDER BY last_seen DESC")
+	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, first_seen, COALESCE(last_seen, ''), max_storage_size, current_storage_size, outbound_storage_size, contact_info, total_shards, current_shards, is_manual FROM peers ORDER BY last_seen DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -1719,7 +1731,7 @@ func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	var peers []PeerDBInfo
 	for rows.Next() {
 		var p PeerDBInfo
-		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo, &p.TotalShards, &p.CurrentShards); err != nil {
+		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo, &p.TotalShards, &p.CurrentShards, &p.IsManual); err != nil {
 			return nil, err
 		}
 		peers = append(peers, p)

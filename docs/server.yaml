@@ -1,0 +1,37 @@
+# Backups Done Right - Example Server Configuration (server.yaml)
+
+# 24-word recovery phrase for the server's identity (PeerID)
+# Generate one using 'p2p-backup gen-mnemonic'
+mnemonic: "all meat seven collect focus mirror thing arrive the various item move focus mirror thing arrive the various item move focus mirror thing"
+
+# Authorized client public keys (found in client's logs/console on startup)
+admin_public_key: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+
+contact_info: "admin@example.com"
+
+network:
+  listen_address: "0.0.0.0:8080"
+  enable_upnp: true
+  standalone_mode: false # Set to true to disable all P2P features (no peers, no discovery)
+  max_upload_kbps: 10240   # 10 MB/s
+  max_download_kbps: 10240 # 10 MB/s
+  max_concurrent_streams: 10
+
+erasure_coding:
+  data_shards_n: 10
+  parity_shards_k: 4
+  target_piece_size_mb: 256
+  challenges_per_piece: 8
+
+storage:
+  sqlite_path: "data/server.db"
+  blob_store_dir: "data/blobs"
+  queue_dir: "data/queue"
+  spool_dir: "data/spool"
+  keep_local_copy: true  # Set to false to delete shards after they are replicated to peers
+  gc_interval_minutes: 720 # 12 hours
+  peer_eviction_hours: 72  # Hours before an unreachable peer's data is migrated
+
+discovery:
+  # Defaults to off. Set to true to advertise this node on the public libp2p DHT.
+  enabled: true

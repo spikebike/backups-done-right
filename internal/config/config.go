@@ -92,8 +92,7 @@ type ServerConfig struct {
 	} `yaml:"storage"`
 
 	Discovery struct {
-		Enabled bool   `yaml:"enabled"`
-		Mode    string `yaml:"mode"` // "client" or "server"
+		Enabled bool `yaml:"enabled"`
 	} `yaml:"discovery"`
 
 	AllowedClients []string     `yaml:"allowed_clients"`
