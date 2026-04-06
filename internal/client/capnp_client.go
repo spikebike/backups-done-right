@@ -291,6 +291,7 @@ func (c *CapnpRPCClient) ListPeers(ctx context.Context) ([]PeerMeta, error) {
 		firstSeen, _ := cp.FirstSeen()
 		lastSeen, _ := cp.LastSeen()
 		contact, _ := cp.ContactInfo()
+		source, _ := cp.Source()
 		peers = append(peers, PeerMeta{
 			ID:                  int64(cp.Id()),
 			IPAddress:           addr,
@@ -300,6 +301,7 @@ func (c *CapnpRPCClient) ListPeers(ctx context.Context) ([]PeerMeta, error) {
 			CurrentStorageSize:  int64(cp.CurrentStorageSize()),
 			OutboundStorageSize: int64(cp.OutboundStorageSize()),
 			ContactInfo:         contact,
+			Source:              source,
 			TotalShards:         cp.TotalShards(),
 			CurrentShards:       cp.CurrentShards(),
 			FirstSeen:           firstSeen,

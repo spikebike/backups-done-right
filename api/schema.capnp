@@ -1,6 +1,6 @@
 @0xdf5e7a9b8c1d2e3f;
 
-using Go = import "/go.capnp";
+using Go = import "go.capnp";
 $Go.package("rpc");
 $Go.import("p2p-backup/internal/rpc");
 
@@ -57,6 +57,7 @@ struct PeerInfo {
   contactInfo @13 :Text;
   totalShards @14 :UInt64;
   currentShards @15 :UInt64;
+  source @16 :Text;
 }
 
 struct ClientInfo {
@@ -120,5 +121,5 @@ interface PeerNode @0xfe39e0e15b88669f {
   listSpecialItems @4 () -> (items :List(TransferMetadata));
 
   # 6. Peer Discovery.
-  announce @5 (listenAddress :Text, contactInfo :Text, callback :PeerNode) -> (success :Bool);
+  announce @5 (listenAddress :Text, contactInfo :Text, callback :PeerNode) -> (success :Bool, listenAddress :Text, contactInfo :Text);
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"time"
 
 	"capnproto.org/go/capnp/v3"
 	capnpserver "capnproto.org/go/capnp/v3/server"
@@ -225,6 +226,7 @@ func (a *backupServerAdapter) ListPeers(ctx context.Context, call rpc.BackupServ
 		cp.SetIntegrityAttempts(p.IntegrityAttempts)
 		cp.SetTotalShards(p.TotalShards)
 		cp.SetCurrentShards(p.CurrentShards)
+		cp.SetSource(p.Source)
 	}
 	return nil
 }
@@ -330,6 +332,20 @@ func (a *peerNodeAdapter) Announce(ctx context.Context, call rpc.PeerNode_announ
 		callback := args.Callback()
 		if callback.IsValid() {
 			a.engine.RegisterActivePeer(peerID, callback.AddRef())
+
+			// 2. Reciprocal Announce: Tell the initiator who WE are.
+			// We call this synchronously so the initiator's database is updated
+			// before this RPC returns success. We use a short timeout to prevent deadlocks.
+			subCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			_, announceRel := callback.Announce(subCtx, func(p rpc.PeerNode_announce_Params) error {
+				p.SetListenAddress(a.engine.ListenAddress)
+				p.SetContactInfo(a.engine.ContactInfo)
+				return nil
+			})
+			if announceRel != nil {
+				announceRel()
+			}
 		}
 	}
 	res, _ := call.AllocResults()

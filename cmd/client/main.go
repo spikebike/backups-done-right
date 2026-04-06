@@ -430,25 +430,48 @@ func main() {
 			log.Fatalf("Failed to list peers: %v", err)
 		}
 
-		fmt.Println("\n=== Active P2P Swarm Nodes ===")
-		fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-10s | %-7s | %-7s | %-7s | %-7s | %-20s | %s\n", "ID", "IP Address", "Status", "Inbound MB", "Outbound MB", "Total", "Curr", "Uptime", "Pass%", "Contact", "Last Seen")
-		fmt.Println(strings.Repeat("-", 170))
+		var active, pending []client.PeerMeta
 		for _, p := range peers {
-			var uptimePct, passPct float64
-			if p.ChallengesMade > 0 {
-				uptimePct = float64(p.ConnectionsOk) / float64(p.ChallengesMade) * 100
+			if p.Source == "manual" {
+				active = append(active, p)
+			} else {
+				pending = append(pending, p)
 			}
-			if p.IntegrityAttempts > 0 {
-				passPct = float64(p.ChallengesPassed) / float64(p.IntegrityAttempts) * 100
-			}
-			fmt.Printf("%-3d | %-20s | %-10s | %10.2f | %10.2f | %-7d | %-7d | %5.1f%% | %5.1f%% | %-20s | %s\n",
-				p.ID, p.IPAddress, p.Status,
-				float64(p.CurrentStorageSize)/(1024*1024),
-				float64(p.OutboundStorageSize)/(1024*1024),
-				p.TotalShards, p.CurrentShards,
-				uptimePct, passPct, p.ContactInfo, p.LastSeen)
 		}
-		fmt.Println("==============================")
+
+		header := func(title string) {
+			fmt.Printf("\n=== %s ===\n", title)
+			fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-10s | %-10s | %-7s | %-7s | %-7s | %-7s | %-20s | %s\n",
+				"ID", "IP Address", "Status", "Source", "Inbound MB", "Outbound MB", "Total", "Curr", "Uptime", "Pass%", "Contact", "Last Seen")
+			fmt.Println(strings.Repeat("-", 185))
+		}
+
+		renderPeers := func(list []client.PeerMeta) {
+			for _, p := range list {
+				var uptimePct, passPct float64
+				if p.ChallengesMade > 0 {
+					uptimePct = float64(p.ConnectionsOk) / float64(p.ChallengesMade) * 100
+				}
+				if p.IntegrityAttempts > 0 {
+					passPct = float64(p.ChallengesPassed) / float64(p.IntegrityAttempts) * 100
+				}
+				fmt.Printf("%-3d | %-20s | %-10s | %-10s | %10.2f | %10.2f | %-7d | %-7d | %5.1f%% | %5.1f%% | %-20s | %s\n",
+					p.ID, p.IPAddress, p.Status, p.Source,
+					float64(p.CurrentStorageSize)/(1024*1024),
+					float64(p.OutboundStorageSize)/(1024*1024),
+					p.TotalShards, p.CurrentShards,
+					uptimePct, passPct, p.ContactInfo, p.LastSeen)
+			}
+			fmt.Println("==============================")
+		}
+
+		header("Active P2P Swarm Nodes")
+		renderPeers(active)
+
+		if len(pending) > 0 {
+			header("Pending Discovery (DHT)")
+			renderPeers(pending)
+		}
 
 		database.Close()
 		return

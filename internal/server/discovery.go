@@ -62,16 +62,13 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context) {
 						continue
 					}
 
-					// Attempt to connect to discovered peers.
-					// libp2p's Host.Connect is smart and won't re-dial existing connections.
-					if err := e.Host.Connect(ctx, peer); err == nil {
+					// Attempt to connect to discovered peers and trigger a handshake.
+					// We use RegisterAndHandshakeDHT which handles the DB entry 
+					// and metadata exchange.
+					if err := e.RegisterAndHandshakeDHT(ctx, peer); err == nil {
 						if e.Verbose {
-							log.Printf("DiscoveryWorker: Successfully connected to discovered peer: %s", peer.ID.String())
+							log.Printf("DiscoveryWorker: Successfully connected and handshaked with discovered peer: %s", peer.ID.String())
 						}
-
-						// Once connected, our RPC handler will eventually see them
-						// via Announce or they can be manually added.
-						// We don't auto-register them in the DB yet to avoid cluttering
 					}
 				}
 			}

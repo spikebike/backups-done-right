@@ -1453,25 +1453,68 @@ func (e *Engine) AddPeer(ctx context.Context, address string) error {
 	})
 
 	query := `
-		INSERT INTO peers (ip_address, public_key, status, first_seen, last_seen, is_manual)
-		VALUES (?, ?, 'untrusted', CURRENT_TIMESTAMP, NULL, 1)
+		INSERT INTO peers (ip_address, public_key, status, first_seen, last_seen, is_manual, source)
+		VALUES (?, ?, 'untrusted', CURRENT_TIMESTAMP, NULL, 1, 'manual')
 		ON CONFLICT(public_key) DO UPDATE SET 
 			ip_address=excluded.ip_address,
-			is_manual=1
+			is_manual=1,
+			source='manual'
 	`
 	_, err = e.DB.ExecContext(ctx, query, baseAddr.String(), pubKeyHex)
 	if err != nil {
 		return fmt.Errorf("failed to register peer in database: %w", err)
 	}
 
-	// 2. Best-effort initial connection
-	if err := e.Host.Connect(ctx, *addrInfo); err != nil {
-		log.Printf("AddPeer: Registered peer %s, but initial connection failed: %v. Will retry in background.", pubKeyHex, err)
-		return nil
+	// 2. Fetch the internal ID to use for the RPC dialer
+	var internalID int64
+	err = e.DB.QueryRowContext(ctx, "SELECT id FROM peers WHERE public_key = ?", pubKeyHex).Scan(&internalID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve peer id: %w", err)
 	}
 
-	// 3. Success: mark them as seen if connected
-	_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET last_seen = CURRENT_TIMESTAMP WHERE public_key = ?", pubKeyHex)
+	// 3. Proactively trigger a handshake (Announce)
+	// GetOrDialPeer will connect, announce us, and receive their announce (updating contact_info)
+	client, err := e.GetOrDialPeer(ctx, internalID)
+	if err != nil {
+		log.Printf("AddPeer: Registered peer %s, but handshake failed: %v. Metadata will update later.", pubKeyHex, err)
+		return nil
+	}
+	client.Close() // Release the ref since we don't need it immediately
+
+	return nil
+}
+
+// RegisterAndHandshakeDHT is called by the DiscoveryWorker when a new peer is found on the DHT.
+// It registers the peer with 'source=dht' and triggers a handshake to get their metadata.
+func (e *Engine) RegisterAndHandshakeDHT(ctx context.Context, info peer.AddrInfo) error {
+	pubKeyHex, err := crypto.PubKeyHexFromPeerID(info.ID)
+	if err != nil {
+		return err
+	}
+
+	// 1. Initial registration as 'discovered'/'dht'
+	// We use e.AnnouncePeer logic but we don't have contact info yet.
+	// Note: e.AnnouncePeer uses ON CONFLICT DO UPDATE, which is exactly what we want.
+	addrStr := ""
+	if len(info.Addrs) > 0 {
+		addrStr = info.Addrs[0].String()
+	}
+	if addrStr == "" {
+		return fmt.Errorf("no address for discovered peer %s", info.ID)
+	}
+
+	peerID, err := e.AnnouncePeer(ctx, pubKeyHex, addrStr, "")
+	if err != nil {
+		return err
+	}
+
+	// 2. Trigger handshake to get their actual metadata (contact_info)
+	// GetOrDialPeer will call Announce, and they will Announce back.
+	client, err := e.GetOrDialPeer(ctx, peerID)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
 	return nil
 }
 
@@ -1518,10 +1561,12 @@ func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress, con
 		return 0, nil
 	}
 
-	// Dynamic registration or update
+	// Dynamic registration or update.
+	// Logic: If it's a new peer, it defaults to 'discovered' status and 'dht' source.
+	// If it already exists, we preserve the existing source (so 'manual' stays 'manual').
 	_, err := e.DB.ExecContext(ctx, `
-		INSERT INTO peers (ip_address, public_key, status, contact_info)
-		VALUES (?, ?, 'untrusted', ?)
+		INSERT INTO peers (ip_address, public_key, status, contact_info, source, is_manual)
+		VALUES (?, ?, 'discovered', ?, 'dht', 0)
 		ON CONFLICT(public_key) DO UPDATE SET 
 			ip_address=excluded.ip_address,
 			contact_info=excluded.contact_info,
@@ -1710,6 +1755,7 @@ type PeerDBInfo struct {
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
 	ContactInfo         string
+	Source              string
 	IsManual            bool
 	TotalShards         uint64
 	CurrentShards       uint64
@@ -1722,7 +1768,7 @@ type PeerDBInfo struct {
 func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	// Query all peers from the registry.
 	// We include peers we dial out to AND peers that dial in to us.
-	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, first_seen, COALESCE(last_seen, ''), max_storage_size, current_storage_size, outbound_storage_size, contact_info, total_shards, current_shards, is_manual FROM peers ORDER BY last_seen DESC")
+	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, first_seen, COALESCE(last_seen, ''), max_storage_size, current_storage_size, outbound_storage_size, contact_info, total_shards, current_shards, is_manual, source FROM peers ORDER BY last_seen DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -1731,7 +1777,7 @@ func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	var peers []PeerDBInfo
 	for rows.Next() {
 		var p PeerDBInfo
-		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo, &p.TotalShards, &p.CurrentShards, &p.IsManual); err != nil {
+		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo, &p.TotalShards, &p.CurrentShards, &p.IsManual, &p.Source); err != nil {
 			return nil, err
 		}
 		peers = append(peers, p)
