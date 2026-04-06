@@ -54,6 +54,12 @@ type ChunkArchive struct {
 	Size      int
 }
 
+type sessionHashEntry struct {
+	encHashHex string
+	err        error
+	done       chan struct{}
+}
+
 type CryptoPool struct {
 	Key            []byte
 	NumWorkers     int
@@ -120,7 +126,11 @@ func (p *CryptoPool) Wait() {
 func (p *CryptoPool) worker(jobChan <-chan FileJob, wg *sync.WaitGroup, workerID int) {
 	defer wg.Done()
 
-	zstdEncoder, _ := zstd.NewWriter(nil)
+	zstdEncoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		log.Printf("[Worker %d] Critical Error: Failed to initialize Zstd encoder: %v", workerID, err)
+		return
+	}
 	defer zstdEncoder.Close()
 
 	// Worker-local compression buffer, reused across all chunks/files.
@@ -218,19 +228,18 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 			var encHashHex string
 			ciphertextSize := len(chunk) + cipherOverhead
 
-			if _, loaded := p.sessionUploads.LoadOrStore(plainHashHex, ""); loaded {
+			entry := &sessionHashEntry{done: make(chan struct{})}
+			actualEntry, loaded := p.sessionUploads.LoadOrStore(plainHashHex, entry)
+			if loaded {
 				// Another worker is processing this hash — wait for it to finish encrypting
-				start := time.Now()
-				for time.Since(start) < 5*time.Second { // Longer timeout shouldn't be needed, but safe
-					if val, ok := p.sessionUploads.Load(plainHashHex); ok {
-						if s := val.(string); s != "" {
-							encHashHex = s
-							break
-						}
+				e := actualEntry.(*sessionHashEntry)
+				select {
+				case <-e.done:
+					if e.err != nil {
+						return e.err
 					}
-					time.Sleep(10 * time.Millisecond)
-				}
-				if encHashHex == "" {
+					encHashHex = e.encHashHex
+				case <-time.After(5 * time.Minute):
 					return fmt.Errorf("timeout waiting for concurrent worker to process hash %s", plainHashHex)
 				}
 			} else {
@@ -238,17 +247,20 @@ func (p *CryptoPool) processFile(job FileJob, zstdEncoder *zstd.Encoder, compres
 				cipherBuf := <-p.cipherBufs
 				ciphertext, encErr := crypto.EncryptTo(p.Key, chunk, cipherBuf)
 				if encErr != nil {
+					entry.err = fmt.Errorf("encryption error: %w", encErr)
+					close(entry.done)
 					p.cipherBufs <- cipherBuf[:0]
 					p.sessionUploads.Delete(plainHashHex)
-					return fmt.Errorf("encryption error: %w", encErr)
+					return entry.err
 				}
 
 				// Hash ciphertext chunk
 				encHash := crypto.Hash(ciphertext)
 				encHashHex = hex.EncodeToString(encHash)
 
-				// Update session cache with actual encHashHex so waiting workers can proceed
-				p.sessionUploads.Store(plainHashHex, encHashHex)
+				// Update session cache with actual encHashHex and signal waiting workers
+				entry.encHashHex = encHashHex
+				close(entry.done)
 
 				// Queue for upload (In-Memory) — uploader calls Release to return buffer
 				bufs := p.cipherBufs // capture for closure
