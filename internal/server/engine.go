@@ -68,6 +68,8 @@ type Engine struct {
 	// Bandwidth Throttling
 	UploadLimiter   *rate.Limiter
 	DownloadLimiter *rate.Limiter
+	// Discovery
+	BootstrapPeers []string
 	// Peer Management
 	LocalPeerNode         rpc.PeerNode
 	ActivePeers           map[int64]rpc.PeerNode
@@ -86,7 +88,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool, adoptionEnabled bool, adoptionPeriodMinutes int, adoptionChallengePieces int) *Engine {
+func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool, adoptionEnabled bool, adoptionPeriodMinutes int, adoptionChallengePieces int, bootstrapPeers []string) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -172,6 +174,7 @@ func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, q
 		AdoptionEnabled:            adoptionEnabled,
 		AdoptionPeriodMinutes:      adoptionPeriodMinutes,
 		AdoptionChallengePieces:    adoptionChallengePieces,
+		BootstrapPeers:             bootstrapPeers,
 		pendingItems:               make(map[string]rpc.Metadata),
 		streamSemaphore:            make(chan struct{}, maxConcurrentStreams),
 		StreamBufferPool: sync.Pool{

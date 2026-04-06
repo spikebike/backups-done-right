@@ -35,11 +35,33 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context) {
 		return
 	}
 
+	// 3. Connect to initial bootstrap peers
+	// Using default libp2p bootstrap nodes to ensure we have a path to the global DHT.
+	bootstrapPeers := dht.DefaultBootstrapPeers
+	// Also add any manually configured bootstrap peers
+	for _, addrStr := range e.BootstrapPeers {
+		maddr, err := multiaddr.NewMultiaddr(addrStr)
+		if err == nil {
+			bootstrapPeers = append(bootstrapPeers, maddr)
+		}
+	}
+
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromP2pAddr(addr)
+		if err == nil {
+			// Connect with a short timeout to prevent blocking everything
+			dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			if err := e.Host.Connect(dialCtx, *pi); err == nil {
+				if e.Verbose {
+					log.Printf("DiscoveryWorker: Connected to bootstrap node: %s", pi.ID)
+				}
+			}
+			cancel()
+		}
+	}
+
 	// Share DHT globally for peer tracking fallbacks
 	e.DHT = kademliaDHT
-
-	// 3. Connect to initial bootstrap peers if provided in config or use default libp2p ones
-	// For now, we rely on manual addpeer to seed the routing table, or we can add public ones.
 
 	routingDiscovery := routing.NewRoutingDiscovery(kademliaDHT)
 

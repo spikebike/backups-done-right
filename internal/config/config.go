@@ -92,7 +92,8 @@ type ServerConfig struct {
 	} `yaml:"storage"`
 
 	Discovery struct {
-		Enabled           bool `yaml:"enabled"`
+		Enabled           bool     `yaml:"enabled"`
+		BootstrapPeers    []string `yaml:"bootstrap_peers"`
 		AutomaticAdoption struct {
 			Enabled           bool `yaml:"enabled"`
 			TestPeriodMinutes int  `yaml:"test_period_minutes"`

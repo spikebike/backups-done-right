@@ -136,6 +136,7 @@ func main() {
 		false,    // Adoption disabled
 		0,        // Adoption period minutes
 		0,        // Adoption challenge pieces
+		nil,
 	)
 	// ---------------------------
 
