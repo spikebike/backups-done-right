@@ -18,11 +18,6 @@ import (
 	"p2p-backup/internal/rpc"
 )
 
-const (
-	OpCodePush byte = 0x01
-	OpCodePull byte = 0x02
-)
-
 type PendingStreamMeta struct {
 	PeerID          int64
 	IsSpecial       bool
