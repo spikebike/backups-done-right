@@ -54,7 +54,8 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context) {
 			discoveryutil.Advertise(ctx, routingDiscovery, DiscoveryServiceTag)
 
 			if e.Verbose {
-				log.Printf("DiscoveryWorker: Announced our presence to the DHT (%s)", DiscoveryServiceTag)
+				rtSize := kademliaDHT.RoutingTable().Size()
+				log.Printf("DiscoveryWorker: Announced our presence to the DHT (%s). Routing Table size: %d", DiscoveryServiceTag, rtSize)
 			}
 
 			// Find others
@@ -62,10 +63,14 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context) {
 			if err != nil {
 				log.Printf("DiscoveryWorker: failed to find peers: %v", err)
 			} else {
+				foundSelf := false
+				foundOthers := 0
 				for peer := range peerChan {
 					if peer.ID == e.Host.ID() {
+						foundSelf = true
 						continue
 					}
+					foundOthers++
 
 					// Attempt to connect to discovered peers and trigger a handshake.
 					// We use RegisterAndHandshakeDHT which handles the DB entry 
@@ -75,6 +80,10 @@ func (e *Engine) StartDiscoveryWorker(ctx context.Context) {
 							log.Printf("DiscoveryWorker: Successfully connected and handshaked with discovered peer: %s", peer.ID.String())
 						}
 					}
+				}
+
+				if e.Verbose {
+					log.Printf("DiscoveryWorker: Scan complete. Found self: %t, Found others: %d", foundSelf, foundOthers)
 				}
 			}
 
