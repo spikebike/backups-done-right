@@ -239,6 +239,68 @@ func (c *CapnpPeerClient) ReleasePiece(ctx context.Context, hashBytes []byte) er
 	return nil
 }
 
+func (c *CapnpPeerClient) DownloadItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error) {
+	req, release := c.clientStub.DownloadItems(ctx, func(p rpc.PeerNode_downloadItems_Params) error {
+		capnpHashes, err := p.NewChecksums(int32(len(hashes)))
+		if err != nil {
+			return err
+		}
+		for i, h := range hashes {
+			hashBytes, _ := hex.DecodeString(h)
+			capnpHashes.Set(i, hashBytes)
+		}
+		return nil
+	})
+	defer release()
+
+	res, err := req.Struct()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read DownloadItems results: %w", err)
+	}
+
+	capnpItems, err := res.Items()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read downloaded items: %w", err)
+	}
+
+	var foundItems []rpc.ItemData
+	for i := 0; i < capnpItems.Len(); i++ {
+		ci := capnpItems.At(i)
+		cm, err := ci.Meta()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read item %d metadata: %w", i, err)
+		}
+		hashBytes, _ := cm.Checksum()
+		meta := rpc.Metadata{
+			Hash:       hex.EncodeToString(hashBytes),
+			Size:       int64(cm.Size()),
+			IsSpecial:  cm.IsSpecial(),
+			PieceIndex: int(cm.PieceIndex()),
+		}
+		dataBytes, _ := ci.Data()
+		dataCopy := make([]byte, len(dataBytes))
+		copy(dataCopy, dataBytes)
+
+		foundItems = append(foundItems, rpc.ItemData{
+			Meta: meta,
+			Data: dataCopy,
+		})
+	}
+
+	capnpMissing, err := res.Missing()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read missing items: %w", err)
+	}
+
+	var missingHashes []string
+	for i := 0; i < capnpMissing.Len(); i++ {
+		hashBytes, _ := capnpMissing.At(i)
+		missingHashes = append(missingHashes, hex.EncodeToString(hashBytes))
+	}
+
+	return foundItems, missingHashes, nil
+}
+
 func (c *CapnpPeerClient) ListSpecialItems(ctx context.Context) ([]rpc.Metadata, error) {
 	req, release := c.clientStub.ListSpecialItems(ctx, nil)
 	defer release()

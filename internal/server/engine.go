@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,10 @@ type Engine struct {
 	ContactInfo                string
 	StandaloneMode             bool
 	ConfigPath                 string
+	// Automatic Adoption
+	AdoptionEnabled        bool
+	AdoptionPeriodMinutes  int
+	AdoptionChallengePieces int
 	// Bandwidth Throttling
 	UploadLimiter   *rate.Limiter
 	DownloadLimiter *rate.Limiter
@@ -81,7 +86,7 @@ type Engine struct {
 }
 
 // NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool) *Engine {
+func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool, adoptionEnabled bool, adoptionPeriodMinutes int, adoptionChallengePieces int) *Engine {
 	if untrustedLimitMB <= 0 {
 		untrustedLimitMB = 1024
 	}
@@ -164,6 +169,9 @@ func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, q
 		ContactInfo:                contactInfo,
 		StandaloneMode:             standaloneMode,
 		ConfigPath:                 configPath,
+		AdoptionEnabled:            adoptionEnabled,
+		AdoptionPeriodMinutes:      adoptionPeriodMinutes,
+		AdoptionChallengePieces:    adoptionChallengePieces,
 		pendingItems:               make(map[string]rpc.Metadata),
 		streamSemaphore:            make(chan struct{}, maxConcurrentStreams),
 		StreamBufferPool: sync.Pool{
@@ -1515,8 +1523,137 @@ func (e *Engine) RegisterAndHandshakeDHT(ctx context.Context, info peer.AddrInfo
 		return err
 	}
 	defer client.Close()
+
+	// 3. Trigger Automatic Adoption if enabled
+	if e.AdoptionEnabled && e.AdoptionChallengePieces > 0 {
+		var status string
+		err = e.DB.QueryRowContext(ctx, "SELECT adoption_status FROM peers WHERE id = ?", peerID).Scan(&status)
+		if err == nil && status == "none" {
+			go func() {
+				if err := e.StartAdoptionTest(context.Background(), peerID); err != nil {
+					log.Printf("Adoption: Failed to start test for peer %d: %v", peerID, err)
+				}
+			}()
+		}
+	}
+
 	return nil
 }
+
+func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
+	if e.Verbose {
+		log.Printf("Adoption: Starting test for peer %d (%d pieces)...", peerID, e.AdoptionChallengePieces)
+	}
+
+	_, err := e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'testing', adoption_start_at = CURRENT_TIMESTAMP WHERE id = ?", peerID)
+	if err != nil {
+		return err
+	}
+
+	pieceSize := int64(256 * 1024 * 1024) // 256MB adoption test pieces
+
+	for i := 0; i < e.AdoptionChallengePieces; i++ {
+		// Generate random data stream and calculate hash on the fly
+		hasher := blake3.New(32, nil)
+		// We use a repeatable but unique seed for this piece
+		seed := make([]byte, 32)
+		rand.Read(seed)
+		
+		// Create a reader that generates random data
+		randomReader := &randomDataStream{
+			total:  pieceSize,
+			seed:   seed,
+			hasher: hasher,
+		}
+
+		hashHex := ""
+		
+		// Wrap in a reader that captures the hash when fully read
+		var streamItems []rpc.StreamItem
+		streamItems = append(streamItems, rpc.StreamItem{
+			Header: rpc.StreamItemHeader{
+				OpCode: rpc.OpCodePush,
+				Flags:  rpc.FlagTypePeerShard,
+				Size:   uint64(pieceSize),
+			},
+			Data: randomReader,
+		})
+
+		// We need the hash BEFORE we tell the peer the hash in the header...
+		// Wait, PushPieceBatched takes the hash in the header.
+		// So we actually have to generate the hash first if we want to use the standard Push mechanism.
+		// Since it's only 256MB and we want to avoid disk, let's just generate it in a quick pass.
+		// Actually, we can just pre-calculate it by running the random generator once.
+		
+		preHasher := blake3.New(32, nil)
+		preReader := &randomDataStream{total: pieceSize, seed: seed, hasher: preHasher}
+		io.Copy(io.Discard, preReader)
+		hashHex = hex.EncodeToString(preHasher.Sum(nil))
+		hashBytes, _ := hex.DecodeString(hashHex)
+		copy(streamItems[0].Header.Hash[:], hashBytes)
+
+		// RESET the reader for the actual upload
+		randomReader.reset()
+
+		if e.Verbose {
+			log.Printf("Adoption: Uploading test piece %d/%d (hash=%s) to peer %d", i+1, e.AdoptionChallengePieces, hashHex[:12], peerID)
+		}
+
+		err = e.PushPieceBatched(ctx, peerID, streamItems)
+		if err != nil {
+			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
+			return fmt.Errorf("failed to upload adoption piece: %w", err)
+		}
+
+		// Record the piece in hosted_shards with is_special = 2
+		_, err = e.DB.ExecContext(ctx, "INSERT INTO hosted_shards (hash, size, peer_id, is_special) VALUES (?, ?, ?, 2)", hashHex, pieceSize, peerID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type randomDataStream struct {
+	total  int64
+	read   int64
+	seed   []byte
+	hasher io.Writer
+	source *rand.Rand
+}
+
+func (s *randomDataStream) Read(p []byte) (n int, err error) {
+	if s.read >= s.total {
+		return 0, io.EOF
+	}
+	if s.source == nil {
+		s.reset()
+	}
+
+	remaining := s.total - s.read
+	toRead := len(p)
+	if int64(toRead) > remaining {
+		toRead = int(remaining)
+	}
+
+	n, _ = s.source.Read(p[:toRead])
+	if s.hasher != nil {
+		s.hasher.Write(p[:n])
+	}
+	s.read += int64(n)
+	return n, nil
+}
+
+func (s *randomDataStream) reset() {
+	var seedInt64 int64
+	for i := 0; i < 8 && i < len(s.seed); i++ {
+		seedInt64 = (seedInt64 << 8) | int64(s.seed[i])
+	}
+	s.source = rand.New(rand.NewSource(seedInt64))
+	s.read = 0
+}
+
 
 // AddOrUpdatePeer registers a peer based on handshake data without dialing out.
 func (e *Engine) AddOrUpdatePeer(ctx context.Context, address, pubKeyHex string) (int64, error) {

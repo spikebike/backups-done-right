@@ -352,3 +352,24 @@ func (a *peerNodeAdapter) Announce(ctx context.Context, call rpc.PeerNode_announ
 	res.SetSuccess(err == nil)
 	return nil
 }
+
+func (a *peerNodeAdapter) DownloadItems(ctx context.Context, call rpc.PeerNode_downloadItems) error {
+	list, _ := call.Args().Checksums()
+	hashes := a.decodeChecksumList(list)
+	found, missing, err := a.engine.GetItems(ctx, hashes)
+	if err != nil {
+		return err
+	}
+	res, _ := call.AllocResults()
+	itemList, _ := res.NewItems(int32(len(found)))
+	for i, item := range found {
+		ci := itemList.At(i)
+		cm, _ := rpc.MetadataToCapnp(ci.Segment(), item.Meta)
+		ci.SetMeta(cm)
+		ci.SetData(item.Data)
+	}
+	missingList, _ := a.encodeChecksumList(res.Segment(), missing)
+	res.SetMissing(missingList)
+	return nil
+}
+

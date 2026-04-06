@@ -122,4 +122,7 @@ interface PeerNode @0xfe39e0e15b88669f {
 
   # 6. Peer Discovery.
   announce @5 (listenAddress :Text, contactInfo :Text, callback :PeerNode) -> (success :Bool, listenAddress :Text, contactInfo :Text);
+
+  # 7. Retrieval: Retrieve specific pieces by their checksums.
+  downloadItems @6 (checksums :List(Data)) -> (items :List(TransferData), missing :List(Data));
 }

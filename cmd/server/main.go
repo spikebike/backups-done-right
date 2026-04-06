@@ -311,6 +311,9 @@ func main() {
 		cfg.ContactInfo,
 		cfg.Network.MaxConcurrentStreams,
 		cfg.Network.StandaloneMode,
+		cfg.Discovery.AutomaticAdoption.Enabled,
+		cfg.Discovery.AutomaticAdoption.TestPeriodMinutes,
+		cfg.Discovery.AutomaticAdoption.ChallengePieces,
 	)
 
 	if verbose {
@@ -338,6 +341,9 @@ func main() {
 
 	if cfg.Discovery.Enabled {
 		go engine.StartDiscoveryWorker(ctx)
+		if cfg.Discovery.AutomaticAdoption.Enabled {
+			go engine.StartAdoptionWorker(ctx)
+		}
 	}
 
 	p2pHost.SetStreamHandler("/bdr/rpc/1.0.0", func(s network.Stream) {
@@ -457,7 +463,7 @@ func runRecover(mnemonic, destDir string, verbose bool) {
 
 	db, _ := server.InitDB(":memory:")
 	defer db.Close()
-	engine := server.NewEngine(db, "", "", "", "", 10, 4, 1024, false, p2pHost, "", 1024, verbose, false, 8, 30, 30, 0.5, 30, 0, 30, 4, -1, -1, -1, id.MasterKey, "", "", 4, false)
+	engine := server.NewEngine(db, "", "", "", "", 10, 4, 1024, false, p2pHost, "", 1024, verbose, false, 8, 30, 30, 0.5, 30, 0, 30, 4, -1, -1, -1, id.MasterKey, "", "", 4, false, false, 0, 0)
 
 	done := make(chan struct{})
 	p2pHost.SetStreamHandler("/bdr/rpc/1.0.0", func(s network.Stream) {

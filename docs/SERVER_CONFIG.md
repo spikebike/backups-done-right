@@ -39,6 +39,21 @@
 | `self_backup_interval_minutes` | int | 1440 | How often to backup the server's own database to the swarm (default 24 hours) |
 | `untrusted_peer_upload_limit_mb` | int | 1024 | Max MB an untrusted peer may store. Set to 0 to reject all untrusted peers |
 
+## discovery
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | false | Enable DHT-based peer discovery |
+| `listen_address` | string | `0.0.0.0:8080` (UDP) | Address for DHT Kademlia queries |
+| `bootstrap_peers` | []string | — | List of multiaddrs to seed the DHT from |
+| `automatic_adoption` | object | — | Configuration for testing new DHT-discovered peers |
+
+### automatic_adoption
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | false | If true, automatically test and promote new peers to 'trusted' |
+| `test_period_minutes` | int | 60 | Duration the peer must hold challenge data before verification |
+| `challenge_pieces` | int | 1 | Number of 256MB random pieces sent to the peer for testing |
+
 ## Example
 ```yaml
 mnemonic: "word1 word2 ... word24"
@@ -63,4 +78,11 @@ storage:
   gc_interval_minutes: 360
   self_backup_interval_minutes: 1440
   untrusted_peer_upload_limit_mb: 1024
+
+discovery:
+  enabled: true
+  automatic_adoption:
+    enabled: true
+    test_period_minutes: 60
+    challenge_pieces: 1
 ```

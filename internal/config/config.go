@@ -92,7 +92,12 @@ type ServerConfig struct {
 	} `yaml:"storage"`
 
 	Discovery struct {
-		Enabled bool `yaml:"enabled"`
+		Enabled           bool `yaml:"enabled"`
+		AutomaticAdoption struct {
+			Enabled           bool `yaml:"enabled"`
+			TestPeriodMinutes int  `yaml:"test_period_minutes"`
+			ChallengePieces   int  `yaml:"challenge_pieces"`
+		} `yaml:"automatic_adoption"`
 	} `yaml:"discovery"`
 
 	AllowedClients []string     `yaml:"allowed_clients"`

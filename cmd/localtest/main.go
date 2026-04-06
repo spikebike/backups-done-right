@@ -133,6 +133,9 @@ func main() {
 		"",       // No contact info for localtest
 		4,        // Default 4 concurrent streams
 		false,    // Not standalone mode
+		false,    // Adoption disabled
+		0,        // Adoption period minutes
+		0,        // Adoption challenge pieces
 	)
 	// ---------------------------
 
