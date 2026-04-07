@@ -810,6 +810,32 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 	return nil
 }
 
+// GetHostedItems retrieves peer shards hosted by this server. Returns found items, missing hashes, and error.
+func (e *Engine) GetHostedItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error) {
+	var found []rpc.ItemData
+	var missing []string
+
+	for _, h := range hashes {
+		path := filepath.Join(e.BlobStoreDir, "peer_"+h)
+		fullData, err := os.ReadFile(path)
+		if err != nil {
+			missing = append(missing, h)
+			continue
+		}
+
+		found = append(found, rpc.ItemData{
+			Meta: rpc.Metadata{
+				Hash:      h,
+				Size:      int64(len(fullData)),
+				IsSpecial: false,
+			},
+			Data: fullData,
+		})
+	}
+
+	return found, missing, nil
+}
+
 // GetItems retrieves the requested items. Returns found items, missing hashes, and error.
 func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData, []string, error) {
 	var found []rpc.ItemData
@@ -819,7 +845,7 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 		var isSpecial bool
 		err := e.DB.QueryRowContext(ctx, "SELECT special FROM blobs WHERE hash = ?", h).Scan(&isSpecial)
 		if err != nil {
-			missing = append(missing, h)
+			log.Printf("GetHostedItems failed for %s: %v", h, err); missing = append(missing, h)
 			continue
 		}
 
@@ -827,7 +853,7 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 		rows, err := e.DB.QueryContext(ctx, "SELECT shard_id, offset, length FROM blob_locations WHERE blob_hash = ? ORDER BY sequence ASC", h)
 		if err != nil {
 			log.Printf("GetItems error: failed to query locations for %s: %v", h, err)
-			missing = append(missing, h)
+			log.Printf("GetHostedItems failed for %s: %v", h, err); missing = append(missing, h)
 			continue
 		}
 
@@ -863,7 +889,7 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 			var err error
 			fullData, err = os.ReadFile(path)
 			if err != nil {
-				missing = append(missing, h)
+				log.Printf("GetHostedItems failed for %s: %v", h, err); missing = append(missing, h)
 				continue
 			}
 		}

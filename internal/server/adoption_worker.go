@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lukechampine.com/blake3"
+	"p2p-backup/internal/crypto"
 )
 
 // StartAdoptionWorker periodically checks for peers that have completed their testing period
@@ -99,31 +100,28 @@ func (e *Engine) verifyAdoption(ctx context.Context, peerID int64) error {
 		return fmt.Errorf("no test pieces found for peer %d", peerID)
 	}
 
-	client, err := e.GetOrDialPeer(ctx, peerID)
+	var pubKeyHex string
+	err = e.DB.QueryRowContext(ctx, "SELECT public_key FROM peers WHERE id = ?", peerID).Scan(&pubKeyHex)
 	if err != nil {
-		return fmt.Errorf("failed to dial peer: %w", err)
+		return fmt.Errorf("failed to get pubkey for peer: %w", err)
 	}
-	defer client.Close()
+	pid, err := crypto.PeerIDFromPubKeyHex(pubKeyHex)
+	if err != nil {
+		return fmt.Errorf("failed to get peer.ID: %w", err)
+	}
 
 	for _, p := range pieces {
 		if e.Verbose {
 			log.Printf("AdoptionWorker: Requesting retrieval of test piece %s from peer %d...", p.hash[:12], peerID)
 		}
 
-		// Use DownloadItems to retrieve the piece
-		items, missing, err := client.DownloadItems(ctx, []string{p.hash})
+		data, err := e.PullPieceRaw(ctx, pid, p.hash)
 		if err != nil {
-			return fmt.Errorf("download error for %s: %w", p.hash, err)
-		}
-		if len(missing) > 0 {
-			return fmt.Errorf("peer claims piece %s is missing", p.hash)
-		}
-		if len(items) != 1 {
-			return fmt.Errorf("unexpected item count for %s", p.hash)
+			return fmt.Errorf("pull error for %s: %w", p.hash, err)
 		}
 
 		// Verify hash
-		h := blake3.Sum256(items[0].Data)
+		h := blake3.Sum256(data)
 		downloadedHash := hex.EncodeToString(h[:])
 		if downloadedHash != p.hash {
 			return fmt.Errorf("hash mismatch for %s (expected %s, got %s)", p.hash, p.hash, downloadedHash)

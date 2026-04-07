@@ -356,7 +356,7 @@ func (a *peerNodeAdapter) Announce(ctx context.Context, call rpc.PeerNode_announ
 func (a *peerNodeAdapter) DownloadItems(ctx context.Context, call rpc.PeerNode_downloadItems) error {
 	list, _ := call.Args().Checksums()
 	hashes := a.decodeChecksumList(list)
-	found, missing, err := a.engine.GetItems(ctx, hashes)
+	found, missing, err := a.engine.GetHostedItems(ctx, hashes)
 	if err != nil {
 		return err
 	}
