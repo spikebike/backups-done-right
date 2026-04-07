@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	crypto_rand "crypto/rand"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -1594,7 +1595,7 @@ func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
 		hasher := blake3.New(32, nil)
 		// We use a repeatable but unique seed for this piece
 		seed := make([]byte, 32)
-		rand.Read(seed)
+		crypto_rand.Read(seed)
 		
 		// Create a reader that generates random data
 		randomReader := &randomDataStream{

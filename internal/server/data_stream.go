@@ -392,5 +392,15 @@ func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex stri
 		return fmt.Errorf("failed to receive pull response batch: %w", err)
 	}
 
+	// Read Status Byte
+	ack := make([]byte, 1)
+	if _, err := io.ReadFull(throttledStream, ack); err != nil {
+		return fmt.Errorf("failed to read response status: %w", err)
+	}
+
+	if ack[0] != 0 {
+		return fmt.Errorf("remote pull processing failed (status %d)", ack[0])
+	}
+
 	return nil
 }
