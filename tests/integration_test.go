@@ -410,6 +410,10 @@ func (h *MockPeerHandler) Announce(ctx context.Context, call rpc.PeerNode_announ
 	return nil
 }
 
+func (h *MockPeerHandler) DownloadItems(ctx context.Context, call rpc.PeerNode_downloadItems) error {
+	return nil
+}
+
 func TestOutboundWorkerFlow(t *testing.T) {
 	baseDir := t.TempDir()
 	sourceDir := filepath.Join(baseDir, "source")

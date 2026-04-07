@@ -1602,6 +1602,26 @@ func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
 			log.Printf("Adoption: Uploading test piece %d/%d (hash=%s) to peer %d", i+1, e.AdoptionChallengePieces, hashHex[:12], peerID)
 		}
 
+		client, err := e.GetOrDialPeer(ctx, peerID)
+		if err != nil {
+			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
+			return fmt.Errorf("failed to dial peer for adoption: %w", err)
+		}
+
+		meta := []rpc.Metadata{
+			{
+				Hash:       hashHex,
+				Size:       pieceSize,
+				IsSpecial:  false, // Adoption piece doesn't need to be strictly special on the receiver side
+				PieceIndex: 0,
+			},
+		}
+
+		if err := client.PrepareUpload(ctx, meta); err != nil {
+			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
+			return fmt.Errorf("failed to prepare upload for adoption piece: %w", err)
+		}
+
 		err = e.PushPieceBatched(ctx, peerID, streamItems)
 		if err != nil {
 			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
