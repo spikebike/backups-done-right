@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"p2p-backup/internal/config"
 	"p2p-backup/internal/crypto"
@@ -234,9 +235,28 @@ func main() {
 		log.Fatalf("Invalid listen address %s: %v", listenAddr, err)
 	}
 
-	quicAddr := fmt.Sprintf("/ip4/%s/udp/%s/quic-v1", hostAddr, portStr)
-	tcpAddr := fmt.Sprintf("/ip4/%s/tcp/%s", hostAddr, portStr)
-
+	var listenAddrs []string
+	if hostAddr == "0.0.0.0" || hostAddr == "" {
+		// Listen on all interfaces (IPv4 and IPv6)
+		listenAddrs = append(listenAddrs,
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", portStr),
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%s/quic-v1", portStr),
+			fmt.Sprintf("/ip6/::/tcp/%s", portStr),
+			fmt.Sprintf("/ip6/::/udp/%s/quic-v1", portStr),
+		)
+	} else if strings.Contains(hostAddr, ":") {
+		// IPv6 address
+		listenAddrs = append(listenAddrs,
+			fmt.Sprintf("/ip6/%s/tcp/%s", hostAddr, portStr),
+			fmt.Sprintf("/ip6/%s/udp/%s/quic-v1", hostAddr, portStr),
+		)
+	} else {
+		// IPv4 address
+		listenAddrs = append(listenAddrs,
+			fmt.Sprintf("/ip4/%s/tcp/%s", hostAddr, portStr),
+			fmt.Sprintf("/ip4/%s/udp/%s/quic-v1", hostAddr, portStr),
+		)
+	}
 	// Since we need to pass a private key to libp2p, let's extract it from the id.TLSCert
 	edPrivKey := id.TLSCert.PrivateKey.(ed25519.PrivateKey)
 	p2pPrivKey, err := crypto.Libp2pKeyFromEd25519(edPrivKey)
@@ -250,7 +270,7 @@ func main() {
 	}
 
 	p2pOpts := []libp2p.Option{
-		libp2p.ListenAddrStrings(quicAddr, tcpAddr),
+		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.Identity(p2pPrivKey),
 		// NAT Traversal
 		libp2p.EnableRelay(), // Enable acting as a limited v2 relay for others (Circuit Relay v2)

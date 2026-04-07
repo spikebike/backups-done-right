@@ -151,7 +151,7 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('hosted_shards') WHERE name = 'ref_count'").Scan(&hasRefCount)
 	var pkCount int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('hosted_shards') WHERE pk > 0").Scan(&pkCount)
-	
+
 	if pkCount == 1 || hasRefCount == 0 {
 		log.Println("Migrating hosted_shards schema (Composite PK + RefCount)...")
 		migrationQuery := `

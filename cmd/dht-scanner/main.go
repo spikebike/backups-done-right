@@ -24,7 +24,10 @@ func main() {
 	defer cancel()
 
 	// 1. Create a basic libp2p host
-	h, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"))
+	h, err := libp2p.New(libp2p.ListenAddrStrings(
+		"/ip4/0.0.0.0/tcp/0",
+		"/ip6/::/tcp/0",
+	))
 	if err != nil {
 		log.Fatalf("failed to create host: %v", err)
 	}
