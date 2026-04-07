@@ -228,10 +228,12 @@ func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode, pid peer.
 	// 3. Download the piece
 	hashHex := targetPiece.Hash
 
-	data, err := e.PullPieceRaw(ctx, pid, hashHex)
+	buf := new(bytes.Buffer)
+	err = e.PullPieceRaw(ctx, pid, hashHex, buf)
 	if err != nil {
 		return fmt.Errorf("pull piece direct: %w", err)
 	}
+	data := buf.Bytes()
 
 	if e.Verbose {
 		log.Printf("RESCUE: Downloaded %d bytes from peer", len(data))
@@ -518,15 +520,19 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			var pieceHash string
 			_ = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = 0 AND peer_id = ? LIMIT 1", shardID, p.peerID).Scan(&pieceHash)
 
-			data, err := e.PullPiece(ctx, p.peerID, pieceHash)
+			f, err := os.OpenFile(shardPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 			if err != nil {
 				continue
 			}
 
-			// Verify hash
-			if hex.EncodeToString(e.Hash(data)) == pieceHash {
-				return os.WriteFile(shardPath, data, 0644)
+			err = e.PullPiece(ctx, p.peerID, pieceHash, f)
+			f.Close()
+			if err != nil {
+				os.Remove(shardPath)
+				continue
 			}
+
+			return nil
 		}
 		return fmt.Errorf("failed to recover mirrored special shard %d", shardID)
 	}
@@ -550,11 +556,13 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			continue
 		}
 
-		data, err := e.PullPiece(ctx, p.peerID, pieceHash)
+		buf := new(bytes.Buffer)
+		err = e.PullPiece(ctx, p.peerID, pieceHash, buf)
 		if err != nil {
 			log.Printf("EnsureShardLocal: failed to download piece %d from peer %d: %v", p.index, p.peerID, err)
 			continue
 		}
+		data := buf.Bytes()
 
 		// Verify hash
 		if hex.EncodeToString(e.Hash(data)) != pieceHash {

@@ -2,12 +2,11 @@ package server
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"time"
 
-	"lukechampine.com/blake3"
 	"p2p-backup/internal/crypto"
 )
 
@@ -115,16 +114,9 @@ func (e *Engine) verifyAdoption(ctx context.Context, peerID int64) error {
 			log.Printf("AdoptionWorker: Requesting retrieval of test piece %s from peer %d...", p.hash[:12], peerID)
 		}
 
-		data, err := e.PullPieceRaw(ctx, pid, p.hash)
+		err := e.PullPieceRaw(ctx, pid, p.hash, io.Discard)
 		if err != nil {
 			return fmt.Errorf("pull error for %s: %w", p.hash, err)
-		}
-
-		// Verify hash
-		h := blake3.Sum256(data)
-		downloadedHash := hex.EncodeToString(h[:])
-		if downloadedHash != p.hash {
-			return fmt.Errorf("hash mismatch for %s (expected %s, got %s)", p.hash, p.hash, downloadedHash)
 		}
 	}
 

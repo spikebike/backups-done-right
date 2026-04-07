@@ -307,36 +307,36 @@ func (e *Engine) PushPieceBatched(ctx context.Context, peerID int64, items []rpc
 	return nil
 }
 
-// PullPiece opens a raw stream to a peer and pulls the file data, returning it.
-func (e *Engine) PullPiece(ctx context.Context, peerID int64, checksumHex string) ([]byte, error) {
+// PullPiece opens a raw stream to a peer and pulls the file data, writing it to out.
+func (e *Engine) PullPiece(ctx context.Context, peerID int64, checksumHex string, out io.Writer) error {
 	if e.Host == nil {
-		return nil, fmt.Errorf("raw data stream unavailable (no libp2p host)")
+		return fmt.Errorf("raw data stream unavailable (no libp2p host)")
 	}
 
 	client, err := e.GetOrDialPeer(ctx, peerID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to dial peer: %w", err)
+		return fmt.Errorf("failed to dial peer: %w", err)
 	}
 	defer client.Close()
 
 	var pubKeyHex string
 	err = e.DB.QueryRowContext(ctx, "SELECT public_key FROM peers WHERE id = ?", peerID).Scan(&pubKeyHex)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	pid, err := crypto.PeerIDFromPubKeyHex(pubKeyHex)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return e.PullPieceRaw(ctx, pid, checksumHex)
+	return e.PullPieceRaw(ctx, pid, checksumHex, out)
 }
 
-// PullPieceRaw opens a raw stream to a specific libp2p peer and pulls the data.
-func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex string) ([]byte, error) {
+// PullPieceRaw opens a raw stream to a specific libp2p peer and pulls the data, writing it to out.
+func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex string, out io.Writer) error {
 	stream, err := e.Host.NewStream(ctx, pid, "/bdr/stream/1.0.0")
 	if err != nil {
-		return nil, fmt.Errorf("failed to open data stream: %w", err)
+		return fmt.Errorf("failed to open data stream: %w", err)
 	}
 	defer stream.Close()
 
@@ -357,12 +357,11 @@ func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex stri
 	copy(item.Header.Hash[:], checksumBytes)
 
 	if err := sender.SendBatch(ctx, []rpc.StreamItem{item}); err != nil {
-		return nil, fmt.Errorf("failed to send pull request: %w", err)
+		return fmt.Errorf("failed to send pull request: %w", err)
 	}
 
 	// Read batch response back
 	receiver := rpc.NewStreamReceiver(throttledStream)
-	var data []byte
 	err = receiver.ReceiveBatch(ctx, func(header rpc.StreamItemHeader, r io.Reader) error {
 		// Verify hash
 		receivedHash := hex.EncodeToString(header.Hash[:])
@@ -370,26 +369,28 @@ func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex stri
 			return fmt.Errorf("checksum mismatch in response: expected %s, got %s", checksumHex, receivedHash)
 		}
 
-		data, err = io.ReadAll(r)
+		hasher := blake3.New(32, nil)
+		tee := io.TeeReader(r, hasher)
+
+		buf := e.StreamBufferPool.Get().([]byte)
+		defer e.StreamBufferPool.Put(buf)
+
+		_, err := io.CopyBuffer(out, tee, buf)
 		if err != nil {
 			return err
 		}
 
-		actualHash := blake3.Sum256(data)
-		if hex.EncodeToString(actualHash[:]) != checksumHex {
-			return fmt.Errorf("payload checksum mismatch: expected %s, got %x", checksumHex, actualHash[:])
+		actualHash := hex.EncodeToString(hasher.Sum(nil))
+		if actualHash != checksumHex {
+			return fmt.Errorf("payload checksum mismatch: expected %s, got %s", checksumHex, actualHash)
 		}
 
 		return nil
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to receive pull response batch: %w", err)
+		return fmt.Errorf("failed to receive pull response batch: %w", err)
 	}
 
-	if data == nil {
-		return nil, fmt.Errorf("no data received in pull response")
-	}
-
-	return data, nil
+	return nil
 }
