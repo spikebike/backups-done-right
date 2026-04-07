@@ -1583,7 +1583,7 @@ func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
 		log.Printf("Adoption: Starting test for peer %d (%d pieces)...", peerID, e.AdoptionChallengePieces)
 	}
 
-	_, err := e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'testing', adoption_start_at = CURRENT_TIMESTAMP WHERE id = ?", peerID)
+	_, err := e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'testing' WHERE id = ?", peerID)
 	if err != nil {
 		return err
 	}
@@ -1669,6 +1669,8 @@ func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
 			return err
 		}
 	}
+
+	e.DB.ExecContext(ctx, "UPDATE peers SET adoption_start_at = CURRENT_TIMESTAMP WHERE id = ?", peerID)
 
 	return nil
 }
