@@ -1383,7 +1383,7 @@ func (e *Engine) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 				s.mirrored,
 				COUNT(DISTINCT op.peer_id) as piece_count,
 				CASE 
-					WHEN s.mirrored = 1 AND COUNT(DISTINCT op.peer_id) >= 3 THEN 1
+					WHEN s.mirrored = 1 AND COUNT(DISTINCT op.peer_id) >= 2 THEN 1
 					WHEN s.mirrored = 0 AND COUNT(DISTINCT op.piece_index) >= ? THEN 1
 					ELSE 0 
 				END as is_full
