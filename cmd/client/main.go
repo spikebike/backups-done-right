@@ -562,11 +562,15 @@ func main() {
 
 		fmt.Println("\n=== Server Status & P2P Swarm Metrics ===")
 		fmt.Printf("Uptime:                        %d seconds\n", status.UptimeSeconds)
-		fmt.Printf("Total Local Shards:            %d\n", status.TotalShards)
+		fmt.Printf("Total Local Full Shards:       %d\n", status.TotalShards)
 		fmt.Printf("Fully Replicated Shards:       %d\n", status.FullyReplicatedShards)
 		fmt.Printf("Partially Replicated Shards:   %d\n", status.PartiallyReplicatedShards)
 		fmt.Printf("Hosted Peer Shards:            %d\n", status.HostedPeerShards)
-		fmt.Printf("Queued Data:                   %.2f MB\n", float64(status.QueuedBytes)/(1024*1024))
+		queuedStr := fmt.Sprintf("%.2f MB", float64(status.QueuedBytes)/(1024*1024))
+		if status.QueuedBytes > 0 {
+			queuedStr += " (1 partial shard)"
+		}
+		fmt.Printf("Queued Data:                   %s\n", queuedStr)
 		fmt.Println("=========================================")
 
 		database.Close()

@@ -1364,8 +1364,8 @@ func (e *Engine) GetStatus(ctx context.Context) (rpc.StatusInfo, error) {
 		UptimeSeconds: uint64(time.Since(e.StartTime).Seconds()),
 	}
 
-	// 1. Total local shards (sealed and open)
-	err := e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM shards").Scan(&status.TotalShards)
+	// 1. Total local full (sealed) shards
+	err := e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM shards WHERE status = 'sealed'").Scan(&status.TotalShards)
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("GetStatus: failed to count shards: %v", err)
 	}
