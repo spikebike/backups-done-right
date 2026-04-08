@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"log"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
