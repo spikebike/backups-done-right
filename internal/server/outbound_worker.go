@@ -332,6 +332,7 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 		meta = append(meta, rpc.Metadata{
 			Hash:            job.HashHex,
 			Size:            job.Size,
+			Type:            1, // 1 = PeerShard
 			IsSpecial:       job.IsMirrored,
 			PieceIndex:      job.PieceIndex,
 			ParentShardHash: job.ParentShardHash,
