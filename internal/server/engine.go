@@ -1102,7 +1102,7 @@ func (e *Engine) encodeShard(shardID int64) {
 		if !e.KeepLocalCopy {
 			os.Remove(shardPath)
 		}
-		log.Printf("Successfully prepared special shard %d for mirroring (padded to %d MB, hash: %s)", shardID, targetPieceSize/(1024*1024), shardHash[:16])
+		log.Printf("ErasureCoder: Successfully prepared special shard %d for mirroring (padded to %d MB, hash: %s)", shardID, targetPieceSize/(1024*1024), shardHash[:16])
 		return
 	}
 

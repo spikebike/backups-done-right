@@ -29,7 +29,7 @@ Restore files from the server. Defaults to the newest backup. Downloads encrypte
 ```
 client status
 ```
-Display server runtime metrics: uptime, total shards, replication progress (fully/partially replicated), and hosted peer shard count.
+Display server runtime metrics: uptime, total local full shards, replication progress (fully/partially replicated), hosted peer shard count, and queued data (with partial shard indication).
 
 ### history
 ```

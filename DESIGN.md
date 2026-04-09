@@ -86,7 +86,7 @@ The system uses 24-word recovery mnemonics to deterministically derive all crypt
 ### Dynamic Discovery
 Peers and Clients are managed dynamically via the server's SQLite database. 
 - **Client Authorization**: When a client connects, the server extracts its public key. If the key is not in the `clients` table, it is registered as `pending` with zero quota. An Admin must explicitly `updateclient` to grant access.
-- **DHT Peer Discovery**: Nodes can optionally enable Kademlia-based discovery (service tag: `bdr-v1.0`). A background `DiscoveryWorker` automatically finds and connects to other members of the BDR swarm, triggering secure handshakes and "lazy registration" without manual `addpeer` calls.
+- **DHT Peer Discovery**: Nodes can optionally enable Kademlia-based discovery (service tag: `bdr-v1.0`). A background `DiscoveryWorker` automatically finds and connects to other members of the BDR swarm, triggering secure handshakes and "lazy registration" without manual `addpeer` calls. If automatic adoption is enabled, the nodes will immediately and bidirectionally initiate a rigorous adoption test phase involving full 256MB shard retrievals and continuous statistical sampling before promoting each other to 'trusted' status.
 
 ### Connection Model
 - **QUIC Transport**: Every connection (Client-Server and Peer-Peer) uses the libp2p QUIC transport (UDP), enabling native stream multiplexing and superior NAT traversal.

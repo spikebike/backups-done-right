@@ -143,13 +143,26 @@ func (e *Engine) replenishPool(ctx context.Context) {
 	rows.Close()
 
 	for _, t := range targets {
+		var isMirrored bool
+		_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", t.shardID).Scan(&isMirrored)
+
 		// Can we regenerate? Only if we have the piece locally.
-		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", t.shardID))
-		if _, err := os.Stat(shardPath); err != nil {
-			// Not local, maybe it's in the queue?
+		var shardPath string
+		if isMirrored {
+			// For mirrored shards, the full shard is the piece
+			shardPath = filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", t.shardID))
+			if _, err := os.Stat(shardPath); err != nil {
+				// Not local, maybe it's in the queue?
+				shardPath = filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", t.shardID, t.pieceIndex))
+				if _, err := os.Stat(shardPath); err != nil {
+					continue // Cannot replenish without data
+				}
+			}
+		} else {
+			// For standard shards, we can only replenish if the specific piece is still on disk
 			shardPath = filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", t.shardID, t.pieceIndex))
 			if _, err := os.Stat(shardPath); err != nil {
-				continue // Cannot replenish without data
+				continue // Cannot replenish without the encoded piece data
 			}
 		}
 
@@ -160,9 +173,6 @@ func (e *Engine) replenishPool(ctx context.Context) {
 		if err != nil {
 			// If we lost all challenges, fall back to calculation, but try to use hashPiece if possible
 			// For now, calculating it is better than nothing, but hashing mirrored shards needs care
-			var isMirrored bool
-			_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", t.shardID).Scan(&isMirrored)
-			
 			data, err := os.ReadFile(shardPath)
 			if err != nil {
 				continue
@@ -191,9 +201,6 @@ func (e *Engine) replenishPool(ctx context.Context) {
 		}
 
 		var pieceData []byte
-		var isMirrored bool
-		_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", t.shardID).Scan(&isMirrored)
-
 		if isMirrored {
 			targetPieceSize := e.ShardSize / int64(e.DataShards)
 			if int64(len(data)) < targetPieceSize {
