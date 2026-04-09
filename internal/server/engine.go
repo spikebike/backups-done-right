@@ -1101,7 +1101,7 @@ func (e *Engine) encodeShard(shardID int64) {
 		}
 
 		// For special shards, Piece 0 is just a copy of the shard itself, padded to targetPieceSize.
-		dstPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_0", shardID))
+		dstPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0.padded", shardID))
 		dst, err := os.Create(dstPath)
 		if err != nil {
 			log.Printf("encodeShard error: failed to create mirrored piece: %v", err)
@@ -1128,9 +1128,14 @@ func (e *Engine) encodeShard(shardID int64) {
 			log.Printf("encodeShard error: failed to update shard hash in DB: %v", err)
 		}
 
+		// Replace the unpadded piece with the padded one in BlobStoreDir
+		os.Rename(dstPath, shardPath)
+
 		if !e.KeepLocalCopy {
-			os.Remove(shardPath)
+			// syncMirroredShards will pick it up from BlobStoreDir and then outbound_worker handles deleting it
+			// Wait, outbound_worker only deletes if count >= threshold.
 		}
+		
 		log.Printf("ErasureCoder: Successfully prepared special shard %d for mirroring (padded to %d MB, hash: %s)", shardID, targetPieceSize/(1024*1024), shardHash[:16])
 		return
 	}

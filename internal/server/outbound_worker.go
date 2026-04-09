@@ -210,6 +210,17 @@ func (e *Engine) processQueue(ctx context.Context) {
 		}
 
 		job.HashHex = hashHex
+		
+		// Ensure we don't re-queue a standard piece that is already pending or uploaded to any peer
+		if !job.IsMirrored {
+			var isAssigned int
+			err = e.DB.QueryRowContext(ctx, "SELECT 1 FROM outbound_pieces WHERE shard_id = ? AND piece_index = ? AND status IN ('pending', 'uploaded') LIMIT 1", job.ShardID, job.PieceIndex).Scan(&isAssigned)
+			if err == nil {
+				// Piece is already handled, skip processing it
+				continue
+			}
+		}
+
 		jobs = append(jobs, job)
 	}
 
