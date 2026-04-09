@@ -102,8 +102,11 @@ func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, q
 	if dataShards <= 0 {
 		dataShards = 10
 	}
-	if parityShards <= 0 {
+	if parityShards < 0 {
 		parityShards = 4
+	}
+	if shardSize < int64(dataShards) {
+		shardSize = int64(dataShards)
 	}
 	if challengesPerPiece <= 0 {
 		challengesPerPiece = 8
@@ -729,6 +732,10 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 	remaining := int64(size)
 	var reservations []ShardReservation
 	var sealedShards []int64
+	targetPieceSize := e.ShardSize / int64(e.DataShards)
+	if targetPieceSize == 0 {
+		targetPieceSize = 1
+	}
 
 	for remaining > 0 {
 		if e.activeShardSize >= e.ShardSize {
@@ -744,15 +751,23 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 		}
 
 		spaceInShard := e.ShardSize - e.activeShardSize
+		pieceIndex := int(e.activeShardSize / targetPieceSize)
+		localOffset := e.activeShardSize % targetPieceSize
+		spaceInPiece := targetPieceSize - localOffset
+
 		toWrite := remaining
 		if toWrite > spaceInShard {
 			toWrite = spaceInShard
 		}
+		if toWrite > spaceInPiece {
+			toWrite = spaceInPiece
+		}
 
 		reservations = append(reservations, ShardReservation{
-			ShardID: e.activeShardID,
-			Offset:  e.activeShardSize,
-			Length:  toWrite,
+			ShardID:    e.activeShardID,
+			PieceIndex: pieceIndex,
+			Offset:     localOffset,
+			Length:     toWrite,
 		})
 
 		e.activeShardSize += toWrite

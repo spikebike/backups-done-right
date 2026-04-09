@@ -327,8 +327,20 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 
 	var meta []rpc.Metadata
 	jobMap := make(map[string]QueueJob)
+	var uniqueJobs []QueueJob
 
 	for _, job := range jobs {
+		if _, exists := jobMap[job.HashHex]; exists {
+			// We cannot send two items with the exact same hash in the same batch,
+			// because Cap'n Proto streams are keyed by hash.
+			// Revert this job so it gets picked up in the next tick (where it will likely be instantly accepted).
+			e.failJob(ctx, peerID, job)
+			continue
+		}
+		
+		jobMap[job.HashHex] = job
+		uniqueJobs = append(uniqueJobs, job)
+		
 		meta = append(meta, rpc.Metadata{
 			Hash:            job.HashHex,
 			Size:            job.Size,
@@ -339,13 +351,12 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 			SequenceNumber:  job.Sequence,
 			TotalPieces:     job.TotalPieces,
 		})
-		jobMap[job.HashHex] = job
 	}
 
 	needed, err := client.OfferItems(ctx, meta)
 	if err != nil {
 		e.RemoveActivePeer(peerID)
-		e.failJobs(ctx, peerID, jobs)
+		e.failJobs(ctx, peerID, uniqueJobs)
 		return
 	}
 
@@ -353,7 +364,7 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 		err = client.PrepareUpload(ctx, meta)
 		if err != nil {
 			e.RemoveActivePeer(peerID)
-			e.failJobs(ctx, peerID, jobs)
+			e.failJobs(ctx, peerID, uniqueJobs)
 			return
 		}
 
@@ -432,7 +443,7 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 		for _, idx := range needed {
 			neededMap[int(idx)] = true
 		}
-		for i, job := range jobs {
+		for i, job := range uniqueJobs {
 			if !neededMap[i] {
 				e.finalizeJobSuccess(ctx, peerID, job)
 				if !job.IsMirrored || strings.Contains(job.FilePath, "server_queue") {
@@ -443,7 +454,7 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 		}
 	} else {
 		// All pieces accepted instantly (none needed transfer)
-		for _, j := range jobs {
+		for _, j := range uniqueJobs {
 			e.finalizeJobSuccess(ctx, peerID, j)
 			if !j.IsMirrored || strings.Contains(j.FilePath, "server_queue") {
 				os.Remove(j.FilePath)
