@@ -239,9 +239,12 @@ func (e *Engine) processQueue(ctx context.Context) {
 
 		query += `
 		WHERE (
-			(p.status = 'untrusted' AND p.outbound_storage_size + ? <= ?)
-			OR 
-			(p.status = 'trusted' AND (p.max_storage_size = 0 OR p.outbound_storage_size + ? <= p.max_storage_size * 1024 * 1024 * 1024))
+			(? = 1) OR 
+			(
+				(p.status = 'untrusted' AND ? = 0 AND p.outbound_storage_size + ? <= ?)
+				OR 
+				(p.status = 'trusted' AND (p.max_storage_size = 0 OR p.outbound_storage_size + ? <= p.max_storage_size * 1024 * 1024 * 1024))
+			)
 		)
 		AND (op.shard_id IS NULL OR (op.status != 'uploaded' AND op.status != 'pending'))
 		AND p.status != 'blocked'
@@ -252,10 +255,20 @@ func (e *Engine) processQueue(ctx context.Context) {
 		var peerID int64
 		var tErr error
 
+		isMirroredInt := 0
 		if job.IsMirrored {
-			tErr = tx.QueryRowContext(ctx, query, job.ShardID, job.PieceIndex, job.Size, limitBytes, job.Size).Scan(&peerID)
+			isMirroredInt = 1
+		}
+		
+		adoptionEnabledInt := 0
+		if e.AdoptionEnabled {
+			adoptionEnabledInt = 1
+		}
+
+		if job.IsMirrored {
+			tErr = tx.QueryRowContext(ctx, query, job.ShardID, job.PieceIndex, isMirroredInt, adoptionEnabledInt, job.Size, limitBytes, job.Size).Scan(&peerID)
 		} else {
-			tErr = tx.QueryRowContext(ctx, query, job.ShardID, job.Size, limitBytes, job.Size).Scan(&peerID)
+			tErr = tx.QueryRowContext(ctx, query, job.ShardID, isMirroredInt, adoptionEnabledInt, job.Size, limitBytes, job.Size).Scan(&peerID)
 		}
 		if tErr == sql.ErrNoRows {
 			continue
