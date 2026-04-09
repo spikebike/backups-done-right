@@ -182,6 +182,7 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	}
 
 	// Ensure columns exist for legacy databases.
+	_, _ = db.Exec("ALTER TABLE blob_locations ADD COLUMN piece_index INTEGER NOT NULL DEFAULT 0")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN status TEXT NOT NULL DEFAULT 'untrusted'")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN outbound_storage_size INTEGER NOT NULL DEFAULT 0")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN first_seen DATETIME DEFAULT CURRENT_TIMESTAMP")

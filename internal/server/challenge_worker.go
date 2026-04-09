@@ -150,7 +150,7 @@ func (e *Engine) replenishPool(ctx context.Context) {
 		var shardPath string
 		if isMirrored {
 			// For mirrored shards, the full shard is the piece
-			shardPath = filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", t.shardID))
+			shardPath = filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", t.shardID))
 			if _, err := os.Stat(shardPath); err != nil {
 				// Not local, maybe it's in the queue?
 				shardPath = filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", t.shardID, t.pieceIndex))

@@ -182,7 +182,7 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 		return
 	}
 
-	_, err = e.DB.ExecContext(ctx, "INSERT INTO blob_locations (blob_hash, shard_id, offset, length, sequence) VALUES (?, ?, 0, ?, 0)", blobHashHex, shardID, len(ciphertext))
+	_, err = e.DB.ExecContext(ctx, "INSERT INTO blob_locations (blob_hash, shard_id, piece_index, offset, length, sequence) VALUES (?, ?, 0, 0, ?, 0)", blobHashHex, shardID, len(ciphertext))
 	if err != nil {
 		e.mu.Unlock()
 		log.Printf("SelfBackupWorker: failed to insert blob location: %v", err)
@@ -190,7 +190,7 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 	}
 	e.mu.Unlock()
 
-	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
+	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", shardID))
 	if err := os.WriteFile(shardPath, ciphertext, 0644); err != nil {
 		log.Printf("SelfBackupWorker: failed to write shard file: %v", err)
 		return

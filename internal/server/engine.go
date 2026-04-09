@@ -473,18 +473,72 @@ func (e *Engine) Hash(data []byte) []byte {
 	return crypto.Hash(data)
 }
 
-// EnsureShardLocal ensures that a shard file exists on the local disk.
-// If the file is missing, it attempts to reconstruct it from the swarm.
+// EnsureShardLocal ensures that all data piece files for a shard exist on the local disk.
+// If any are missing, it attempts to reconstruct them from the swarm.
 func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
-	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
+	var isMirrored bool
+	_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", shardID).Scan(&isMirrored)
 
-	// 1. Check if already local
-	if _, err := os.Stat(shardPath); err == nil {
+	if isMirrored {
+		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", shardID))
+		if _, err := os.Stat(piecePath); err == nil {
+			return nil
+		}
+
+		if e.Verbose {
+			log.Printf("EnsureShardLocal: Mirrored Shard %d piece 0 missing locally. Attempting swarm reconstruction.", shardID)
+		}
+
+		rows, err := e.DB.QueryContext(ctx, "SELECT peer_id FROM outbound_pieces WHERE shard_id = ? AND piece_index = 0 AND status = 'uploaded'", shardID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var peerID int64
+			if err := rows.Scan(&peerID); err != nil {
+				continue
+			}
+
+			var pieceHash string
+			_ = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = 0 AND peer_id = ? LIMIT 1", shardID, peerID).Scan(&pieceHash)
+
+			f, err := os.OpenFile(piecePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			if err != nil {
+				continue
+			}
+
+			err = e.PullPiece(ctx, peerID, pieceHash, f)
+			f.Close()
+			if err != nil {
+				os.Remove(piecePath)
+				continue
+			}
+			return nil
+		}
+		return fmt.Errorf("failed to recover mirrored special shard %d", shardID)
+	}
+
+	// For standard shards, check if all DataShards exist locally
+	allLocal := true
+	shardsData := make([][]byte, e.DataShards+e.ParityShards)
+	for i := 0; i < e.DataShards; i++ {
+		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+		data, err := os.ReadFile(piecePath)
+		if err == nil {
+			shardsData[i] = data
+		} else {
+			allLocal = false
+		}
+	}
+
+	if allLocal {
 		return nil
 	}
 
 	if e.Verbose {
-		log.Printf("EnsureShardLocal: Shard %d missing locally. Attempting swarm reconstruction.", shardID)
+		log.Printf("EnsureShardLocal: Shard %d missing pieces locally. Attempting swarm reconstruction.", shardID)
 	}
 
 	// 2. Find which peers have which pieces
@@ -507,48 +561,20 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 	}
 	rows.Close()
 
-	// Special case: check if it's a mirrored shard
-	var isMirrored bool
-	_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", shardID).Scan(&isMirrored)
-
-	if isMirrored {
-		// For mirrored shards, any single piece 0 is the full shard.
-		for _, p := range pieces {
-			if p.index != 0 {
-				continue
-			}
-
-			var pieceHash string
-			_ = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = 0 AND peer_id = ? LIMIT 1", shardID, p.peerID).Scan(&pieceHash)
-
-			f, err := os.OpenFile(shardPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-			if err != nil {
-				continue
-			}
-
-			err = e.PullPiece(ctx, p.peerID, pieceHash, f)
-			f.Close()
-			if err != nil {
-				os.Remove(shardPath)
-				continue
-			}
-
-			return nil
-		}
-		return fmt.Errorf("failed to recover mirrored special shard %d", shardID)
-	}
-
-	// 3. RS Reconstruction for standard shards
-	if len(pieces) < e.DataShards {
-		return fmt.Errorf("insufficient pieces available to reconstruct shard %d (have %d, need %d)", shardID, len(pieces), e.DataShards)
-	}
-
-	shards := make([][]byte, e.DataShards+e.ParityShards)
+	// Fill shardsData from swarm
 	piecesFound := 0
+	for i := 0; i < e.DataShards; i++ {
+		if shardsData[i] != nil {
+			piecesFound++
+		}
+	}
 
 	for _, p := range pieces {
 		if piecesFound >= e.DataShards {
 			break
+		}
+		if shardsData[p.index] != nil {
+			continue
 		}
 
 		var pieceHash string
@@ -571,7 +597,7 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			continue
 		}
 
-		shards[p.index] = data
+		shardsData[p.index] = data
 		piecesFound++
 	}
 
@@ -579,26 +605,27 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 		return fmt.Errorf("failed to download enough pieces for reconstruction (have %d, need %d)", piecesFound, e.DataShards)
 	}
 
-	// Reconstruct
+	// Reconstruct missing pieces
 	rs, err := reedsolomon.New(e.DataShards, e.ParityShards)
 	if err != nil {
 		return err
 	}
 
-	if err := rs.Reconstruct(shards); err != nil {
+	if err := rs.Reconstruct(shardsData); err != nil {
 		return fmt.Errorf("RS reconstruction failed: %w", err)
 	}
 
-	// Save reconstructed shard back to disk
-	outFile, err := os.Create(shardPath)
-	if err != nil {
-		return err
+	// Save reconstructed data pieces back to disk
+	for i := 0; i < e.DataShards; i++ {
+		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+		if _, err := os.Stat(piecePath); os.IsNotExist(err) {
+			if err := os.WriteFile(piecePath, shardsData[i], 0644); err != nil {
+				return fmt.Errorf("failed to write reconstructed piece %d: %w", i, err)
+			}
+		}
 	}
-	defer outFile.Close()
 
-	// Assuming fixed piece size based on shard history
-	pieceSize := len(shards[0])
-	return rs.Join(outFile, shards, int(int64(e.DataShards)*int64(pieceSize)))
+	return nil
 }
 
 func hexToBytes(h string) []byte {
@@ -648,9 +675,10 @@ func (e *Engine) IngestItems(ctx context.Context, clientPubKey string, items []r
 
 // ShardReservation tracks a pre-allocated segment in a shard file.
 type ShardReservation struct {
-	ShardID int64
-	Offset  int64
-	Length  int64
+	ShardID    int64
+	PieceIndex int
+	Offset     int64
+	Length     int64
 }
 
 // IngestItemsStreamed saves a single item from a stream directly into shards.
@@ -738,7 +766,7 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 
 	// 2. PHASE 2: Data Streaming (UNLOCKED)
 	for _, res := range reservations {
-		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", res.ShardID))
+		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", res.ShardID, res.PieceIndex))
 		f, err := os.OpenFile(shardPath, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return err
@@ -798,7 +826,7 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 	}
 
 	for i, res := range reservations {
-		tx.ExecContext(ctx, "INSERT INTO blob_locations (blob_hash, shard_id, offset, length, sequence) VALUES (?, ?, ?, ?, ?)", hash, res.ShardID, res.Offset, res.Length, i)
+		tx.ExecContext(ctx, "INSERT INTO blob_locations (blob_hash, shard_id, piece_index, offset, length, sequence) VALUES (?, ?, ?, ?, ?, ?)", hash, res.ShardID, res.PieceIndex, res.Offset, res.Length, i)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -859,7 +887,7 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 		}
 
 		// Find shard locations
-		rows, err := e.DB.QueryContext(ctx, "SELECT shard_id, offset, length FROM blob_locations WHERE blob_hash = ? ORDER BY sequence ASC", h)
+		rows, err := e.DB.QueryContext(ctx, "SELECT shard_id, piece_index, offset, length FROM blob_locations WHERE blob_hash = ? ORDER BY sequence ASC", h)
 		if err != nil {
 			log.Printf("GetItems error: failed to query locations for %s: %v", h, err)
 			log.Printf("GetHostedItems failed for %s: %v", h, err); missing = append(missing, h)
@@ -869,23 +897,23 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 		var fullData []byte
 		foundLocations := false
 		for rows.Next() {
-			var shardID, offset, length int64
-			if err := rows.Scan(&shardID, &offset, &length); err != nil {
+			var shardID, pieceIndex, offset, length int64
+			if err := rows.Scan(&shardID, &pieceIndex, &offset, &length); err != nil {
 				continue
 			}
 			foundLocations = true
 
-			shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
+			shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, pieceIndex))
 			f, err := os.Open(shardPath)
 			if err != nil {
-				log.Printf("GetItems error: failed to open shard %d: %v", shardID, err)
+				log.Printf("GetItems error: failed to open shard piece %d for shard %d: %v", pieceIndex, shardID, err)
 				break
 			}
 			data := make([]byte, length)
 			_, err = f.ReadAt(data, offset)
 			f.Close()
 			if err != nil {
-				log.Printf("GetItems error: failed to read from shard %d: %v", shardID, err)
+				log.Printf("GetItems error: failed to read from shard piece %d for shard %d: %v", pieceIndex, shardID, err)
 				break
 			}
 			fullData = append(fullData, data...)
@@ -1040,17 +1068,17 @@ func (e *Engine) encodeShard(shardID int64) {
 		log.Printf("Starting erasure coding for shard %d", shardID)
 	}
 
-	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
+	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", shardID))
 	inFile, err := os.Open(shardPath)
 	if err != nil {
-		log.Printf("encodeShard error: failed to open shard %d: %v", shardID, err)
+		log.Printf("encodeShard error: failed to open piece_0 for shard %d: %v", shardID, err)
 		return
 	}
 	defer inFile.Close()
 
 	_, err = inFile.Stat()
 	if err != nil {
-		log.Printf("encodeShard error: failed to stat shard %d: %v", shardID, err)
+		log.Printf("encodeShard error: failed to stat piece_0 for shard %d: %v", shardID, err)
 		return
 	}
 
@@ -1073,8 +1101,8 @@ func (e *Engine) encodeShard(shardID int64) {
 		}
 
 		// For special shards, Piece 0 is just a copy of the shard itself, padded to targetPieceSize.
-		piecePath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_0", shardID))
-		dst, err := os.Create(piecePath)
+		dstPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_0", shardID))
+		dst, err := os.Create(dstPath)
 		if err != nil {
 			log.Printf("encodeShard error: failed to create mirrored piece: %v", err)
 			return
@@ -1091,6 +1119,7 @@ func (e *Engine) encodeShard(shardID int64) {
 			return
 		}
 		dst.Close()
+		inFile.Close() // Close early so we can remove it
 
 		// Save the padded hash to DB so syncMirroredShards can find it
 		shardHash := hex.EncodeToString(hasher.Sum(nil))
@@ -1119,18 +1148,87 @@ func (e *Engine) encodeShard(shardID int64) {
 		return
 	}
 
-	outWriters := make([]io.Writer, e.DataShards+e.ParityShards)
-	outFiles := make([]*os.File, e.DataShards+e.ParityShards)
+	inFiles := make([]*os.File, e.DataShards)
+	inReaders := make([]io.Reader, e.DataShards)
+	hasher := blake3.New(32, nil)
 
-	for i := 0; i < e.DataShards+e.ParityShards; i++ {
-		// Use .tmp suffix so OutboundWorker doesn't pick them up yet
-		outPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, i))
+	// Close inFile since we are going to open all N pieces
+	inFile.Close()
+
+	for i := 0; i < e.DataShards; i++ {
+		srcPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+		var reader io.Reader
+		inf, err := os.Open(srcPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				reader = bytes.NewReader([]byte{})
+			} else {
+				log.Printf("encodeShard error: failed to open source piece %d: %v", i, err)
+				for j := 0; j < i; j++ {
+					inFiles[j].Close()
+				}
+				return
+			}
+		} else {
+			reader = inf
+		}
+		
+		dstPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, i))
+		outFile, err := os.Create(dstPath)
+		if err != nil {
+			if inf != nil { inf.Close() }
+			for j := 0; j < i; j++ {
+				inFiles[j].Close()
+			}
+			return
+		}
+		
+		// Pad to exactly targetPieceSize
+		pr := &PadReader{Reader: reader, TotalSize: targetPieceSize}
+		teeReader := io.TeeReader(pr, hasher)
+		
+		if _, err := io.Copy(outFile, teeReader); err != nil {
+			log.Printf("encodeShard error: failed to copy/pad piece %d: %v", i, err)
+			outFile.Close()
+			if inf != nil { inf.Close() }
+			for j := 0; j < i; j++ {
+				inFiles[j].Close()
+			}
+			return
+		}
+		
+		if inf != nil {
+			inf.Close()
+			if !e.KeepLocalCopy {
+			    os.Remove(srcPath)
+			}
+		}
+		
+		outFile.Seek(0, 0)
+		inFiles[i] = outFile
+		inReaders[i] = outFile
+	}
+
+	shardHash := hex.EncodeToString(hasher.Sum(nil))
+	_, err = e.DB.Exec("UPDATE shards SET hash = ? WHERE id = ?", shardHash, shardID)
+	if err != nil {
+		log.Printf("encodeShard error: failed to update shard hash in DB: %v", err)
+	}
+
+	outFiles := make([]*os.File, e.ParityShards)
+	outWriters := make([]io.Writer, e.ParityShards)
+
+	for i := 0; i < e.ParityShards; i++ {
+		outPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, e.DataShards+i))
 		f, err := os.Create(outPath)
 		if err != nil {
-			log.Printf("encodeShard error: failed to create piece %d: %v", i, err)
+			log.Printf("encodeShard error: failed to create parity piece %d: %v", i, err)
 			// Cleanup
 			for j := 0; j < i; j++ {
 				outFiles[j].Close()
+			}
+			for j := 0; j < e.DataShards; j++ {
+				inFiles[j].Close()
 			}
 			return
 		}
@@ -1138,57 +1236,30 @@ func (e *Engine) encodeShard(shardID int64) {
 		outWriters[i] = f
 	}
 
-	// 1. Split data into N files and compute full shard hash
-	// Use PadReader to ensure we always split exactly e.ShardSize bytes
-	pr := &PadReader{Reader: inFile, TotalSize: e.ShardSize}
-	hasher := blake3.New(32, nil)
-	teeReader := io.TeeReader(pr, hasher)
-
-	err = enc.Split(teeReader, outWriters[:e.DataShards], e.ShardSize)
+	// 2. Encode to generate K parity pieces
+	err = enc.Encode(inReaders, outWriters)
 	if err != nil {
-		log.Printf("encodeShard error: failed to split shard %d: %v", shardID, err)
-	} else {
-		// Save shard hash to DB
-		shardHash := hex.EncodeToString(hasher.Sum(nil))
-		_, err = e.DB.Exec("UPDATE shards SET hash = ? WHERE id = ?", shardHash, shardID)
-		if err != nil {
-			log.Printf("encodeShard error: failed to update shard hash in DB: %v", err)
-		}
-
-		// Seek data files back to beginning so we can use them as readers for parity encoding
-		inReaders := make([]io.Reader, e.DataShards)
-		for i := 0; i < e.DataShards; i++ {
-			if _, seekErr := outFiles[i].Seek(0, 0); seekErr != nil {
-				log.Printf("encodeShard error: failed to seek piece %d: %v", i, seekErr)
-				// Cleanup and abort
-				for _, f := range outFiles {
-					f.Close()
-				}
-				return
-			}
-			inReaders[i] = outFiles[i]
-		}
-
-		// 2. Encode to generate K parity pieces
-		err = enc.Encode(inReaders, outWriters[e.DataShards:])
-		if err != nil {
-			log.Printf("encodeShard error: failed to encode parity for shard %d: %v", shardID, err)
-		} else if e.Verbose {
-			log.Printf("Successfully erasure coded shard %d into %d pieces", shardID, e.DataShards+e.ParityShards)
-		}
+		log.Printf("encodeShard error: failed to encode parity for shard %d: %v", shardID, err)
+	} else if e.Verbose {
+		log.Printf("ErasureCoder: Successfully erasure coded shard %d into %d pieces", shardID, e.DataShards+e.ParityShards)
 	}
 
 	// 3. Finalize all pieces: Close and rename to remove .tmp suffix
-	for i := 0; i < e.DataShards+e.ParityShards; i++ {
-		outFiles[i].Close()
-
-		// If encoding succeeded, rename to final path so OutboundWorker sees them
+	for i := 0; i < e.DataShards; i++ {
+		inFiles[i].Close()
 		if err == nil {
 			tmpPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, i))
 			finalPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
-			if renameErr := os.Rename(tmpPath, finalPath); renameErr != nil {
-				log.Printf("encodeShard error: failed to finalize piece %d: %v", i, renameErr)
-			}
+			os.Rename(tmpPath, finalPath)
+		}
+	}
+	
+	for i := 0; i < e.ParityShards; i++ {
+		outFiles[i].Close()
+		if err == nil {
+			tmpPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, e.DataShards+i))
+			finalPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", shardID, e.DataShards+i))
+			os.Rename(tmpPath, finalPath)
 		}
 	}
 }

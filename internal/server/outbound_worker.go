@@ -101,7 +101,7 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 			continue
 		}
 
-		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", s.id))
+		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", s.id))
 		stat, err := os.Stat(shardPath)
 		if err != nil {
 			pRows.Close()
@@ -482,11 +482,12 @@ func (e *Engine) checkShardCompletion(ctx context.Context, shardID int64) {
 
 	if count >= (e.DataShards + e.ParityShards) {
 		if !e.KeepLocalCopy {
-			shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
-			if err := os.Remove(shardPath); err == nil {
-				if e.Verbose {
-					log.Printf("OutboundWorker: Shard %d fully distributed. Deleted local copy (KeepLocalCopy=false).", shardID)
-				}
+			for i := 0; i < e.DataShards; i++ {
+				piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+				os.Remove(piecePath)
+			}
+			if e.Verbose {
+				log.Printf("OutboundWorker: Shard %d fully distributed. Deleted local pieces (KeepLocalCopy=false).", shardID)
 			}
 		} else {
 			if e.Verbose {

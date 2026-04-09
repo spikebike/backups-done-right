@@ -132,13 +132,6 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 		return fmt.Errorf("failed to ensure shard %d is local: %w", shardID, err)
 	}
 
-	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
-	f, err := os.Open(shardPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
 	// Find live blobs and their offsets
 	rows, err := e.DB.QueryContext(ctx, `
 		SELECT DISTINCT l.blob_hash, b.special
@@ -163,7 +156,7 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 			continue
 		}
 
-		blobData, err := e.readBlobFromShardFile(ctx, f, shardID, hash)
+		blobData, err := e.readBlobFromShardFile(ctx, shardID, hash)
 		if err != nil {
 			log.Printf("GCWorker: failed to read blob %s from shard %d: %v", hash, shardID, err)
 			continue
@@ -215,8 +208,8 @@ func (e *Engine) processShardGC(ctx context.Context, shardID int64) error {
 	return nil
 }
 
-func (e *Engine) readBlobFromShardFile(ctx context.Context, f *os.File, shardID int64, hash string) ([]byte, error) {
-	rows, err := e.DB.QueryContext(ctx, "SELECT offset, length FROM blob_locations WHERE shard_id = ? AND blob_hash = ? ORDER BY sequence ASC", shardID, hash)
+func (e *Engine) readBlobFromShardFile(ctx context.Context, shardID int64, hash string) ([]byte, error) {
+	rows, err := e.DB.QueryContext(ctx, "SELECT piece_index, offset, length FROM blob_locations WHERE shard_id = ? AND blob_hash = ? ORDER BY sequence ASC", shardID, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -224,14 +217,23 @@ func (e *Engine) readBlobFromShardFile(ctx context.Context, f *os.File, shardID 
 
 	var data []byte
 	for rows.Next() {
-		var offset, length int64
-		if err := rows.Scan(&offset, &length); err != nil {
+		var pieceIndex, offset, length int64
+		if err := rows.Scan(&pieceIndex, &offset, &length); err != nil {
 			return nil, err
 		}
+		
+		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, pieceIndex))
+		f, err := os.Open(piecePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open piece %d: %w", pieceIndex, err)
+		}
+		
 		buf := make([]byte, length)
 		if _, err := f.ReadAt(buf, offset); err != nil {
+			f.Close()
 			return nil, err
 		}
+		f.Close()
 		data = append(data, buf...)
 	}
 	return data, nil
@@ -273,9 +275,11 @@ func (e *Engine) deleteWastedShard(ctx context.Context, shardID int64) error {
 		return err
 	}
 
-	// 3. Delete file
-	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d.dat", shardID))
-	_ = os.Remove(shardPath)
+	// 3. Delete files
+	for i := 0; i < e.DataShards; i++ {
+		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+		_ = os.Remove(piecePath)
+	}
 
 	return nil
 }
