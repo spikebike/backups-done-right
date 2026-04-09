@@ -68,7 +68,7 @@ Runs locally or remotely. Never sees plaintext data or client encryption keys.
 #### Server SQLite Schema
 - **`blobs`**: Tracks every encrypted 4MB chunk by hash, size, ref_count, and special flag. Includes `deleted_at` timestamp.
 - **`shards`**: Tracks packed shard files (id, filename, current_size, status, hash).
-- **`blob_locations`**: Maps blob hashes to their offset/size within a shard.
+- **`blob_locations`**: Maps blob hashes to their `shard_id`, `piece_index`, and offset/size.
 - **`peers`**: Dynamic peer registry keyed by public key, with `status` (untrusted/trusted/blocked), `last_seen`, `max_storage_size`, `current_storage_size`, and `outbound_storage_size`.
 - **`outbound_pieces`**: Tracks which erasure piece was sent to which peer.
 - **`hosted_shards`**: Tracks shard pieces received from other peers.

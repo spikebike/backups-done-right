@@ -20,8 +20,8 @@ The server uses a highly optimized, dual-plane architecture for distributing and
 To keep multiplexed connections highly responsive, all negotiation happens "out of band" using lightweight Cap'n Proto RPCs. 
 
 1. **Discovery & Batching**: The background `OutboundWorker` periodically scans the `server_queue` directory for newly generated erasure-coded pieces. It groups them by target peer, evaluating quotas, untrusted limits, and ensuring redundancy rules are met.
-2. **Offer Phase (`OfferItems`)**: The sender queries the target peer, asking which of the offered piece checksums it actually needs. The receiver queries its local SQLite database and returns the needed indices.
-3. **Prepare Phase (`PrepareUpload`)**: The sender tells the receiver to expect the exact metadata (checksums, sequence numbers, parent shard hashes) for the pieces it is about to send, allowing the receiver to validate and allocate temporary expectations.
+2. **Offer Phase (`offerItems`)**: The sender queries the target peer, asking which of the offered piece checksums it actually needs. The receiver queries its local SQLite database and returns the needed indices.
+3. **Prepare Phase (`prepareUpload`)**: The sender tells the receiver to expect the exact metadata (checksums, sequence numbers, parent shard hashes) for the pieces it is about to send, allowing the receiver to validate and allocate temporary expectations.
 
 ### 2. The Data Plane (Raw Stream)
 
