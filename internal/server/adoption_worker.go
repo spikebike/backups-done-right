@@ -120,8 +120,5 @@ func (e *Engine) verifyAdoption(ctx context.Context, peerID int64) error {
 		}
 	}
 
-	// Clean up hosted_shards for test pieces after successful verification
-	_, _ = e.DB.ExecContext(ctx, "DELETE FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
-
 	return nil
 }
