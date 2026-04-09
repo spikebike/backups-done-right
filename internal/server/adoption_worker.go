@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -65,12 +66,53 @@ func (e *Engine) runAdoptionCycle(ctx context.Context) {
 		if err := e.verifyAdoption(ctx, t.id); err != nil {
 			log.Printf("AdoptionWorker: Peer %d FAILED adoption: %v", t.id, err)
 			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed', status = 'discovered' WHERE id = ?", t.id)
+			e.cleanupAdoptionPieces(ctx, t.id)
 		} else {
 			if e.Verbose {
 				log.Printf("AdoptionWorker: Peer %d PASSED adoption and is now TRUSTED", t.id)
 			}
 			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'completed', status = 'trusted' WHERE id = ?", t.id)
+			e.cleanupAdoptionPieces(ctx, t.id)
 		}
+	}
+}
+
+func (e *Engine) cleanupAdoptionPieces(ctx context.Context, peerID int64) {
+	rows, err := e.DB.QueryContext(ctx, "SELECT hash FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
+	if err != nil {
+		return
+	}
+	var hashes []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err == nil {
+			hashes = append(hashes, h)
+		}
+	}
+	rows.Close()
+
+	if len(hashes) > 0 {
+		peerStub := e.GetActivePeer(peerID)
+		if peerStub.IsValid() {
+			wrapper := &CapnpPeerClient{clientStub: peerStub}
+			for _, h := range hashes {
+				hashBytes, _ := hex.DecodeString(h)
+				_ = wrapper.ReleasePiece(ctx, hashBytes)
+			}
+		} else {
+			// Try to dial and release
+			client, err := e.GetOrDialPeer(ctx, peerID)
+			if err == nil {
+				for _, h := range hashes {
+					hashBytes, _ := hex.DecodeString(h)
+					_ = client.ReleasePiece(ctx, hashBytes)
+				}
+				client.Close()
+			}
+		}
+		
+		// Clean up hosted_shards for test pieces
+		_, _ = e.DB.ExecContext(ctx, "DELETE FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
 	}
 }
 
