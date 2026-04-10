@@ -475,7 +475,7 @@ func TestChallengeWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
 	defer engine.Wait()
 
 	mh := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -874,7 +874,7 @@ func TestMultiPeerDeduplicationAndChallenge(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024*1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false, false, 0, 0, nil)
 	defer engine.Wait()
 
 	peerA_PK := "peer-a-pk-32-chars-long-01234567"
@@ -966,7 +966,7 @@ func TestDuplicateHashReferenceCounting(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024*1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false, false, 0, 0, nil)
 	defer engine.Wait()
 
 	peerPK := "peer-ref-count-0123456789abcdef01"

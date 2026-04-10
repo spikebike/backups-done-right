@@ -1738,6 +1738,7 @@ func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
 			{
 				Hash:       hashHex,
 				Size:       pieceSize,
+				Type:       1, // 1 = PeerShard
 				IsSpecial:  false, // Adoption piece doesn't need to be strictly special on the receiver side
 				PieceIndex: 0,
 			},
