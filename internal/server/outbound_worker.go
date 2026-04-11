@@ -423,7 +423,7 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 				log.Printf("OutboundWorker: batched push failed for peer %d: %v", peerID, err)
 				for _, j := range uploadJobs {
 					e.failJob(ctx, peerID, j)
-					e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", peerID, j.ShardID, j.PieceIndex)
+					e.RecordChallengeResult(ctx, peerID, j.ShardID, j.PieceIndex, "unavailable")
 				}
 				return
 			}
@@ -478,7 +478,7 @@ func (e *Engine) failJob(ctx context.Context, peerID int64, job QueueJob) {
 
 func (e *Engine) finalizeJobSuccess(ctx context.Context, peerID int64, job QueueJob) {
 	e.DB.ExecContext(ctx, "UPDATE outbound_pieces SET status = 'uploaded' WHERE shard_id = ? AND piece_index = ? AND peer_id = ?", job.ShardID, job.PieceIndex, peerID)
-	e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'ok')", peerID, job.ShardID, job.PieceIndex)
+	e.RecordChallengeResult(ctx, peerID, job.ShardID, job.PieceIndex, "ok")
 
 	if e.ChallengesPerPiece > 0 {
 		maxOffset := int(job.Size) - 32
@@ -490,7 +490,7 @@ func (e *Engine) finalizeJobSuccess(ctx context.Context, peerID int64, job Queue
 					offset := rand.Intn(maxOffset)
 					expectedData := make([]byte, 32)
 					f.ReadAt(expectedData, int64(offset))
-					e.DB.ExecContext(ctx, "INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, ?, ?)", job.ShardID, job.PieceIndex, peerID, job.HashHex, offset, expectedData)
+					e.InsertPieceChallenge(ctx, job.ShardID, job.PieceIndex, peerID, job.HashHex, offset, expectedData)
 				}
 			}
 		}
@@ -502,8 +502,7 @@ func (e *Engine) finalizeJobSuccess(ctx context.Context, peerID int64, job Queue
 }
 
 func (e *Engine) checkShardCompletion(ctx context.Context, shardID int64) {
-	var isMirrored bool
-	_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", shardID).Scan(&isMirrored)
+	isMirrored := e.IsShardMirrored(ctx, shardID)
 
 	if isMirrored {
 		return

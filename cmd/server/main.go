@@ -219,7 +219,7 @@ func main() {
 	}
 
 	// Convert Ed25519 identity to Libp2p Key
-	_, err = crypto.Libp2pKeyFromEd25519(id.MasterKey) 
+	_, err = crypto.Libp2pKeyFromEd25519(id.MasterKey)
 	// Assuming MasterKey holds the ed25519.PrivateKey.
 	// I'll leave the initialization to use standard libp2p.New().
 	// I'll leave the initialization to use standard libp2p.New().
@@ -300,42 +300,42 @@ func main() {
 		log.Fatalf("Failed to extract own public key: %v", err)
 	}
 
-	engine := server.NewEngine(
-		db,
-		*configPath,
-		cfg.Storage.SQLitePath,
-		cfg.Storage.BlobStoreDir,
-		queueDir,
-		dataShards,
-		parityShards,
-		shardSize,
-		cfg.Storage.KeepLocalCopy,
-		p2pHost,
-		listenAddr,
-		cfg.Storage.UntrustedPeerUploadLimitMB,
-		verbose,
-		extraVerbose,
-		challengesPerPiece,
-		keepDeletedMinutes,
-		keepMetadataMinutes,
-		wasteThreshold,
-		gcIntervalMinutes,
-		cfg.Storage.SelfBackupIntervalMinutes,
-		cfg.Storage.PeerEvictionHours,
-		cfg.Storage.BasePieceBuffer,
-		cfg.Storage.MaxStorageGB,
-		cfg.Network.MaxUploadKBPS,
-		cfg.Network.MaxDownloadKBPS,
-		id.MasterKey,
-		cfg.AdminPublicKey,
-		cfg.ContactInfo,
-		cfg.Network.MaxConcurrentStreams,
-		cfg.Network.StandaloneMode,
-		cfg.Adoption.Enabled,
-		cfg.Adoption.TestPeriodMinutes,
-		cfg.Adoption.ChallengePieces,
-		cfg.Discovery.BootstrapPeers,
-	)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         db,
+		ConfigPath:                 *configPath,
+		SQLitePath:                 cfg.Storage.SQLitePath,
+		BlobStoreDir:               cfg.Storage.BlobStoreDir,
+		QueueDir:                   queueDir,
+		DataShards:                 dataShards,
+		ParityShards:               parityShards,
+		ShardSize:                  shardSize,
+		KeepLocalCopy:              cfg.Storage.KeepLocalCopy,
+		P2PHost:                    p2pHost,
+		ListenAddress:              listenAddr,
+		UntrustedPeerUploadLimitMB: cfg.Storage.UntrustedPeerUploadLimitMB,
+		Verbose:                    verbose,
+		ExtraVerbose:               extraVerbose,
+		ChallengesPerPiece:         challengesPerPiece,
+		KeepDeletedMinutes:         keepDeletedMinutes,
+		KeepMetadataMinutes:        keepMetadataMinutes,
+		WasteThreshold:             wasteThreshold,
+		GCIntervalMinutes:          gcIntervalMinutes,
+		SelfBackupIntervalMinutes:  cfg.Storage.SelfBackupIntervalMinutes,
+		PeerEvictionHours:          cfg.Storage.PeerEvictionHours,
+		BasePieceBuffer:            cfg.Storage.BasePieceBuffer,
+		MaxStorageGB:               cfg.Storage.MaxStorageGB,
+		MaxUploadKBPS:              cfg.Network.MaxUploadKBPS,
+		MaxDownloadKBPS:            cfg.Network.MaxDownloadKBPS,
+		MasterKey:                  id.MasterKey,
+		AdminPublicKey:             cfg.AdminPublicKey,
+		ContactInfo:                cfg.ContactInfo,
+		MaxConcurrentStreams:       cfg.Network.MaxConcurrentStreams,
+		StandaloneMode:             cfg.Network.StandaloneMode,
+		AdoptionEnabled:            cfg.Adoption.Enabled,
+		AdoptionPeriodMinutes:      cfg.Adoption.TestPeriodMinutes,
+		AdoptionChallengePieces:    cfg.Adoption.ChallengePieces,
+		BootstrapPeers:             cfg.Discovery.BootstrapPeers,
+	})
 
 	if verbose {
 		log.Printf("Server engine initialized with identity: %s...", myPubKeyHex[:16])
@@ -485,7 +485,12 @@ func runRecover(mnemonic, destDir string, verbose bool) {
 
 	db, _ := server.InitDB(":memory:")
 	defer db.Close()
-	engine := server.NewEngine(db, "", "", "", "", 10, 4, 1024, false, p2pHost, "", 1024, verbose, false, 8, 30, 30, 0.5, 30, 0, 30, 4, -1, -1, -1, id.MasterKey, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:        db,
+		P2PHost:   p2pHost,
+		Verbose:   verbose,
+		MasterKey: id.MasterKey,
+	})
 
 	done := make(chan struct{})
 	p2pHost.SetStreamHandler("/bdr/rpc/1.0.0", func(s network.Stream) {

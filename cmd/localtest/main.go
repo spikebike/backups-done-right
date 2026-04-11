@@ -102,42 +102,28 @@ func main() {
 	pieceSize := int64(256 * 1024 * 1024) // 256MB per distributed piece
 	shardSize := int64(10) * pieceSize    // 10 data shards
 	serverQueueDir := "server_queue"
-	engine := server.NewEngine(
-		serverDB,
-		"", // No server config path for local testing
-		serverDBPath,
-		serverBlobDir,
-		serverQueueDir,
-		10,
-		4,
-		shardSize,
-		*serverKeepLocalCopy,
-		nil,
-		"", // No listenAddress for localtest
-		*serverUntrustedLimitMB,
-		verbose,
-		extraVerbose,
-		*serverChallengesPerPiece,
-		60*24*30, // Default 30 days for keepDeletedMinutes
-		60*24*30, // Default 30 days for keepMetadataMinutes
-		0.5,      // Default 0.5 for wasteThreshold
-		720,      // Default 12 hours for gcIntervalMinutes
-		1440,     // Default 24 hours for selfBackupIntervalMinutes
-		24,       // Default 24 hours for peerEvictionHours
-		4,        // Default 4 pieces buffer for basePieceBuffer
-		-1,       // Default no global storage limit
-		-1,       // Default no upload limit
-		-1,       // Default no download limit
-		nil,      // No master key for localtest
-		"",       // No admin key for localtest
-		"",       // No contact info for localtest
-		4,        // Default 4 concurrent streams
-		false,    // Not standalone mode
-		false,    // Adoption disabled
-		0,        // Adoption period minutes
-		0,        // Adoption challenge pieces
-		nil,
-	)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 10,
+		ParityShards:               4,
+		ShardSize:                  shardSize,
+		KeepLocalCopy:              *serverKeepLocalCopy,
+		UntrustedPeerUploadLimitMB: *serverUntrustedLimitMB,
+		Verbose:                    verbose,
+		ExtraVerbose:               extraVerbose,
+		ChallengesPerPiece:         *serverChallengesPerPiece,
+		KeepDeletedMinutes:         60 * 24 * 30, // 30 days
+		KeepMetadataMinutes:        60 * 24 * 30,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+	})
+
 	// ---------------------------
 
 	// --- SETUP CLIENT ---

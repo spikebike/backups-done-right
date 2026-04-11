@@ -86,7 +86,7 @@ func (e *Engine) runChallengeCycle(ctx context.Context) {
 	client, err := e.GetOrDialPeer(ctx, ch.peerID)
 	if err != nil {
 		log.Printf("ChallengeWorker: failed to connect to peer %d at %s: %v", ch.peerID, ch.peerAddr, err)
-		e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, 'unavailable')", ch.peerID, ch.shardID, ch.pieceIndex)
+		e.RecordChallengeResult(ctx, ch.peerID, ch.shardID, ch.pieceIndex, "unavailable")
 		return
 	}
 	defer client.Close()
@@ -101,7 +101,7 @@ func (e *Engine) runChallengeCycle(ctx context.Context) {
 		status = "pass"
 	}
 
-	e.DB.ExecContext(ctx, "INSERT INTO challenge_results (peer_id, shard_id, piece_index, status) VALUES (?, ?, ?, ?)", ch.peerID, ch.shardID, ch.pieceIndex, status)
+	e.RecordChallengeResult(ctx, ch.peerID, ch.shardID, ch.pieceIndex, status)
 	// Consume this challenge so it can't be replayed.
 	e.DB.ExecContext(ctx, "DELETE FROM piece_challenges WHERE id = ?", ch.challengeID)
 
@@ -143,8 +143,7 @@ func (e *Engine) replenishPool(ctx context.Context) {
 	rows.Close()
 
 	for _, t := range targets {
-		var isMirrored bool
-		_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", t.shardID).Scan(&isMirrored)
+		isMirrored := e.IsShardMirrored(ctx, t.shardID)
 
 		// Can we regenerate? Only if we have the piece locally.
 		var shardPath string
@@ -167,10 +166,8 @@ func (e *Engine) replenishPool(ctx context.Context) {
 		}
 
 		// 1. Get the existing hash from the database to ensure consistency with what the peer tracks.
-		var hashHex string
-		err = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = ? AND peer_id = ? LIMIT 1",
-			t.shardID, t.pieceIndex, t.peerID).Scan(&hashHex)
-		if err != nil {
+		hashHex := e.GetPieceHash(ctx, t.shardID, t.pieceIndex, t.peerID)
+		if hashHex == "" {
 			// If we lost all challenges, fall back to calculation, but try to use hashPiece if possible
 			// For now, calculating it is better than nothing, but hashing mirrored shards needs care
 			data, err := os.ReadFile(shardPath)
@@ -178,18 +175,9 @@ func (e *Engine) replenishPool(ctx context.Context) {
 				continue
 			}
 
-			var pieceData []byte
+			pieceData := data
 			if isMirrored {
-				targetPieceSize := e.ShardSize / int64(e.DataShards)
-				if int64(len(data)) < targetPieceSize {
-					padded := make([]byte, targetPieceSize)
-					copy(padded, data)
-					pieceData = padded
-				} else {
-					pieceData = data
-				}
-			} else {
-				pieceData = data
+				pieceData = padToTargetPieceSize(data, e.ShardSize/int64(e.DataShards))
 			}
 			hashHex = hex.EncodeToString(e.Hash(pieceData))
 		}
@@ -200,18 +188,9 @@ func (e *Engine) replenishPool(ctx context.Context) {
 			continue
 		}
 
-		var pieceData []byte
+		pieceData := data
 		if isMirrored {
-			targetPieceSize := e.ShardSize / int64(e.DataShards)
-			if int64(len(data)) < targetPieceSize {
-				padded := make([]byte, targetPieceSize)
-				copy(padded, data)
-				pieceData = padded
-			} else {
-				pieceData = data
-			}
-		} else {
-			pieceData = data
+			pieceData = padToTargetPieceSize(data, e.ShardSize/int64(e.DataShards))
 		}
 
 		if len(pieceData) < 32 {
@@ -222,12 +201,21 @@ func (e *Engine) replenishPool(ctx context.Context) {
 		for i := 0; i < e.ChallengesPerPiece; i++ {
 			offset := rand.Intn(maxOffset)
 			expectedData := pieceData[offset : offset+32]
-			_, _ = e.DB.ExecContext(ctx, "INSERT INTO piece_challenges (shard_id, piece_index, peer_id, piece_hash, offset, expected_data) VALUES (?, ?, ?, ?, ?, ?)",
-				t.shardID, t.pieceIndex, t.peerID, hashHex, offset, expectedData)
+			e.InsertPieceChallenge(ctx, t.shardID, t.pieceIndex, t.peerID, hashHex, offset, expectedData)
 		}
 
 		if e.Verbose {
 			log.Printf("ChallengeWorker: Replenished %d challenges for Peer %d Piece %d", e.ChallengesPerPiece, t.peerID, t.pieceIndex)
 		}
 	}
+}
+
+// padToTargetPieceSize pads data with zeros to reach targetSize if it's smaller.
+func padToTargetPieceSize(data []byte, targetSize int64) []byte {
+	if int64(len(data)) < targetSize {
+		padded := make([]byte, targetSize)
+		copy(padded, data)
+		return padded
+	}
+	return data
 }

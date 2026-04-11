@@ -146,11 +146,7 @@ func (u *Uploader) uploadWorker(workerID int) {
 						}
 					}
 					// Update database with upload count
-					u.DBJobChan <- db.DBJob{
-						Query:      "UPDATE backups SET uploaded_files = uploaded_files + ? WHERE id = ?",
-						Args:       []interface{}{len(pending.Items), u.CurrentBackupID},
-						ResultChan: make(chan db.DBResult, 1),
-					}
+					updateBackupUploadedCount(u.DBJobChan, u.CurrentBackupID, len(pending.Items))
 				}
 			}
 		}
@@ -247,11 +243,7 @@ func (u *Uploader) processOfferBatch(batch []UploadJob, workerID int) {
 	}
 
 	// Update database with offered count
-	u.DBJobChan <- db.DBJob{
-		Query:      "UPDATE backups SET offered_files = offered_files + ? WHERE id = ?",
-		Args:       []interface{}{len(itemsToOffer), u.CurrentBackupID},
-		ResultChan: make(chan db.DBResult, 1),
-	}
+	updateBackupOfferedCount(u.DBJobChan, u.CurrentBackupID, len(itemsToOffer))
 }
 
 // Wait blocks until all upload jobs are processed.

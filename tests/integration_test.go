@@ -75,7 +75,26 @@ func TestEndToEndBackup(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 10,
+		ParityShards:               4,
+		ShardSize:                  10 * 1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -122,7 +141,26 @@ func TestDeduplication(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 10*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 10,
+		ParityShards:               4,
+		ShardSize:                  10 * 1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -159,7 +197,27 @@ func TestLargeFile(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 2,
+		ParityShards:               1,
+		ShardSize:                  100 * 1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -199,7 +257,26 @@ func TestIncrementalBackup(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 10,
+		ParityShards:               4,
+		ShardSize:                  100 * 1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -239,7 +316,26 @@ func TestFileDeletion(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 100*1024*1024, true, nil, "", 1024, false, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 10,
+		ParityShards:               4,
+		ShardSize:                  100 * 1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -278,7 +374,24 @@ func TestServerGC(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 10, 4, 5, true, nil, "", 1024, false, false, 8, 0, 0, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 10,
+		ParityShards:               4,
+		ShardSize:                  5,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		ChallengesPerPiece:         8,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 	engine.KeepDeletedMinutes = 0
 	engine.KeepMetadataMinutes = 0
@@ -427,7 +540,27 @@ func TestOutboundWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 10, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 1,
+		ParityShards:               1,
+		ShardSize:                  10,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	mh1 := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -475,7 +608,27 @@ func TestChallengeWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 1,
+		ParityShards:               1,
+		ShardSize:                  1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	mh := &MockPeerHandler{Pieces: make(map[string]MockPiece)}
@@ -513,7 +666,27 @@ func TestRepairWorkerFlow(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 2,
+		ParityShards:               1,
+		ShardSize:                  1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -560,7 +733,27 @@ func TestReedSolomonIntegration(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 2,
+		ParityShards:               1,
+		ShardSize:                  1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -626,7 +819,27 @@ func TestDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 100*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 2,
+		ParityShards:               1,
+		ShardSize:                  100 * 1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	clientDB, _ := db.InitClientDB(filepath.Join(baseDir, "client.db"))
@@ -640,7 +853,7 @@ func TestDisasterRecovery(t *testing.T) {
 
 	close(dbJobChan)
 	clientDB.Close()
-	
+
 	// Create tar.zst bundle
 	var buf bytes.Buffer
 	enc, _ := zstd.NewWriter(&buf)
@@ -712,7 +925,7 @@ func TestDisasterRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decrypt failed: %v", err)
 	}
-	
+
 	decoder, _ := zstd.NewReader(bytes.NewReader(dec))
 	tr := tar.NewReader(decoder)
 	tr.Next() // Should be client.db
@@ -739,7 +952,28 @@ func TestServerDisasterRecovery(t *testing.T) {
 
 	serverDB, _ := server.InitDB(serverDBPath)
 	masterKey := []byte("01234567890123456789012345678901")
-	engineA := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 2, 1, 20*1024*1024, true, nil, "", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, masterKey, "", "", 4, false, false, 0, 0, nil)
+	engineA := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 2,
+		ParityShards:               1,
+		ShardSize:                  20 * 1024 * 1024,
+		KeepLocalCopy:              true,
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		MasterKey:                  masterKey,
+		MaxConcurrentStreams:       4,
+	})
 	defer engineA.Wait()
 	defer serverDB.Close()
 
@@ -815,7 +1049,29 @@ func TestContactInfoPropagation(t *testing.T) {
 	defer serverDB.Close()
 
 	myContact := "operator@server-a.com"
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", myContact, 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 1,
+		ParityShards:               1,
+		ShardSize:                  1024,
+		KeepLocalCopy:              true,
+		ListenAddress:              "127.0.0.1:8080",
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		ContactInfo:                myContact,
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	// 1. Verify Engine has contact info
@@ -874,7 +1130,29 @@ func TestMultiPeerDeduplicationAndChallenge(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024*1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 1,
+		ParityShards:               1,
+		ShardSize:                  1024 * 1024,
+		KeepLocalCopy:              true,
+		ListenAddress:              "127.0.0.1:8080",
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		ContactInfo:                "test@operator.com",
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	peerA_PK := "peer-a-pk-32-chars-long-01234567"
@@ -966,7 +1244,29 @@ func TestDuplicateHashReferenceCounting(t *testing.T) {
 	serverDB, _ := server.InitDB(serverDBPath)
 	defer serverDB.Close()
 
-	engine := server.NewEngine(serverDB, "", serverDBPath, serverBlobDir, serverQueueDir, 1, 1, 1024*1024, true, nil, "127.0.0.1:8080", 1024, true, false, 8, 43200, 43200, 0.5, 720, 1440, 24, 4, -1, -1, -1, nil, "", "test@operator.com", 4, false, false, 0, 0, nil)
+	engine := server.NewEngine(server.EngineConfig{
+		DB:                         serverDB,
+		SQLitePath:                 serverDBPath,
+		BlobStoreDir:               serverBlobDir,
+		QueueDir:                   serverQueueDir,
+		DataShards:                 1,
+		ParityShards:               1,
+		ShardSize:                  1024 * 1024,
+		KeepLocalCopy:              true,
+		ListenAddress:              "127.0.0.1:8080",
+		UntrustedPeerUploadLimitMB: 1024,
+		Verbose:                    true,
+		ChallengesPerPiece:         8,
+		KeepDeletedMinutes:         43200,
+		KeepMetadataMinutes:        43200,
+		WasteThreshold:             0.5,
+		GCIntervalMinutes:          720,
+		SelfBackupIntervalMinutes:  1440,
+		PeerEvictionHours:          24,
+		BasePieceBuffer:            4,
+		ContactInfo:                "test@operator.com",
+		MaxConcurrentStreams:       4,
+	})
 	defer engine.Wait()
 
 	peerPK := "peer-ref-count-0123456789abcdef01"

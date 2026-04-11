@@ -78,7 +78,7 @@ func (e *Engine) runAdoptionCycle(ctx context.Context) {
 }
 
 func (e *Engine) cleanupAdoptionPieces(ctx context.Context, peerID int64) {
-	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
+	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size FROM adoption_tests WHERE peer_id = ?", peerID)
 	if err != nil {
 		return
 	}
@@ -119,15 +119,15 @@ func (e *Engine) cleanupAdoptionPieces(ctx context.Context, peerID int64) {
 			}
 		}
 		
-		// Clean up hosted_shards for test pieces
-		_, _ = e.DB.ExecContext(ctx, "DELETE FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
+		// Clean up adoption_tests for test pieces
+		_, _ = e.DB.ExecContext(ctx, "DELETE FROM adoption_tests WHERE peer_id = ?", peerID)
 		_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = MAX(0, outbound_storage_size - ?) WHERE id = ?", totalSize, peerID)
 	}
 }
 
 func (e *Engine) verifyAdoption(ctx context.Context, peerID int64) error {
 	// 1. Get all test pieces for this peer
-	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
+	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size FROM adoption_tests WHERE peer_id = ?", peerID)
 	if err != nil {
 		return err
 	}

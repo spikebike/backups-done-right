@@ -43,57 +43,14 @@ func (r *Restorer) Restore(ctx context.Context, targetPath string, targetBackupI
 	var count int
 	var err error
 
-	if targetBackupID > 0 {
-		err = r.DB.QueryRowContext(ctx, `
-			SELECT COUNT(*) 
-			FROM files f
-			JOIN directories d ON f.dir_id = d.id
-			WHERE d.full_path LIKE '%' || ? AND f.filename = ?
-		`, dirPath, fileName).Scan(&count)
-	} else {
-		err = r.DB.QueryRowContext(ctx, `
-			SELECT COUNT(*) 
-			FROM files f
-			JOIN directories d ON f.dir_id = d.id
-			WHERE d.full_path LIKE '%' || ? AND f.filename = ? AND f.deleted = 0
-		`, dirPath, fileName).Scan(&count)
-	}
+	count, err = CheckRestorableFile(r.DB, ctx, dirPath, fileName, targetBackupID)
 
 	if err == nil && count > 0 {
 		return r.RestoreFile(ctx, targetPath, targetBackupID, targetPath)
 	}
 
 	// Try as a directory prefix
-	var rows *sql.Rows
-	if targetBackupID > 0 {
-		rows, err = r.DB.QueryContext(ctx, `
-			SELECT d.full_path, f.filename
-			FROM files f
-			JOIN directories d ON f.dir_id = d.id
-			WHERE d.full_path LIKE '%' || ? || '%'
-		`, targetPath)
-	} else {
-		rows, err = r.DB.QueryContext(ctx, `
-			SELECT d.full_path, f.filename
-			FROM files f
-			JOIN directories d ON f.dir_id = d.id
-			WHERE d.full_path LIKE '%' || ? || '%' AND f.deleted = 0
-		`, targetPath)
-	}
-
-	if err != nil {
-		return fmt.Errorf("database error searching for path %s: %w", targetPath, err)
-	}
-	defer rows.Close()
-
-	var filesToRestore []string
-	for rows.Next() {
-		var dPath, fName string
-		if err := rows.Scan(&dPath, &fName); err != nil {
-			return err
-		}
-		filesToRestore = append(filesToRestore, filepath.Join(dPath, fName))
-	}
+	filesToRestore, err := FindRestorablePaths(r.DB, ctx, targetPath, targetBackupID)
 
 	if len(filesToRestore) == 0 {
 		return fmt.Errorf("no files found matching %s", targetPath)
@@ -115,14 +72,7 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 	dirPath := filepath.Dir(relativePath)
 	fileName := filepath.Base(relativePath)
 
-	var fileID int64
-	err := r.DB.QueryRowContext(ctx, `
-		SELECT f.id
-		FROM files f
-		JOIN directories d ON f.dir_id = d.id
-		WHERE d.full_path LIKE '%' || ? AND f.filename = ?
-		LIMIT 1
-	`, dirPath, fileName).Scan(&fileID)
+	fileID, err := GetFileIDByPathAndName(r.DB, ctx, dirPath, fileName)
 
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("file not found in backup database: %s", relativePath)
@@ -131,29 +81,13 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 	}
 
 	// Fetch the specific or latest version of this file
-	var versionID int64
-	var originalSize int64
-	var fileMtime int64
-	var fileUID, fileGID int
-	var fileMode uint32
-
-	if targetBackupID > 0 {
-		err = r.DB.QueryRowContext(ctx, `
-			SELECT id, size, mtime, uid, gid, mode 
-			FROM file_versions 
-			WHERE file_id = ? AND backup_id <= ?
-			ORDER BY id DESC 
-			LIMIT 1
-		`, fileID, targetBackupID).Scan(&versionID, &originalSize, &fileMtime, &fileUID, &fileGID, &fileMode)
-	} else {
-		err = r.DB.QueryRowContext(ctx, `
-			SELECT id, size, mtime, uid, gid, mode 
-			FROM file_versions 
-			WHERE file_id = ? 
-			ORDER BY id DESC 
-			LIMIT 1
-		`, fileID).Scan(&versionID, &originalSize, &fileMtime, &fileUID, &fileGID, &fileMode)
-	}
+	meta, err := GetFileVersionMeta(r.DB, ctx, fileID, targetBackupID)
+	versionID := meta.VersionID
+	originalSize := meta.OriginalSize
+	fileMtime := meta.Mtime
+	fileUID := meta.UID
+	fileGID := meta.GID
+	fileMode := meta.Mode
 
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("no versions found for file %s (up to backup %d)", relativePath, targetBackupID)
@@ -162,24 +96,9 @@ func (r *Restorer) RestoreFile(ctx context.Context, relativePath string, targetB
 	}
 
 	// 2. Get the list of encrypted chunk hashes for this file, in order
-	rows, err := r.DB.QueryContext(ctx, `
-		SELECT hash_encrypted 
-		FROM file_blobs 
-		WHERE version_id = ? 
-		ORDER BY sequence ASC
-	`, versionID)
+	chunkHashes, err := GetFileChunkHashes(r.DB, ctx, versionID)
 	if err != nil {
 		return fmt.Errorf("database error looking up file chunks: %w", err)
-	}
-	defer rows.Close()
-
-	var chunkHashes []string
-	for rows.Next() {
-		var hash string
-		if err := rows.Scan(&hash); err != nil {
-			return err
-		}
-		chunkHashes = append(chunkHashes, hash)
 	}
 
 	// 3. Prepare the output file
@@ -285,14 +204,7 @@ func (r *Restorer) PrintHistory(ctx context.Context, relativePath string) error 
 	dirPath := filepath.Dir(relativePath)
 	fileName := filepath.Base(relativePath)
 
-	var fileID int64
-	err := r.DB.QueryRowContext(ctx, `
-		SELECT f.id
-		FROM files f
-		JOIN directories d ON f.dir_id = d.id
-		WHERE d.full_path LIKE '%' || ? AND f.filename = ?
-		LIMIT 1
-	`, dirPath, fileName).Scan(&fileID)
+	fileID, err := GetFileIDByPathAndName(r.DB, ctx, dirPath, fileName)
 
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("file not found in backup database: %s", relativePath)
@@ -300,38 +212,26 @@ func (r *Restorer) PrintHistory(ctx context.Context, relativePath string) error 
 		return fmt.Errorf("database error looking up file: %w", err)
 	}
 
-	rows, err := r.DB.QueryContext(ctx, `
-		SELECT v.id, v.backup_id, b.start_time, v.size, v.hash_plain
-		FROM file_versions v
-		JOIN backups b ON v.backup_id = b.id
-		WHERE v.file_id = ?
-		ORDER BY v.id DESC
-	`, fileID)
+	history, err := GetFileVersionHistory(r.DB, ctx, fileID)
 	if err != nil {
 		return fmt.Errorf("database error querying history: %w", err)
 	}
-	defer rows.Close()
 
 	fmt.Printf("\n=== Version History for %s ===\n", fileName)
 	fmt.Printf("%-10s | %-10s | %-20s | %-12s | %-32s\n", "Version ID", "Backup ID", "Date", "Size (bytes)", "Checksum (Truncated)")
 	fmt.Println(strings.Repeat("-", 90))
 
 	var count int
-	for rows.Next() {
-		var vID, bID, size int64
-		var date, hash string
-		if err := rows.Scan(&vID, &bID, &date, &size, &hash); err != nil {
-			continue
-		}
+	for _, row := range history {
 
-		displayHash := hash
-		if len(hash) > 32 {
-			displayHash = hash[:32] + "..."
-		} else if hash == "" {
+		displayHash := row.Hash
+		if len(row.Hash) > 32 {
+			displayHash = row.Hash[:32] + "..."
+		} else if row.Hash == "" {
 			displayHash = "(empty file)"
 		}
 
-		fmt.Printf("%-10d | %-10d | %-20s | %-12d | %-32s\n", vID, bID, date, size, displayHash)
+		fmt.Printf("%-10d | %-10d | %-20s | %-12d | %-32s\n", row.VersionID, row.BackupID, row.Date, row.Size, displayHash)
 		count++
 	}
 

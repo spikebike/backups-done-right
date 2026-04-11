@@ -81,15 +81,6 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS peer_blobs (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		peer_id INTEGER NOT NULL,
-		checksum TEXT NOT NULL,
-		datestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY(peer_id) REFERENCES peers(id),
-		UNIQUE(peer_id, checksum)
-	);
-
 	CREATE TABLE IF NOT EXISTS hosted_shards (
 		hash TEXT NOT NULL,
 		size INTEGER NOT NULL,
@@ -105,6 +96,13 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_hosted_shards_special ON hosted_shards(peer_id, is_special);
+	
+	CREATE TABLE IF NOT EXISTS adoption_tests (
+		hash TEXT PRIMARY KEY,
+		size INTEGER NOT NULL,
+		peer_id INTEGER NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 
 	CREATE TABLE IF NOT EXISTS outbound_pieces (
 		shard_id INTEGER NOT NULL,
@@ -198,6 +196,9 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN adoption_start_at DATETIME")
 	_, _ = db.Exec("UPDATE peers SET source = 'manual' WHERE is_manual = 1")
 	_, _ = db.Exec("UPDATE peers SET source = 'dht' WHERE is_manual = 0 AND last_seen IS NOT NULL")
+	
+	// Phase 7 migration: Remove isolated adoption tracking hashes from hosted_shards cleanly.
+	_, _ = db.Exec("DELETE FROM hosted_shards WHERE is_special = 2")
 
 	log.Println("Server database initialized successfully")
 	return db, nil

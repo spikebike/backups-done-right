@@ -83,10 +83,6 @@ CREATE TABLE IF NOT EXISTS file_blobs (
     PRIMARY KEY(version_id, sequence)
 );
 
-CREATE TABLE IF NOT EXISTS orphaned_blobs (
-    hash_encrypted TEXT PRIMARY KEY,
-    deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
 
 -- Indexes for fast lookups during directory crawls and syncs
 CREATE INDEX IF NOT EXISTS idx_directories_path ON directories(full_path);

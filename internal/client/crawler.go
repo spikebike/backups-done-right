@@ -122,28 +122,10 @@ func (c *Crawler) syncDirectory(dirPath string) []string {
 	var subDirs []string
 
 	// 1. Fetch DB state for this directory by joining on full_path (100% read-only)
-	query := `
-		SELECT f.filename, v.mtime 
-		FROM files f 
-		JOIN file_versions v ON v.file_id = f.id 
-		JOIN directories d ON d.id = f.dir_id
-		WHERE d.full_path = ? AND f.deleted = 0 
-		  AND v.id = (SELECT MAX(id) FROM file_versions WHERE file_id = f.id)
-	`
-	rows, err := c.DB.Query(query, dirPath)
+	dbFiles, err := getDirectoryState(c.DB, dirPath)
 	if err != nil {
 		log.Printf("DB query error for %s: %v", dirPath, err)
 		return nil
-	}
-	defer rows.Close()
-
-	dbFiles := make(map[string]int64) // filename -> mtime
-	for rows.Next() {
-		var name string
-		var mtime int64
-		if err := rows.Scan(&name, &mtime); err == nil {
-			dbFiles[name] = mtime
-		}
 	}
 
 	// 2. Read filesystem state

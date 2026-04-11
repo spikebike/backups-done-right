@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/hex"
-	"log"
 	"time"
 
 	"capnproto.org/go/capnp/v3"
@@ -352,17 +351,8 @@ func (a *peerNodeAdapter) Announce(ctx context.Context, call rpc.PeerNode_announ
 		}
 
 		// 3. Trigger Automatic Adoption for incoming peer if enabled
-		if a.engine.AdoptionEnabled && a.engine.AdoptionChallengePieces > 0 {
-			var status string
-			errCheck := a.engine.DB.QueryRowContext(ctx, "SELECT adoption_status FROM peers WHERE id = ?", peerID).Scan(&status)
-			if errCheck == nil && status == "none" {
-				go func() {
-					if err := a.engine.StartAdoptionTest(context.Background(), peerID); err != nil {
-						log.Printf("Adoption: Failed to start test for incoming peer %d: %v", peerID, err)
-					}
-				}()
-			}
-		}
+		a.engine.MaybeStartAdoption(ctx, peerID)
+
 	}
 	res, _ := call.AllocResults()
 	res.SetSuccess(err == nil)

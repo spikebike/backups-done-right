@@ -1,36 +1,25 @@
 package server
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
-	crypto_rand "crypto/rand"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/reedsolomon"
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/multiformats/go-multiaddr"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/host"
 	"golang.org/x/time/rate"
 	"lukechampine.com/blake3"
-	"p2p-backup/internal/config"
 	"p2p-backup/internal/crypto"
-	capnp "capnproto.org/go/capnp/v3"
 	"p2p-backup/internal/rpc"
 )
 
@@ -63,8 +52,8 @@ type Engine struct {
 	StandaloneMode             bool
 	ConfigPath                 string
 	// Automatic Adoption
-	AdoptionEnabled        bool
-	AdoptionPeriodMinutes  int
+	AdoptionEnabled         bool
+	AdoptionPeriodMinutes   int
 	AdoptionChallengePieces int
 	// Bandwidth Throttling
 	UploadLimiter   *rate.Limiter
@@ -88,99 +77,137 @@ type Engine struct {
 	DHT                   *dht.IpfsDHT // Shared DHT for peer lookups
 }
 
-// NewEngine creates a new server Engine.
-func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, queueDir string, dataShards, parityShards int, shardSize int64, keepLocalCopy bool, p2pHost host.Host, listenAddress string, untrustedLimitMB int, verbose bool, extraVerbose bool, challengesPerPiece int, keepDeletedMinutes int, keepMetadataMinutes int, wasteThreshold float64, gcIntervalMinutes int, selfBackupIntervalMinutes int, peerEvictionHours int, basePieceBuffer int, maxStorageGB int, maxUploadKBPS int, maxDownloadKBPS int, masterKey []byte, adminPublicKey string, contactInfo string, maxConcurrentStreams int, standaloneMode bool, adoptionEnabled bool, adoptionPeriodMinutes int, adoptionChallengePieces int, bootstrapPeers []string) *Engine {
-	if untrustedLimitMB <= 0 {
-		untrustedLimitMB = 1024
+// EngineConfig holds all configuration parameters for the server Engine.
+type EngineConfig struct {
+	DB                         *sql.DB
+	ConfigPath                 string
+	SQLitePath                 string
+	BlobStoreDir               string
+	QueueDir                   string
+	DataShards                 int
+	ParityShards               int
+	ShardSize                  int64
+	KeepLocalCopy              bool
+	P2PHost                    host.Host
+	ListenAddress              string
+	UntrustedPeerUploadLimitMB int
+	Verbose                    bool
+	ExtraVerbose               bool
+	ChallengesPerPiece         int
+	KeepDeletedMinutes         int
+	KeepMetadataMinutes        int
+	WasteThreshold             float64
+	GCIntervalMinutes          int
+	SelfBackupIntervalMinutes  int
+	PeerEvictionHours          int
+	BasePieceBuffer            int
+	MaxStorageGB               int
+	MaxUploadKBPS              int
+	MaxDownloadKBPS            int
+	MasterKey                  []byte
+	AdminPublicKey             string
+	ContactInfo                string
+	MaxConcurrentStreams       int
+	StandaloneMode             bool
+	AdoptionEnabled            bool
+	AdoptionPeriodMinutes      int
+	AdoptionChallengePieces    int
+	BootstrapPeers             []string
+}
+
+// NewEngine creates a new server Engine from the provided configuration.
+func NewEngine(cfg EngineConfig) *Engine {
+	if cfg.UntrustedPeerUploadLimitMB <= 0 {
+		cfg.UntrustedPeerUploadLimitMB = 1024
 	}
-	if shardSize <= 0 {
-		shardSize = int64(dataShards) * 256 * 1024 * 1024 // Default piece size to 256MB
+	if cfg.DataShards <= 0 {
+		cfg.DataShards = 10
 	}
-	if maxConcurrentStreams <= 0 {
-		maxConcurrentStreams = 4 // Default to 4 concurrent streams
+	if cfg.ParityShards < 0 {
+		cfg.ParityShards = 4
 	}
-	if dataShards <= 0 {
-		dataShards = 10
+	if cfg.ShardSize <= 0 {
+		cfg.ShardSize = int64(cfg.DataShards) * 256 * 1024 * 1024 // Default piece size to 256MB
 	}
-	if parityShards < 0 {
-		parityShards = 4
+	if cfg.ShardSize < int64(cfg.DataShards) {
+		cfg.ShardSize = int64(cfg.DataShards)
 	}
-	if shardSize < int64(dataShards) {
-		shardSize = int64(dataShards)
+	if cfg.MaxConcurrentStreams <= 0 {
+		cfg.MaxConcurrentStreams = 4 // Default to 4 concurrent streams
 	}
-	if challengesPerPiece <= 0 {
-		challengesPerPiece = 8
+	if cfg.ChallengesPerPiece <= 0 {
+		cfg.ChallengesPerPiece = 8
 	}
-	if wasteThreshold <= 0 {
-		wasteThreshold = 0.5
+	if cfg.WasteThreshold <= 0 {
+		cfg.WasteThreshold = 0.5
 	}
-	if gcIntervalMinutes <= 0 {
-		gcIntervalMinutes = 720 // 12 hours
+	if cfg.GCIntervalMinutes <= 0 {
+		cfg.GCIntervalMinutes = 720 // 12 hours
 	}
-	if selfBackupIntervalMinutes <= 0 {
-		selfBackupIntervalMinutes = 1440 // 24 hours
+	if cfg.SelfBackupIntervalMinutes <= 0 {
+		cfg.SelfBackupIntervalMinutes = 1440 // 24 hours
 	}
-	if peerEvictionHours <= 0 {
-		peerEvictionHours = 24 // 24 hours default
+	if cfg.PeerEvictionHours <= 0 {
+		cfg.PeerEvictionHours = 24 // 24 hours default
 	}
-	if basePieceBuffer <= 0 {
-		basePieceBuffer = 4 // Default 4 pieces buffer
+	if cfg.BasePieceBuffer <= 0 {
+		cfg.BasePieceBuffer = 4 // Default 4 pieces buffer
 	}
-	if keepMetadataMinutes <= 0 {
-		keepMetadataMinutes = 60 * 24 * 7 // 7 days default
+	if cfg.KeepMetadataMinutes <= 0 {
+		cfg.KeepMetadataMinutes = 60 * 24 * 7 // 7 days default
 	}
 
 	var maxBytes int64
-	if maxStorageGB > 0 {
-		maxBytes = int64(maxStorageGB) * 1024 * 1024 * 1024
+	if cfg.MaxStorageGB > 0 {
+		maxBytes = int64(cfg.MaxStorageGB) * 1024 * 1024 * 1024
 	}
 
 	var uploadLimiter, downloadLimiter *rate.Limiter
-	if maxUploadKBPS > 0 {
-		uploadLimiter = rate.NewLimiter(rate.Limit(maxUploadKBPS*1024), maxUploadKBPS*1024)
+	if cfg.MaxUploadKBPS > 0 {
+		uploadLimiter = rate.NewLimiter(rate.Limit(cfg.MaxUploadKBPS*1024), cfg.MaxUploadKBPS*1024)
 	}
-	if maxDownloadKBPS > 0 {
-		downloadLimiter = rate.NewLimiter(rate.Limit(maxDownloadKBPS*1024), maxDownloadKBPS*1024)
+	if cfg.MaxDownloadKBPS > 0 {
+		downloadLimiter = rate.NewLimiter(rate.Limit(cfg.MaxDownloadKBPS*1024), cfg.MaxDownloadKBPS*1024)
 	}
 
 	return &Engine{
-		DB:                         db,
-		SQLitePath:                 sqlitePath,
-		BlobStoreDir:               blobStoreDir,
-		QueueDir:                   queueDir,
-		DataShards:                 dataShards,
-		ParityShards:               parityShards,
-		Verbose:                    verbose,
-		ExtraVerbose:               extraVerbose,
-		ShardSize:                  shardSize,
-		Host:                       p2pHost,
-		ListenAddress:              listenAddress,
-		KeepLocalCopy:              keepLocalCopy,
-		KeepDeletedMinutes:         keepDeletedMinutes,
-		KeepMetadataMinutes:        keepMetadataMinutes,
-		WasteThreshold:             wasteThreshold,
-		GCIntervalMinutes:          gcIntervalMinutes,
-		SelfBackupIntervalMinutes:  selfBackupIntervalMinutes,
-		PeerEvictionHours:          peerEvictionHours,
+		DB:                         cfg.DB,
+		SQLitePath:                 cfg.SQLitePath,
+		BlobStoreDir:               cfg.BlobStoreDir,
+		QueueDir:                   cfg.QueueDir,
+		DataShards:                 cfg.DataShards,
+		ParityShards:               cfg.ParityShards,
+		Verbose:                    cfg.Verbose,
+		ExtraVerbose:               cfg.ExtraVerbose,
+		ShardSize:                  cfg.ShardSize,
+		Host:                       cfg.P2PHost,
+		ListenAddress:              cfg.ListenAddress,
+		KeepLocalCopy:              cfg.KeepLocalCopy,
+		KeepDeletedMinutes:         cfg.KeepDeletedMinutes,
+		KeepMetadataMinutes:        cfg.KeepMetadataMinutes,
+		WasteThreshold:             cfg.WasteThreshold,
+		GCIntervalMinutes:          cfg.GCIntervalMinutes,
+		SelfBackupIntervalMinutes:  cfg.SelfBackupIntervalMinutes,
+		PeerEvictionHours:          cfg.PeerEvictionHours,
 		MaxStorageBytes:            maxBytes,
-		BasePieceBuffer:            basePieceBuffer,
-		ChallengesPerPiece:         challengesPerPiece,
+		BasePieceBuffer:            cfg.BasePieceBuffer,
+		ChallengesPerPiece:         cfg.ChallengesPerPiece,
 		UploadLimiter:              uploadLimiter,
 		DownloadLimiter:            downloadLimiter,
-		UntrustedPeerUploadLimitMB: int64(untrustedLimitMB),
+		UntrustedPeerUploadLimitMB: int64(cfg.UntrustedPeerUploadLimitMB),
 		ActivePeers:                make(map[int64]rpc.PeerNode),
 		StartTime:                  time.Now(),
-		MasterKey:                  masterKey,
-		AdminPublicKey:             adminPublicKey,
-		ContactInfo:                contactInfo,
-		StandaloneMode:             standaloneMode,
-		ConfigPath:                 configPath,
-		AdoptionEnabled:            adoptionEnabled,
-		AdoptionPeriodMinutes:      adoptionPeriodMinutes,
-		AdoptionChallengePieces:    adoptionChallengePieces,
-		BootstrapPeers:             bootstrapPeers,
+		MasterKey:                  cfg.MasterKey,
+		AdminPublicKey:             cfg.AdminPublicKey,
+		ContactInfo:                cfg.ContactInfo,
+		StandaloneMode:             cfg.StandaloneMode,
+		ConfigPath:                 cfg.ConfigPath,
+		AdoptionEnabled:            cfg.AdoptionEnabled,
+		AdoptionPeriodMinutes:      cfg.AdoptionPeriodMinutes,
+		AdoptionChallengePieces:    cfg.AdoptionChallengePieces,
+		BootstrapPeers:             cfg.BootstrapPeers,
 		pendingItems:               make(map[string]rpc.Metadata),
-		streamSemaphore:            make(chan struct{}, maxConcurrentStreams),
+		streamSemaphore:            make(chan struct{}, cfg.MaxConcurrentStreams),
 		StreamBufferPool: sync.Pool{
 			New: func() any {
 				return make([]byte, 4*1024*1024) // 4MB buffer specifically for io.CopyBuffer
@@ -192,148 +219,6 @@ func NewEngine(db *sql.DB, configPath string, sqlitePath string, blobStoreDir, q
 // Wait blocks until all background tasks (like encoding) are finished.
 func (e *Engine) Wait() {
 	e.wg.Wait()
-}
-
-// AttemptRescue attempts to recover the server database from a peer that has a mirrored copy of the special metadata shard.
-func (e *Engine) AttemptRescue(ctx context.Context, peer rpc.PeerNode, pid peer.ID, destDir string) error {
-	if e.Verbose {
-		log.Println("RESCUE: Attempting to recover database from peer...")
-	}
-
-	// 1. Get special pieces from peer
-	req, release := peer.ListSpecialItems(ctx, nil)
-	defer release()
-	res, err := req.Struct()
-	if err != nil {
-		return fmt.Errorf("list special items: %w", err)
-	}
-	items, _ := res.Items()
-	if items.Len() == 0 {
-		return fmt.Errorf("no special pieces found on peer")
-	}
-
-	// 2. Identify the newest mirrored shard
-	var highestSeq uint64
-	var targetPiece rpc.Metadata
-	found := false
-	for i := 0; i < items.Len(); i++ {
-		s := rpc.MetadataFromCapnp(items.At(i))
-		if s.IsSpecial && (s.SequenceNumber > highestSeq || !found) {
-			highestSeq = s.SequenceNumber
-			targetPiece = s
-			found = true
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("no special mirrored shards found")
-	}
-
-	// 3. Download the piece
-	hashHex := targetPiece.Hash
-
-	buf := new(bytes.Buffer)
-	err = e.PullPieceRaw(ctx, pid, hashHex, buf)
-	if err != nil {
-		return fmt.Errorf("pull piece direct: %w", err)
-	}
-	data := buf.Bytes()
-
-	if e.Verbose {
-		log.Printf("RESCUE: Downloaded %d bytes from peer", len(data))
-	}
-
-	// Trim trailing zeros added by shard padding
-	// AEAD tags are random, so they are extremely unlikely to end in many zeros.
-	actualData := data
-	for len(actualData) > 0 && actualData[len(actualData)-1] == 0 {
-		actualData = actualData[:len(actualData)-1]
-	}
-
-	if e.Verbose {
-		log.Printf("RESCUE: Trimmed data length: %d", len(actualData))
-	}
-
-	// 3.5 Verify Signature (first 64 bytes)
-	if len(actualData) < 64 {
-		return fmt.Errorf("recovery shard is too small to contain signature")
-	}
-	signature := actualData[:64]
-	ciphertext := actualData[64:]
-
-	if !crypto.VerifyRecoveryShard(e.MasterKey, signature, ciphertext) {
-		return fmt.Errorf("recovery shard signature verification failed (corruption or malicious peer)")
-	}
-
-	// 4. Decrypt Bundle
-	decryptedBundle, err := crypto.Decrypt(e.MasterKey, ciphertext)
-	if err != nil {
-		return fmt.Errorf("bundle decryption failed (wrong mnemonic or corruption): %w", err)
-	}
-
-	// 5. Unpack Bundle
-	decoder, err := zstd.NewReader(bytes.NewReader(decryptedBundle))
-	if err != nil {
-		return fmt.Errorf("zstd init failed: %w", err)
-	}
-	defer decoder.Close()
-
-	tr := tar.NewReader(decoder)
-
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("failed to create destination dir: %w", err)
-	}
-
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("tar read error: %w", err)
-		}
-
-		outPath := filepath.Join(destDir, hdr.Name)
-		outFile, err := os.Create(outPath)
-		if err != nil {
-			return fmt.Errorf("failed to create recovered file %s: %w", outPath, err)
-		}
-		
-		if _, err := io.Copy(outFile, tr); err != nil {
-			outFile.Close()
-			return fmt.Errorf("failed to write data to %s: %w", outPath, err)
-		}
-		outFile.Close()
-		
-		if e.Verbose {
-			log.Printf("RESCUE: Recovered file: %s", outPath)
-		}
-	}
-
-	// Generate add_recovered_peers.sh script
-	peersJSONPath := filepath.Join(destDir, "peers.json")
-	if peersData, err := os.ReadFile(peersJSONPath); err == nil {
-		scriptPath := filepath.Join(destDir, "add_recovered_peers.sh")
-		scriptContent := "#!/bin/bash\necho 'Adding recovered peers...'\n"
-		
-		var discoveryList []PeerDiscoveryInfo
-		if err := json.Unmarshal(peersData, &discoveryList); err == nil {
-			for _, p := range discoveryList {
-				if len(p.Endpoints) > 0 {
-					scriptContent += fmt.Sprintf("./client addpeer %s\n", p.Endpoints[0])
-				}
-			}
-			os.WriteFile(scriptPath, []byte(scriptContent), 0755)
-			if e.Verbose {
-				log.Printf("RESCUE: Generated peer recovery script at %s", scriptPath)
-			}
-		}
-	}
-
-	if e.Verbose {
-		log.Printf("RESCUE: SUCCESS! Recovered bundle to %s", destDir)
-	}
-	return nil
 }
 
 // AuthorizeAndCheckQuota verifies that a client is trusted and has enough quota.
@@ -460,8 +345,7 @@ func (e *Engine) checkPeerQuota(ctx context.Context, pubKeyHex string, incomingS
 	}
 
 	if status == "untrusted" {
-		var myPiecesOnPeer int
-		_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
+		myPiecesOnPeer := e.CountUploadedPiecesForPeer(ctx, peerID)
 		pieceSize := e.ShardSize / int64(e.DataShards)
 		limitBytes := (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
 		if currentSize+incomingSize > limitBytes {
@@ -479,8 +363,7 @@ func (e *Engine) Hash(data []byte) []byte {
 // EnsureShardLocal ensures that all data piece files for a shard exist on the local disk.
 // If any are missing, it attempts to reconstruct them from the swarm.
 func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
-	var isMirrored bool
-	_ = e.DB.QueryRowContext(ctx, "SELECT mirrored FROM shards WHERE id = ?", shardID).Scan(&isMirrored)
+	isMirrored := e.IsShardMirrored(ctx, shardID)
 
 	if isMirrored {
 		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", shardID))
@@ -504,8 +387,7 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 				continue
 			}
 
-			var pieceHash string
-			_ = e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = 0 AND peer_id = ? LIMIT 1", shardID, peerID).Scan(&pieceHash)
+			pieceHash := e.GetPieceHash(ctx, shardID, 0, peerID)
 
 			f, err := os.OpenFile(piecePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 			if err != nil {
@@ -580,8 +462,11 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 			continue
 		}
 
-		var pieceHash string
-		err := e.DB.QueryRowContext(ctx, "SELECT piece_hash FROM piece_challenges WHERE shard_id = ? AND piece_index = ? AND peer_id = ? LIMIT 1", shardID, p.index, p.peerID).Scan(&pieceHash)
+		pieceHash := e.GetPieceHash(ctx, shardID, p.index, p.peerID)
+		err := error(nil)
+		if pieceHash == "" {
+			err = fmt.Errorf("no piece hash found")
+		}
 		if err != nil {
 			continue
 		}
@@ -629,11 +514,6 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 	}
 
 	return nil
-}
-
-func hexToBytes(h string) []byte {
-	b, _ := hex.DecodeString(h)
-	return b
 }
 
 func (e *Engine) HasItem(ctx context.Context, hash string) bool {
@@ -698,12 +578,9 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 	}
 
 	// Quota Check
-	var localTotal, peerTotal int64
-	_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
-	_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
-	if e.MaxStorageBytes > 0 && (localTotal+peerTotal+int64(size)) > e.MaxStorageBytes {
+	if err := e.CheckGlobalStorageLimit(ctx, int64(size)); err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("global server storage limit exceeded")
+		return err
 	}
 
 	// Initialize in-memory shard state if needed
@@ -790,14 +667,14 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 		// We write to the reserved segment using WriteAt to ensure concurrency safety.
 		// Multiple streams can safely write to different parts of the same file concurrently.
 		buf := e.StreamBufferPool.Get().([]byte)
-		
+
 		var written int64
 		for written < res.Length {
 			toRead := int64(len(buf))
 			if toRead > res.Length-written {
 				toRead = res.Length - written
 			}
-			
+
 			nr, er := r.Read(buf[:toRead])
 			if nr > 0 {
 				nw, ew := f.WriteAt(buf[:nr], res.Offset+written)
@@ -897,15 +774,16 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 		var isSpecial bool
 		err := e.DB.QueryRowContext(ctx, "SELECT special FROM blobs WHERE hash = ?", h).Scan(&isSpecial)
 		if err != nil {
-			log.Printf("GetHostedItems failed for %s: %v", h, err); missing = append(missing, h)
+			log.Printf("GetItems: blob not found for %s: %v", h, err)
+			missing = append(missing, h)
 			continue
 		}
 
 		// Find shard locations
 		rows, err := e.DB.QueryContext(ctx, "SELECT shard_id, piece_index, offset, length FROM blob_locations WHERE blob_hash = ? ORDER BY sequence ASC", h)
 		if err != nil {
-			log.Printf("GetItems error: failed to query locations for %s: %v", h, err)
-			log.Printf("GetHostedItems failed for %s: %v", h, err); missing = append(missing, h)
+			log.Printf("GetItems: failed to query locations for %s: %v", h, err)
+			missing = append(missing, h)
 			continue
 		}
 
@@ -941,7 +819,8 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 			var err error
 			fullData, err = os.ReadFile(path)
 			if err != nil {
-				log.Printf("GetHostedItems failed for %s: %v", h, err); missing = append(missing, h)
+				log.Printf("GetItems: failed to read legacy blob %s: %v", h, err)
+				missing = append(missing, h)
 				continue
 			}
 		}
@@ -1101,12 +980,7 @@ func (e *Engine) encodeShard(shardID int64) {
 	targetPieceSize := e.ShardSize / int64(e.DataShards)
 
 	// Check if this is a mirrored (metadata) shard
-	var isMirrored bool
-	err = e.DB.QueryRow("SELECT mirrored FROM shards WHERE id = ?", shardID).Scan(&isMirrored)
-	if err != nil {
-		log.Printf("encodeShard error: failed to check mirrored status: %v", err)
-		return
-	}
+	isMirrored := e.IsShardMirrored(context.Background(), shardID)
 
 	if isMirrored {
 		// Mirroring profile: Every peer gets a full copy of the shard data,
@@ -1150,7 +1024,7 @@ func (e *Engine) encodeShard(shardID int64) {
 			// syncMirroredShards will pick it up from BlobStoreDir and then outbound_worker handles deleting it
 			// Wait, outbound_worker only deletes if count >= threshold.
 		}
-		
+
 		log.Printf("ErasureCoder: Successfully prepared special shard %d for mirroring (padded to %d MB, hash: %s)", shardID, targetPieceSize/(1024*1024), shardHash[:16])
 		return
 	}
@@ -1192,38 +1066,42 @@ func (e *Engine) encodeShard(shardID int64) {
 		} else {
 			reader = inf
 		}
-		
+
 		dstPath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d.tmp", shardID, i))
 		outFile, err := os.Create(dstPath)
 		if err != nil {
-			if inf != nil { inf.Close() }
+			if inf != nil {
+				inf.Close()
+			}
 			for j := 0; j < i; j++ {
 				inFiles[j].Close()
 			}
 			return
 		}
-		
+
 		// Pad to exactly targetPieceSize
 		pr := &PadReader{Reader: reader, TotalSize: targetPieceSize}
 		teeReader := io.TeeReader(pr, hasher)
-		
+
 		if _, err := io.Copy(outFile, teeReader); err != nil {
 			log.Printf("encodeShard error: failed to copy/pad piece %d: %v", i, err)
 			outFile.Close()
-			if inf != nil { inf.Close() }
+			if inf != nil {
+				inf.Close()
+			}
 			for j := 0; j < i; j++ {
 				inFiles[j].Close()
 			}
 			return
 		}
-		
+
 		if inf != nil {
 			inf.Close()
 			if !e.KeepLocalCopy {
-			    os.Remove(srcPath)
+				os.Remove(srcPath)
 			}
 		}
-		
+
 		outFile.Seek(0, 0)
 		inFiles[i] = outFile
 		inReaders[i] = outFile
@@ -1273,7 +1151,7 @@ func (e *Engine) encodeShard(shardID int64) {
 			os.Rename(tmpPath, finalPath)
 		}
 	}
-	
+
 	for i := 0; i < e.ParityShards; i++ {
 		outFiles[i].Close()
 		if err == nil {
@@ -1283,63 +1161,6 @@ func (e *Engine) encodeShard(shardID int64) {
 		}
 	}
 }
-
-// SyncPeers registers or updates the configured peers in the database.
-func (e *Engine) SyncPeers(peers []config.PeerConfig) error {
-	for _, p := range peers {
-		if p.TLSPublicKey == "" {
-			continue
-		}
-
-		expectedCertPEM, err := os.ReadFile(p.TLSPublicKey)
-		if err != nil {
-			log.Printf("SyncPeers: Failed to read peer %s public key file: %v", p.Name, err)
-			continue
-		}
-
-		block, _ := pem.Decode(expectedCertPEM)
-		if block == nil {
-			log.Printf("SyncPeers: Failed to decode PEM block from %s", p.TLSPublicKey)
-			continue
-		}
-
-		var peerKey []byte
-		if block.Type == "CERTIFICATE" {
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err == nil {
-				peerKey, _ = x509.MarshalPKIXPublicKey(cert.PublicKey)
-			}
-		} else if block.Type == "PUBLIC KEY" {
-			peerKey = block.Bytes
-		}
-
-		if len(peerKey) == 0 {
-			log.Printf("SyncPeers: Failed to extract public key for peer %s", p.Name)
-			continue
-		}
-
-		pubKeyHex := hex.EncodeToString(peerKey)
-
-		// SQLite UPSERT
-		query := `
-			INSERT INTO peers (ip_address, public_key, max_storage_size)
-			VALUES (?, ?, ?)
-			ON CONFLICT(public_key) DO UPDATE SET 
-				ip_address=excluded.ip_address,
-				max_storage_size=excluded.max_storage_size
-		`
-		_, err = e.DB.Exec(query, p.Address, pubKeyHex, p.StorageLimitGB)
-		if err != nil {
-			return fmt.Errorf("failed to sync peer %s to DB: %w", p.Name, err)
-		}
-	}
-
-	if e.Verbose {
-		log.Printf("Successfully synchronized %d peers to database", len(peers))
-	}
-	return nil
-}
-
 
 // PreparePeerUpload records metadata for shards that a peer is about to push via a stream.
 func (e *Engine) PreparePeerUpload(ctx context.Context, pubKeyHex string, items []rpc.Metadata) error {
@@ -1380,9 +1201,7 @@ func (e *Engine) UploadPeerItems(ctx context.Context, pubKeyHex string, items []
 
 			limitBytes := maxStorageBytes
 			if status == "untrusted" {
-				var myPiecesOnPeer int
-				_ = e.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM outbound_pieces WHERE peer_id = ? AND status = 'uploaded'", peerID).Scan(&myPiecesOnPeer)
-
+				myPiecesOnPeer := e.CountUploadedPiecesForPeer(ctx, peerID)
 				pieceSize := e.ShardSize / int64(e.DataShards)
 				limitBytes = (int64(myPiecesOnPeer) + int64(e.BasePieceBuffer)) * pieceSize
 			}
@@ -1392,13 +1211,8 @@ func (e *Engine) UploadPeerItems(ctx context.Context, pubKeyHex string, items []
 			}
 
 			// Global server limit check
-			if e.MaxStorageBytes > 0 {
-				var localTotal, peerTotal int64
-				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM shards").Scan(&localTotal)
-				_ = e.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(size), 0) FROM hosted_shards").Scan(&peerTotal)
-				if (localTotal + peerTotal + incomingSize) > e.MaxStorageBytes {
-					return fmt.Errorf("global server storage limit exceeded (%d GB)", e.MaxStorageBytes/(1024*1024*1024))
-				}
+			if err := e.CheckGlobalStorageLimit(ctx, incomingSize); err != nil {
+				return err
 			}
 		}
 	}
@@ -1547,449 +1361,6 @@ func (e *Engine) ChallengePiece(ctx context.Context, pubKeyHex string, checksum 
 	return buf, nil
 }
 
-// ListAllBlobs returns a list of all blob hashes currently tracked by the server.
-func (e *Engine) ListAllBlobs(ctx context.Context) ([]string, error) {
-	rows, err := e.DB.QueryContext(ctx, "SELECT hash FROM blobs")
-	if err != nil {
-		return nil, fmt.Errorf("failed to query all blobs: %w", err)
-	}
-	defer rows.Close()
-
-	var hashes []string
-	for rows.Next() {
-		var hash string
-		if err := rows.Scan(&hash); err != nil {
-			return nil, fmt.Errorf("failed to scan blob hash: %w", err)
-		}
-		hashes = append(hashes, hash)
-	}
-
-	return hashes, nil
-}
-
-func (e *Engine) AddPeer(ctx context.Context, address string) error {
-	maddr, err := multiaddr.NewMultiaddr(address)
-	if err != nil {
-		return fmt.Errorf("invalid multiaddress format %s: %w", address, err)
-	}
-
-	addrInfo, err := peer.AddrInfoFromP2pAddr(maddr)
-	if err != nil {
-		return fmt.Errorf("multiaddress must include /p2p/ PeerID component: %w", err)
-	}
-
-	pubKeyHex, err := crypto.PubKeyHexFromPeerID(addrInfo.ID)
-	if err != nil {
-		return fmt.Errorf("failed to extract public key from peer ID: %w", err)
-	}
-
-	// 1. Validate and register in database first (Resilient Registration)
-	// Store the base address without the peer ID for cleaner dialing later
-	baseAddr, _ := multiaddr.SplitFunc(maddr, func(c multiaddr.Component) bool {
-		return c.Protocol().Code == multiaddr.P_P2P
-	})
-
-	query := `
-		INSERT INTO peers (ip_address, public_key, status, first_seen, last_seen, is_manual, source)
-		VALUES (?, ?, 'untrusted', CURRENT_TIMESTAMP, NULL, 1, 'manual')
-		ON CONFLICT(public_key) DO UPDATE SET 
-			ip_address=excluded.ip_address,
-			is_manual=1,
-			source='manual'
-	`
-	_, err = e.DB.ExecContext(ctx, query, baseAddr.String(), pubKeyHex)
-	if err != nil {
-		return fmt.Errorf("failed to register peer in database: %w", err)
-	}
-
-	// 2. Fetch the internal ID to use for the RPC dialer
-	var internalID int64
-	err = e.DB.QueryRowContext(ctx, "SELECT id FROM peers WHERE public_key = ?", pubKeyHex).Scan(&internalID)
-	if err != nil {
-		return fmt.Errorf("failed to retrieve peer id: %w", err)
-	}
-
-	// 3. Proactively trigger a handshake (Announce)
-	// GetOrDialPeer will connect, announce us, and receive their announce (updating contact_info)
-	client, err := e.GetOrDialPeer(ctx, internalID)
-	if err != nil {
-		log.Printf("AddPeer: Registered peer %s, but handshake failed: %v. Metadata will update later.", pubKeyHex, err)
-		return nil
-	}
-	client.Close() // Release the ref since we don't need it immediately
-
-	// 4. Trigger Automatic Adoption if enabled
-	if e.AdoptionEnabled && e.AdoptionChallengePieces > 0 {
-		var status string
-		err = e.DB.QueryRowContext(ctx, "SELECT adoption_status FROM peers WHERE id = ?", internalID).Scan(&status)
-		if err == nil && status == "none" {
-			go func() {
-				if err := e.StartAdoptionTest(context.Background(), internalID); err != nil {
-					log.Printf("Adoption: Failed to start test for peer %d: %v", internalID, err)
-				}
-			}()
-		}
-	}
-
-	return nil
-}
-
-// RegisterAndHandshakeDHT is called by the DiscoveryWorker when a new peer is found on the DHT.
-// It registers the peer with 'source=dht' and triggers a handshake to get their metadata.
-func (e *Engine) RegisterAndHandshakeDHT(ctx context.Context, info peer.AddrInfo) error {
-	pubKeyHex, err := crypto.PubKeyHexFromPeerID(info.ID)
-	if err != nil {
-		return err
-	}
-
-	// 1. Initial registration as 'discovered'/'dht'
-	// We use e.AnnouncePeer logic but we don't have contact info yet.
-	// Note: e.AnnouncePeer uses ON CONFLICT DO UPDATE, which is exactly what we want.
-	addrStr := ""
-	if len(info.Addrs) > 0 {
-		addrStr = info.Addrs[0].String()
-	}
-	if addrStr == "" {
-		return fmt.Errorf("no address for discovered peer %s", info.ID)
-	}
-
-	peerID, err := e.AnnouncePeer(ctx, pubKeyHex, addrStr, "", "dht")
-	if err != nil {
-		return err
-	}
-
-	// 2. Trigger handshake to get their actual metadata (contact_info)
-	// GetOrDialPeer will call Announce, and they will Announce back.
-	client, err := e.GetOrDialPeer(ctx, peerID)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	// 3. Trigger Automatic Adoption if enabled
-	if e.AdoptionEnabled && e.AdoptionChallengePieces > 0 {
-		var status string
-		err = e.DB.QueryRowContext(ctx, "SELECT adoption_status FROM peers WHERE id = ?", peerID).Scan(&status)
-		if err == nil && status == "none" {
-			go func() {
-				if err := e.StartAdoptionTest(context.Background(), peerID); err != nil {
-					log.Printf("Adoption: Failed to start test for peer %d: %v", peerID, err)
-				}
-			}()
-		}
-	}
-
-	return nil
-}
-
-func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
-	if e.Verbose {
-		log.Printf("Adoption: Starting test for peer %d (%d pieces)...", peerID, e.AdoptionChallengePieces)
-	}
-
-	_, err := e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'testing' WHERE id = ?", peerID)
-	if err != nil {
-		return err
-	}
-
-	pieceSize := int64(256 * 1024 * 1024) // 256MB adoption test pieces
-
-	for i := 0; i < e.AdoptionChallengePieces; i++ {
-		// Generate random data stream and calculate hash on the fly
-		hasher := blake3.New(32, nil)
-		// We use a repeatable but unique seed for this piece
-		seed := make([]byte, 32)
-		crypto_rand.Read(seed)
-		
-		// Create a reader that generates random data
-		randomReader := &randomDataStream{
-			total:  pieceSize,
-			seed:   seed,
-			hasher: hasher,
-		}
-
-		hashHex := ""
-		
-		// Wrap in a reader that captures the hash when fully read
-		var streamItems []rpc.StreamItem
-		streamItems = append(streamItems, rpc.StreamItem{
-			Header: rpc.StreamItemHeader{
-				OpCode: rpc.OpCodePush,
-				Flags:  rpc.FlagTypePeerShard,
-				Size:   uint64(pieceSize),
-			},
-			Data: randomReader,
-		})
-
-		// We need the hash BEFORE we tell the peer the hash in the header...
-		// Wait, PushPieceBatched takes the hash in the header.
-		// So we actually have to generate the hash first if we want to use the standard Push mechanism.
-		// Since it's only 256MB and we want to avoid disk, let's just generate it in a quick pass.
-		// Actually, we can just pre-calculate it by running the random generator once.
-		
-		preHasher := blake3.New(32, nil)
-		preReader := &randomDataStream{total: pieceSize, seed: seed, hasher: preHasher}
-		io.Copy(io.Discard, preReader)
-		hashHex = hex.EncodeToString(preHasher.Sum(nil))
-		hashBytes, _ := hex.DecodeString(hashHex)
-		copy(streamItems[0].Header.Hash[:], hashBytes)
-
-		// RESET the reader for the actual upload
-		randomReader.reset()
-
-		if e.Verbose {
-			log.Printf("Adoption: Uploading test piece %d/%d (hash=%s) to peer %d", i+1, e.AdoptionChallengePieces, hashHex[:12], peerID)
-		}
-
-		client, err := e.GetOrDialPeer(ctx, peerID)
-		if err != nil {
-			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
-			return fmt.Errorf("failed to dial peer for adoption: %w", err)
-		}
-
-		meta := []rpc.Metadata{
-			{
-				Hash:       hashHex,
-				Size:       pieceSize,
-				Type:       1, // 1 = PeerShard
-				IsSpecial:  false, // Adoption piece doesn't need to be strictly special on the receiver side
-				PieceIndex: 0,
-			},
-		}
-
-		if err := client.PrepareUpload(ctx, meta); err != nil {
-			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
-			return fmt.Errorf("failed to prepare upload for adoption piece: %w", err)
-		}
-
-		// Update outbound_storage_size for the peer BEFORE the upload starts so it reflects in the UI immediately
-		_, err = e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = outbound_storage_size + ? WHERE id = ?", pieceSize, peerID)
-		if err != nil {
-			log.Printf("Adoption: Failed to update outbound_storage_size for peer %d: %v", peerID, err)
-		}
-
-		err = e.PushPieceBatched(ctx, peerID, streamItems)
-		if err != nil {
-			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
-			e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = MAX(0, outbound_storage_size - ?) WHERE id = ?", pieceSize, peerID)
-			return fmt.Errorf("failed to upload adoption piece: %w", err)
-		}
-
-		// Record the piece in hosted_shards with is_special = 2
-		_, err = e.DB.ExecContext(ctx, "INSERT INTO hosted_shards (hash, size, peer_id, is_special) VALUES (?, ?, ?, 2)", hashHex, pieceSize, peerID)
-		if err != nil {
-			return err
-		}
-	}
-
-	e.DB.ExecContext(ctx, "UPDATE peers SET adoption_start_at = CURRENT_TIMESTAMP WHERE id = ?", peerID)
-
-	return nil
-}
-
-type randomDataStream struct {
-	total  int64
-	read   int64
-	seed   []byte
-	hasher io.Writer
-	source *rand.Rand
-}
-
-func (s *randomDataStream) Read(p []byte) (n int, err error) {
-	if s.read >= s.total {
-		return 0, io.EOF
-	}
-	if s.source == nil {
-		s.reset()
-	}
-
-	remaining := s.total - s.read
-	toRead := len(p)
-	if int64(toRead) > remaining {
-		toRead = int(remaining)
-	}
-
-	n, _ = s.source.Read(p[:toRead])
-	if s.hasher != nil {
-		s.hasher.Write(p[:n])
-	}
-	s.read += int64(n)
-	return n, nil
-}
-
-func (s *randomDataStream) reset() {
-	var seedInt64 int64
-	for i := 0; i < 8 && i < len(s.seed); i++ {
-		seedInt64 = (seedInt64 << 8) | int64(s.seed[i])
-	}
-	s.source = rand.New(rand.NewSource(seedInt64))
-	s.read = 0
-}
-
-
-// AddOrUpdatePeer registers a peer based on handshake data without dialing out.
-func (e *Engine) AddOrUpdatePeer(ctx context.Context, address, pubKeyHex string) (int64, error) {
-	// Use ON CONFLICT to update last_seen, but only set ip_address if it's currently empty or unknown.
-	// In this simple implementation, we'll check if the peer exists first to avoid overwriting a good port with an ephemeral one.
-	var id int64
-	var existingAddr string
-	err := e.DB.QueryRowContext(ctx, "SELECT id, ip_address FROM peers WHERE public_key = ?", pubKeyHex).Scan(&id, &existingAddr)
-
-	if err == sql.ErrNoRows {
-		// New peer, we have to use what we have (even if the port is ephemeral)
-		res, err := e.DB.ExecContext(ctx, "INSERT INTO peers (ip_address, public_key, status) VALUES (?, ?, 'untrusted')", address, pubKeyHex)
-		if err != nil {
-			return 0, err
-		}
-		return res.LastInsertId()
-	} else if err != nil {
-		return 0, err
-	}
-
-	// Existing peer: update last_seen but preserve the address if it looks like a real listener (not ephemeral)
-	// For now, we just never overwrite the address once we have one.
-	_, err = e.DB.ExecContext(ctx, "UPDATE peers SET last_seen = CURRENT_TIMESTAMP WHERE id = ?", id)
-	return id, err
-}
-
-func (e *Engine) UpdatePeer(ctx context.Context, id int64, status string, maxStorageBytes int64) error {
-	_, err := e.DB.ExecContext(ctx, "UPDATE peers SET status = ?, max_storage_size = ? WHERE id = ?", status, maxStorageBytes/(1024*1024*1024), id)
-	return err
-}
-
-// GetPeerIDByPubKey returns the database ID for a peer public key.
-func (e *Engine) GetPeerIDByPubKey(ctx context.Context, pubKeyHex string) (int64, error) {
-	var id int64
-	err := e.DB.QueryRowContext(ctx, "SELECT id FROM peers WHERE public_key = ?", pubKeyHex).Scan(&id)
-	return id, err
-}
-
-// AnnouncePeer registers or updates a peer based on their self-reported listener address.
-func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress, contactInfo, source string) (int64, error) {
-	if pubKeyHex == "" || listenAddress == "" || pubKeyHex == "insecure-local-client" {
-		return 0, nil
-	}
-
-	status := "discovered"
-	isManual := 0
-	if source == "manual" {
-		status = "untrusted"
-		isManual = 1
-	}
-
-	// Dynamic registration or update.
-	// Logic: If it's a new peer, it defaults to the appropriate status and the provided source.
-	// If it already exists, we preserve the existing source (so 'manual' stays 'manual').
-	_, err := e.DB.ExecContext(ctx, `
-		INSERT INTO peers (ip_address, public_key, status, contact_info, source, is_manual)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(public_key) DO UPDATE SET 
-			ip_address=excluded.ip_address,
-			contact_info=excluded.contact_info,
-			last_seen=CURRENT_TIMESTAMP
-	`, listenAddress, pubKeyHex, status, contactInfo, source, isManual)
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to announce peer: %w", err)
-	}
-
-	return e.GetPeerIDByPubKey(ctx, pubKeyHex)
-}
-
-// AuthorizeClient registers a client connection and returns its status and quota.
-func (e *Engine) AuthorizeClient(ctx context.Context, pubKeyHex string) (status string, quotaBytes int64, currentSize int64, err error) {
-	// Auto-register if new. If it's the admin, trust it immediately.
-	defaultStatus := "pending"
-	defaultQuota := int64(0)
-	if e.AdminPublicKey != "" && pubKeyHex == e.AdminPublicKey {
-		defaultStatus = "trusted"
-		defaultQuota = 100 * 1024 * 1024 * 1024 // 100GB default for admin
-	}
-
-	_, err = e.DB.ExecContext(ctx, "INSERT OR IGNORE INTO clients (public_key, status, max_storage_size) VALUES (?, ?, ?)", pubKeyHex, defaultStatus, defaultQuota)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("failed to register client: %w", err)
-	}
-
-	err = e.DB.QueryRowContext(ctx, "SELECT status, max_storage_size, current_storage_size FROM clients WHERE public_key = ?", pubKeyHex).Scan(&status, &quotaBytes, &currentSize)
-	if err == sql.ErrNoRows {
-		return "", 0, 0, nil
-	} else if err != nil {
-		return "", 0, 0, fmt.Errorf("failed to query client status: %w", err)
-	}
-
-	return status, quotaBytes, currentSize, nil
-}
-
-// UpdateClient changes a client's status and quota. Only the Admin can do this.
-func (e *Engine) UpdateClient(ctx context.Context, callerPubKey string, id uint64, status string, maxStorageBytes uint64) error {
-	if e.AdminPublicKey != "" && callerPubKey != e.AdminPublicKey {
-		return fmt.Errorf("unauthorized: only admin can update clients")
-	}
-
-	if id == 0 {
-		return fmt.Errorf("invalid client ID")
-	}
-
-	_, err := e.DB.ExecContext(ctx, "UPDATE clients SET status = ?, max_storage_size = ? WHERE id = ?", status, maxStorageBytes, id)
-	return err
-}
-
-// AddClient manually adds a client by their public key.
-func (e *Engine) AddClient(ctx context.Context, callerPubKey string, clientPubKey string, status string, maxStorageBytes uint64) error {
-	if e.AdminPublicKey != "" && callerPubKey != e.AdminPublicKey {
-		return fmt.Errorf("unauthorized: only admin can add clients")
-	}
-
-	_, err := e.DB.ExecContext(ctx, `
-		INSERT INTO clients (public_key, status, max_storage_size)
-		VALUES (?, ?, ?)
-		ON CONFLICT(public_key) DO UPDATE SET 
-			status=excluded.status,
-			max_storage_size=excluded.max_storage_size
-	`, clientPubKey, status, maxStorageBytes)
-	return err
-}
-
-type ClientDBInfo struct {
-	ID                 uint64
-	PublicKey          string
-	Status             string
-	LastSeen           string
-	MaxStorageSize     uint64
-	CurrentStorageSize uint64
-}
-
-func (e *Engine) ListClients(ctx context.Context) ([]ClientDBInfo, error) {
-	// Query clients that are NOT also in the peers table.
-	// This separates management of the Swarm (peers) from management of Users (clients).
-	query := `
-		SELECT c.id, c.public_key, c.status, c.last_seen, c.max_storage_size, c.current_storage_size 
-		FROM clients c
-		LEFT JOIN peers p ON c.public_key = p.public_key
-		WHERE p.id IS NULL
-		ORDER BY c.last_seen DESC
-	`
-	rows, err := e.DB.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var clients []ClientDBInfo
-	for rows.Next() {
-		var c ClientDBInfo
-		if err := rows.Scan(&c.ID, &c.PublicKey, &c.Status, &c.LastSeen, &c.MaxStorageSize, &c.CurrentStorageSize); err != nil {
-			return nil, err
-		}
-		clients = append(clients, c)
-	}
-	return clients, nil
-}
-
-// ListPeerSpecialItems returns a list of all shard pieces tagged as special for a peer (peer-to-peer data path).
-
-
 // ReleasePiece deletes a hosted shard piece from storage and updates the peer's quota.
 func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex string) error {
 	hashStr := hex.EncodeToString(hashBytes)
@@ -2056,133 +1427,4 @@ func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex s
 	}
 
 	return nil
-}
-
-// DownloadPiece retrieves a hosted shard piece from storage.
-
-type PeerDBInfo struct {
-	ID                  int64
-	Address             string
-	PublicKey           string
-	Status              string
-	FirstSeen           string
-	LastSeen            string
-	MaxStorageSize      int64
-	CurrentStorageSize  int64
-	OutboundStorageSize int64
-	InboundBytes        int64
-	OutboundBytes       int64
-	ContactInfo         string
-	Source              string
-	IsManual            bool
-	TotalShards         uint64
-	CurrentShards       uint64
-	ChallengesMade      uint32
-	ChallengesPassed    uint32
-	ConnectionsOk       uint32
-	IntegrityAttempts   uint32
-}
-
-func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
-	// Query all peers from the registry.
-	// We include peers we dial out to AND peers that dial in to us.
-	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, first_seen, COALESCE(last_seen, ''), max_storage_size, current_storage_size, outbound_storage_size, inbound_bytes, outbound_bytes, contact_info, total_shards, current_shards, is_manual, source FROM peers ORDER BY last_seen DESC")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var peers []PeerDBInfo
-	for rows.Next() {
-		var p PeerDBInfo
-		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.InboundBytes, &p.OutboundBytes, &p.ContactInfo, &p.TotalShards, &p.CurrentShards, &p.IsManual, &p.Source); err != nil {
-			return nil, err
-		}
-		peers = append(peers, p)
-	}
-	rows.Close()
-
-	// Compute 7-day challenge stats per peer
-	for i := range peers {
-		var total, reachable, passed, integrityAttempts int
-		err := e.DB.QueryRowContext(ctx, `
-			SELECT 
-				COUNT(*),
-				SUM(CASE WHEN status IN ('ok', 'pass', 'fail') THEN 1 ELSE 0 END),
-				SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END),
-				SUM(CASE WHEN status IN ('pass', 'fail') THEN 1 ELSE 0 END)
-			FROM challenge_results
-			WHERE peer_id = ? AND timestamp >= datetime('now', '-7 days')
-		`, peers[i].ID).Scan(&total, &reachable, &passed, &integrityAttempts)
-		if err == nil {
-			peers[i].ChallengesMade = uint32(total)
-			peers[i].ConnectionsOk = uint32(reachable)
-			peers[i].ChallengesPassed = uint32(passed)
-			peers[i].IntegrityAttempts = uint32(integrityAttempts)
-		}
-	}
-
-	return peers, nil
-}
-
-func (e *Engine) RegisterActivePeer(peerID int64, peerNode rpc.PeerNode) {
-	e.ActivePeersMu.Lock()
-	defer e.ActivePeersMu.Unlock()
-	e.ActivePeers[peerID] = peerNode
-}
-
-func (e *Engine) GetActivePeer(peerID int64) rpc.PeerNode {
-	e.ActivePeersMu.RLock()
-	defer e.ActivePeersMu.RUnlock()
-	return e.ActivePeers[peerID]
-}
-
-func (e *Engine) RemoveActivePeer(peerID int64) {
-	e.ActivePeersMu.Lock()
-	defer e.ActivePeersMu.Unlock()
-	delete(e.ActivePeers, peerID)
-}
-
-// GetOrDialPeer returns an active RPC client for a peer, dialing them if necessary.
-func (e *Engine) GetOrDialPeer(ctx context.Context, peerID int64) (*CapnpPeerClient, error) {
-	stub := e.GetActivePeer(peerID)
-	if stub.IsValid() {
-		return NewPeerClientFromStub(stub.AddRef()), nil
-	}
-
-	// Lookup in DB
-	var address, pubKeyHex string
-	err := e.DB.QueryRowContext(ctx, "SELECT ip_address, public_key FROM peers WHERE id = ?", peerID).Scan(&address, &pubKeyHex)
-	if err != nil {
-		return nil, fmt.Errorf("peer %d not found in database: %w", peerID, err)
-	}
-
-	// Dial using libp2p
-	client, err := NewCapnpPeerClient(ctx, e, address, pubKeyHex, e.LocalPeerNode)
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial peer %d at %s: %w", peerID, address, err)
-	}
-	client.Permanent = true // We manage this in the background goroutine
-
-	// Register it so others can reuse this connection
-	e.RegisterActivePeer(peerID, client.clientStub.AddRef())
-
-	// Announce our own listener address so they can dial us back.
-	if e.ListenAddress != "" {
-		cbHandler := NewRPCHandler(e, pubKeyHex)
-		cbNode := rpc.PeerNode(capnp.NewClient(cbHandler.NewServer()))
-		if err := client.Announce(ctx, e.ListenAddress, e.ContactInfo, cbNode); err != nil {
-			log.Printf("Warning: failed to auto-announce to peer %d: %v", peerID, err)
-		}
-		cbNode.Release()
-	}
-
-	// Setup cleanup when connection drops
-	go func(pid int64, c *CapnpPeerClient) {
-		<-c.rpcConn.Done()
-		e.RemoveActivePeer(pid)
-		c.ForceClose()
-	}(peerID, client)
-
-	return client, nil
 }
