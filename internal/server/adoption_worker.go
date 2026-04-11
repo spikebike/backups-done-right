@@ -78,33 +78,41 @@ func (e *Engine) runAdoptionCycle(ctx context.Context) {
 }
 
 func (e *Engine) cleanupAdoptionPieces(ctx context.Context, peerID int64) {
-	rows, err := e.DB.QueryContext(ctx, "SELECT hash FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
+	rows, err := e.DB.QueryContext(ctx, "SELECT hash, size FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
 	if err != nil {
 		return
 	}
-	var hashes []string
+	
+	type pieceInfo struct {
+		hash string
+		size int64
+	}
+	var pieces []pieceInfo
+	var totalSize int64
+	
 	for rows.Next() {
-		var h string
-		if err := rows.Scan(&h); err == nil {
-			hashes = append(hashes, h)
+		var p pieceInfo
+		if err := rows.Scan(&p.hash, &p.size); err == nil {
+			pieces = append(pieces, p)
+			totalSize += p.size
 		}
 	}
 	rows.Close()
 
-	if len(hashes) > 0 {
+	if len(pieces) > 0 {
 		peerStub := e.GetActivePeer(peerID)
 		if peerStub.IsValid() {
 			wrapper := &CapnpPeerClient{clientStub: peerStub}
-			for _, h := range hashes {
-				hashBytes, _ := hex.DecodeString(h)
+			for _, p := range pieces {
+				hashBytes, _ := hex.DecodeString(p.hash)
 				_ = wrapper.ReleasePiece(ctx, hashBytes)
 			}
 		} else {
 			// Try to dial and release
 			client, err := e.GetOrDialPeer(ctx, peerID)
 			if err == nil {
-				for _, h := range hashes {
-					hashBytes, _ := hex.DecodeString(h)
+				for _, p := range pieces {
+					hashBytes, _ := hex.DecodeString(p.hash)
 					_ = client.ReleasePiece(ctx, hashBytes)
 				}
 				client.Close()
@@ -113,6 +121,7 @@ func (e *Engine) cleanupAdoptionPieces(ctx context.Context, peerID int64) {
 		
 		// Clean up hosted_shards for test pieces
 		_, _ = e.DB.ExecContext(ctx, "DELETE FROM hosted_shards WHERE peer_id = ? AND is_special = 2", peerID)
+		_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = MAX(0, outbound_storage_size - ?) WHERE id = ?", totalSize, peerID)
 	}
 }
 

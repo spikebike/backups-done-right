@@ -220,6 +220,8 @@ func (a *backupServerAdapter) ListPeers(ctx context.Context, call rpc.BackupServ
 		cp.SetMaxStorageSize(uint64(p.MaxStorageSize))
 		cp.SetCurrentStorageSize(uint64(p.CurrentStorageSize))
 		cp.SetOutboundStorageSize(uint64(p.OutboundStorageSize))
+		cp.SetInboundBytes(uint64(p.InboundBytes))
+		cp.SetOutboundBytes(uint64(p.OutboundBytes))
 		cp.SetContactInfo(p.ContactInfo)
 		cp.SetChallengesMade(p.ChallengesMade)
 		cp.SetChallengesPassed(p.ChallengesPassed)
@@ -328,7 +330,7 @@ func (a *peerNodeAdapter) Announce(ctx context.Context, call rpc.PeerNode_announ
 	args := call.Args()
 	addr, _ := args.ListenAddress()
 	contact, _ := args.ContactInfo()
-	peerID, err := a.engine.AnnouncePeer(ctx, a.clientPubKey, addr, contact)
+	peerID, err := a.engine.AnnouncePeer(ctx, a.clientPubKey, addr, contact, "manual")
 	if err == nil && peerID > 0 {
 		callback := args.Callback()
 		if callback.IsValid() {

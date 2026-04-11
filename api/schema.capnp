@@ -1,6 +1,6 @@
 @0xdf5e7a9b8c1d2e3f;
 
-using Go = import "go.capnp";
+using Go = import "/go.capnp";
 $Go.package("rpc");
 $Go.import("p2p-backup/internal/rpc");
 
@@ -58,6 +58,8 @@ struct PeerInfo {
   totalShards @14 :UInt64;
   currentShards @15 :UInt64;
   source @16 :Text;
+  inboundBytes @17 :UInt64;
+  outboundBytes @18 :UInt64;
 }
 
 struct ClientInfo {

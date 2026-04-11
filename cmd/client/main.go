@@ -441,9 +441,9 @@ func main() {
 
 		header := func(title string) {
 			fmt.Printf("\n=== %s ===\n", title)
-			fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-10s | %-10s | %-7s | %-7s | %-7s | %-7s | %-20s | %s\n",
-				"ID", "IP Address", "Status", "Source", "Inbound MB", "Outbound MB", "Total", "Curr", "Uptime", "Pass%", "Contact", "Last Seen")
-			fmt.Println(strings.Repeat("-", 185))
+			fmt.Printf("%-3s | %-20s | %-10s | %-10s | %-11s | %-12s | %-10s | %-10s | %-7s | %-7s | %-20s | %s\n",
+				"ID", "IP Address", "Status", "Source", "Inbound Pcs", "Outbound Pcs", "Inbound MB", "Outbound MB", "Uptime", "Pass%", "Contact", "Last Seen")
+			fmt.Println(strings.Repeat("-", 175))
 		}
 
 		renderPeers := func(list []client.PeerMeta) {
@@ -455,11 +455,12 @@ func main() {
 				if p.IntegrityAttempts > 0 {
 					passPct = float64(p.ChallengesPassed) / float64(p.IntegrityAttempts) * 100
 				}
-				fmt.Printf("%-3d | %-20s | %-10s | %-10s | %10.2f | %10.2f | %-7d | %-7d | %5.1f%% | %5.1f%% | %-20s | %s\n",
+				fmt.Printf("%-3d | %-20s | %-10s | %-10s | %-11d | %-12d | %10.2f | %10.2f | %5.1f%% | %5.1f%% | %-20s | %s\n",
 					p.ID, p.IPAddress, p.Status, p.Source,
-					float64(p.CurrentStorageSize)/(1024*1024),
-					float64(p.OutboundStorageSize)/(1024*1024),
-					p.TotalShards, p.CurrentShards,
+					p.CurrentShards,
+					p.OutboundStorageSize/(256*1024*1024),
+					float64(p.InboundBytes)/(1024*1024),
+					float64(p.OutboundBytes)/(1024*1024),
 					uptimePct, passPct, p.ContactInfo, p.LastSeen)
 			}
 			fmt.Println("==============================")

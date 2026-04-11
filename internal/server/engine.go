@@ -1618,6 +1618,19 @@ func (e *Engine) AddPeer(ctx context.Context, address string) error {
 	}
 	client.Close() // Release the ref since we don't need it immediately
 
+	// 4. Trigger Automatic Adoption if enabled
+	if e.AdoptionEnabled && e.AdoptionChallengePieces > 0 {
+		var status string
+		err = e.DB.QueryRowContext(ctx, "SELECT adoption_status FROM peers WHERE id = ?", internalID).Scan(&status)
+		if err == nil && status == "none" {
+			go func() {
+				if err := e.StartAdoptionTest(context.Background(), internalID); err != nil {
+					log.Printf("Adoption: Failed to start test for peer %d: %v", internalID, err)
+				}
+			}()
+		}
+	}
+
 	return nil
 }
 
@@ -1640,7 +1653,7 @@ func (e *Engine) RegisterAndHandshakeDHT(ctx context.Context, info peer.AddrInfo
 		return fmt.Errorf("no address for discovered peer %s", info.ID)
 	}
 
-	peerID, err := e.AnnouncePeer(ctx, pubKeyHex, addrStr, "")
+	peerID, err := e.AnnouncePeer(ctx, pubKeyHex, addrStr, "", "dht")
 	if err != nil {
 		return err
 	}
@@ -1749,9 +1762,16 @@ func (e *Engine) StartAdoptionTest(ctx context.Context, peerID int64) error {
 			return fmt.Errorf("failed to prepare upload for adoption piece: %w", err)
 		}
 
+		// Update outbound_storage_size for the peer BEFORE the upload starts so it reflects in the UI immediately
+		_, err = e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = outbound_storage_size + ? WHERE id = ?", pieceSize, peerID)
+		if err != nil {
+			log.Printf("Adoption: Failed to update outbound_storage_size for peer %d: %v", peerID, err)
+		}
+
 		err = e.PushPieceBatched(ctx, peerID, streamItems)
 		if err != nil {
 			e.DB.ExecContext(ctx, "UPDATE peers SET adoption_status = 'failed' WHERE id = ?", peerID)
+			e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = MAX(0, outbound_storage_size - ?) WHERE id = ?", pieceSize, peerID)
 			return fmt.Errorf("failed to upload adoption piece: %w", err)
 		}
 
@@ -1845,22 +1865,29 @@ func (e *Engine) GetPeerIDByPubKey(ctx context.Context, pubKeyHex string) (int64
 }
 
 // AnnouncePeer registers or updates a peer based on their self-reported listener address.
-func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress, contactInfo string) (int64, error) {
+func (e *Engine) AnnouncePeer(ctx context.Context, pubKeyHex, listenAddress, contactInfo, source string) (int64, error) {
 	if pubKeyHex == "" || listenAddress == "" || pubKeyHex == "insecure-local-client" {
 		return 0, nil
 	}
 
+	status := "discovered"
+	isManual := 0
+	if source == "manual" {
+		status = "untrusted"
+		isManual = 1
+	}
+
 	// Dynamic registration or update.
-	// Logic: If it's a new peer, it defaults to 'discovered' status and 'dht' source.
+	// Logic: If it's a new peer, it defaults to the appropriate status and the provided source.
 	// If it already exists, we preserve the existing source (so 'manual' stays 'manual').
 	_, err := e.DB.ExecContext(ctx, `
 		INSERT INTO peers (ip_address, public_key, status, contact_info, source, is_manual)
-		VALUES (?, ?, 'discovered', ?, 'dht', 0)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(public_key) DO UPDATE SET 
 			ip_address=excluded.ip_address,
 			contact_info=excluded.contact_info,
 			last_seen=CURRENT_TIMESTAMP
-	`, listenAddress, pubKeyHex, contactInfo)
+	`, listenAddress, pubKeyHex, status, contactInfo, source, isManual)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to announce peer: %w", err)
@@ -2043,6 +2070,8 @@ type PeerDBInfo struct {
 	MaxStorageSize      int64
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
+	InboundBytes        int64
+	OutboundBytes       int64
 	ContactInfo         string
 	Source              string
 	IsManual            bool
@@ -2057,7 +2086,7 @@ type PeerDBInfo struct {
 func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	// Query all peers from the registry.
 	// We include peers we dial out to AND peers that dial in to us.
-	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, first_seen, COALESCE(last_seen, ''), max_storage_size, current_storage_size, outbound_storage_size, contact_info, total_shards, current_shards, is_manual, source FROM peers ORDER BY last_seen DESC")
+	rows, err := e.DB.QueryContext(ctx, "SELECT id, ip_address, public_key, status, first_seen, COALESCE(last_seen, ''), max_storage_size, current_storage_size, outbound_storage_size, inbound_bytes, outbound_bytes, contact_info, total_shards, current_shards, is_manual, source FROM peers ORDER BY last_seen DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -2066,7 +2095,7 @@ func (e *Engine) ListPeers(ctx context.Context) ([]PeerDBInfo, error) {
 	var peers []PeerDBInfo
 	for rows.Next() {
 		var p PeerDBInfo
-		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.ContactInfo, &p.TotalShards, &p.CurrentShards, &p.IsManual, &p.Source); err != nil {
+		if err := rows.Scan(&p.ID, &p.Address, &p.PublicKey, &p.Status, &p.FirstSeen, &p.LastSeen, &p.MaxStorageSize, &p.CurrentStorageSize, &p.OutboundStorageSize, &p.InboundBytes, &p.OutboundBytes, &p.ContactInfo, &p.TotalShards, &p.CurrentShards, &p.IsManual, &p.Source); err != nil {
 			return nil, err
 		}
 		peers = append(peers, p)

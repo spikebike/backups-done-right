@@ -18,6 +18,8 @@ type PeerMeta struct {
 	StorageLimitGB      int
 	CurrentStorageSize  int64
 	OutboundStorageSize int64
+	InboundBytes        int64
+	OutboundBytes       int64
 	ContactInfo         string
 	Source              string
 	TotalShards         uint64

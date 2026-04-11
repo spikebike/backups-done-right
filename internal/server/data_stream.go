@@ -53,6 +53,9 @@ func (e *Engine) HandleUnifiedStream(s network.Stream) {
 
 	var responseItems []rpc.StreamItem
 	var openFiles []*os.File
+	var totalInboundBytes uint64
+	var totalOutboundBytes uint64
+
 	defer func() {
 		for _, f := range openFiles {
 			f.Close()
@@ -64,7 +67,11 @@ func (e *Engine) HandleUnifiedStream(s network.Stream) {
 
 		switch header.OpCode {
 		case rpc.OpCodePush:
-			return e.handleIncomingPush(r, pubKeyHex, checksumHex, header.Size, header.Flags)
+			err := e.handleIncomingPush(r, pubKeyHex, checksumHex, header.Size, header.Flags)
+			if err == nil {
+				totalInboundBytes += header.Size
+			}
+			return err
 		case rpc.OpCodePull:
 			// Load file but don't send yet
 			filePath := filepath.Join(e.BlobStoreDir, "peer_"+checksumHex)
@@ -111,12 +118,23 @@ func (e *Engine) HandleUnifiedStream(s network.Stream) {
 
 		if err := sender.SendBatchWithBuffer(ctx, responseItems, buf); err != nil {
 			log.Printf("UnifiedStream: failed to send response batch to %s: %v", peerID, err)
+		} else {
+			for _, item := range responseItems {
+				totalOutboundBytes += item.Header.Size
+			}
 		}
 	}
 
 	// Always send a final status byte if it's a push (no response batch needed an ACK)
 	// or if we had an error.
 	s.Write([]byte{status})
+
+	if totalInboundBytes > 0 {
+		_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET inbound_bytes = inbound_bytes + ? WHERE public_key = ?", totalInboundBytes, pubKeyHex)
+	}
+	if totalOutboundBytes > 0 {
+		_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET outbound_bytes = outbound_bytes + ? WHERE public_key = ?", totalOutboundBytes, pubKeyHex)
+	}
 }
 
 func (e *Engine) handleIncomingPush(s io.Reader, pubKeyHex, checksumHex string, size uint64, flags byte) error {
@@ -304,6 +322,15 @@ func (e *Engine) PushPieceBatched(ctx context.Context, peerID int64, items []rpc
 	if ack[0] != 0 {
 		return fmt.Errorf("remote batch processing failed (status %d)", ack[0])
 	}
+
+	var totalOutboundBytes uint64
+	for _, item := range items {
+		totalOutboundBytes += item.Header.Size
+	}
+	if totalOutboundBytes > 0 {
+		_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET outbound_bytes = outbound_bytes + ? WHERE public_key = ?", totalOutboundBytes, pubKeyHex)
+	}
+
 	return nil
 }
 
@@ -362,6 +389,7 @@ func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex stri
 
 	// Read batch response back
 	receiver := rpc.NewStreamReceiver(throttledStream)
+	var totalInboundBytes uint64
 	err = receiver.ReceiveBatch(ctx, func(header rpc.StreamItemHeader, r io.Reader) error {
 		// Verify hash
 		receivedHash := hex.EncodeToString(header.Hash[:])
@@ -385,6 +413,7 @@ func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex stri
 			return fmt.Errorf("payload checksum mismatch: expected %s, got %s", checksumHex, actualHash)
 		}
 
+		totalInboundBytes += header.Size
 		return nil
 	})
 
@@ -400,6 +429,11 @@ func (e *Engine) PullPieceRaw(ctx context.Context, pid peer.ID, checksumHex stri
 
 	if ack[0] != 0 {
 		return fmt.Errorf("remote pull processing failed (status %d)", ack[0])
+	}
+
+	if totalInboundBytes > 0 {
+		pubKeyHex, _ := crypto.PubKeyHexFromPeerID(pid)
+		_, _ = e.DB.ExecContext(ctx, "UPDATE peers SET inbound_bytes = inbound_bytes + ? WHERE public_key = ?", totalInboundBytes, pubKeyHex)
 	}
 
 	return nil

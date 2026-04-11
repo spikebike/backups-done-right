@@ -331,9 +331,9 @@ func main() {
 		cfg.ContactInfo,
 		cfg.Network.MaxConcurrentStreams,
 		cfg.Network.StandaloneMode,
-		cfg.Discovery.AutomaticAdoption.Enabled,
-		cfg.Discovery.AutomaticAdoption.TestPeriodMinutes,
-		cfg.Discovery.AutomaticAdoption.ChallengePieces,
+		cfg.Adoption.Enabled,
+		cfg.Adoption.TestPeriodMinutes,
+		cfg.Adoption.ChallengePieces,
 		cfg.Discovery.BootstrapPeers,
 	)
 
@@ -362,9 +362,10 @@ func main() {
 
 	if cfg.Discovery.Enabled {
 		go engine.StartDiscoveryWorker(ctx)
-		if cfg.Discovery.AutomaticAdoption.Enabled {
-			go engine.StartAdoptionWorker(ctx)
-		}
+	}
+
+	if cfg.Adoption.Enabled {
+		go engine.StartAdoptionWorker(ctx)
 	}
 
 	p2pHost.SetStreamHandler("/bdr/rpc/1.0.0", func(s network.Stream) {

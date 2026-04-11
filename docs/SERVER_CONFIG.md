@@ -81,8 +81,9 @@ storage:
 
 discovery:
   enabled: true
-  automatic_adoption:
-    enabled: true
-    test_period_minutes: 60
-    challenge_pieces: 1
+
+adoption:
+  enabled: true
+  test_period_minutes: 60
+  challenge_pieces: 1
 ```

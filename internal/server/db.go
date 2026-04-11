@@ -185,6 +185,8 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	_, _ = db.Exec("ALTER TABLE blob_locations ADD COLUMN piece_index INTEGER NOT NULL DEFAULT 0")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN status TEXT NOT NULL DEFAULT 'untrusted'")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN outbound_storage_size INTEGER NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN inbound_bytes INTEGER NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN outbound_bytes INTEGER NOT NULL DEFAULT 0")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN first_seen DATETIME DEFAULT CURRENT_TIMESTAMP")
 	_, _ = db.Exec("ALTER TABLE piece_challenges ADD COLUMN piece_hash TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE peers ADD COLUMN contact_info TEXT NOT NULL DEFAULT ''")

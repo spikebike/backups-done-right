@@ -92,14 +92,15 @@ type ServerConfig struct {
 	} `yaml:"storage"`
 
 	Discovery struct {
-		Enabled           bool     `yaml:"enabled"`
-		BootstrapPeers    []string `yaml:"bootstrap_peers"`
-		AutomaticAdoption struct {
-			Enabled           bool `yaml:"enabled"`
-			TestPeriodMinutes int  `yaml:"test_period_minutes"`
-			ChallengePieces   int  `yaml:"challenge_pieces"`
-		} `yaml:"automatic_adoption"`
+		Enabled        bool     `yaml:"enabled"`
+		BootstrapPeers []string `yaml:"bootstrap_peers"`
 	} `yaml:"discovery"`
+
+	Adoption struct {
+		Enabled           bool `yaml:"enabled"`
+		TestPeriodMinutes int  `yaml:"test_period_minutes"`
+		ChallengePieces   int  `yaml:"challenge_pieces"`
+	} `yaml:"adoption"`
 
 	AllowedClients []string     `yaml:"allowed_clients"`
 	Peers          []PeerConfig `yaml:"peers"`

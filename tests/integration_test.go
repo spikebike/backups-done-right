@@ -828,7 +828,7 @@ func TestContactInfoPropagation(t *testing.T) {
 	peerPubKey := "peer-pub-key-hex-string-32-chars-long"
 	peerAddr := "1.2.3.4:8081"
 
-	peerID, err := engine.AnnouncePeer(context.Background(), peerPubKey, peerAddr, peerContact)
+	peerID, err := engine.AnnouncePeer(context.Background(), peerPubKey, peerAddr, peerContact, "incoming")
 	if err != nil {
 		t.Fatalf("AnnouncePeer failed: %v", err)
 	}
@@ -881,8 +881,8 @@ func TestMultiPeerDeduplicationAndChallenge(t *testing.T) {
 	peerB_PK := "peer-b-pk-32-chars-long-76543210"
 
 	// 1. Register Peers
-	engine.AnnouncePeer(context.Background(), peerA_PK, "1.1.1.1:8081", "")
-	engine.AnnouncePeer(context.Background(), peerB_PK, "2.2.2.2:8082", "")
+	engine.AnnouncePeer(context.Background(), peerA_PK, "1.1.1.1:8081", "", "incoming")
+	engine.AnnouncePeer(context.Background(), peerB_PK, "2.2.2.2:8082", "", "incoming")
 
 	// 2. Peer A offers and uploads Shard X
 	shardX_Data := []byte("This is the unique data for shard X - 32 bytes.")
@@ -970,7 +970,7 @@ func TestDuplicateHashReferenceCounting(t *testing.T) {
 	defer engine.Wait()
 
 	peerPK := "peer-ref-count-0123456789abcdef01"
-	engine.AnnouncePeer(context.Background(), peerPK, "1.1.1.1:8081", "")
+	engine.AnnouncePeer(context.Background(), peerPK, "1.1.1.1:8081", "", "manual")
 
 	shardData := []byte("Reference counted shard data - unique string.")
 	shardHash := hex.EncodeToString(crypto.Hash(shardData))

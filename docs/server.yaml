@@ -34,8 +34,9 @@ storage:
 
 discovery:
   # Defaults to off. Set to true to advertise this node on the public libp2p DHT.
+  enabled: false
+
+adoption:
   enabled: true
-  automatic_adoption:
-    enabled: true
-    test_period_minutes: 60
-    challenge_pieces: 1
+  test_period_minutes: 1
+  challenge_pieces: 1
