@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
@@ -24,6 +25,7 @@ type QueueJob struct {
 	ShardID         int64
 	PieceIndex      int
 	FilePath        string
+	ShardKey        string // Used if FilePath is empty (for S3-hosted shards)
 	Size            int64
 	HashHex         string
 	IsMirrored      bool
@@ -101,8 +103,8 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 			continue
 		}
 
-		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", s.id))
-		stat, err := os.Stat(shardPath)
+		shardKey := fmt.Sprintf("shard_%d_piece_0", s.id)
+		size, err := e.BlobStore.Stat(ctx, shardKey)
 		if err != nil {
 			pRows.Close()
 			continue
@@ -110,7 +112,6 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 
 		// Ensure the padding is accounted for in the size sent over the wire
 		targetPieceSize := e.ShardSize / int64(e.DataShards)
-		size := stat.Size()
 		if size < targetPieceSize {
 			size = targetPieceSize
 		}
@@ -126,23 +127,23 @@ func (e *Engine) syncMirroredShards(ctx context.Context) {
 		pRows.Close()
 
 		for _, peerID := range peers {
-			// Hash full shard (possibly inclusive of padding)
-			hashHex, err := e.hashPiece(shardPath, size)
-			if err != nil {
-				continue
-			}
-
 			job := QueueJob{
 				ShardID:         s.id,
 				PieceIndex:      0,
-				FilePath:        shardPath,
+				ShardKey:        shardKey,
 				Size:            size,
-				HashHex:         hashHex,
 				IsMirrored:      true,
 				ParentShardHash: s.hash,
 				Sequence:        s.seq,
 				TotalPieces:     s.total,
 			}
+
+			// Hash full shard (possibly inclusive of padding)
+			hashHex, err := e.hashPiece(ctx, job, size)
+			if err != nil {
+				continue
+			}
+			job.HashHex = hashHex
 			
 			// SYMMETRY FIX: Increment quota before starting the upload
 			e.DB.ExecContext(ctx, "UPDATE peers SET outbound_storage_size = outbound_storage_size + ? WHERE id = ?", size, peerID)
@@ -203,7 +204,7 @@ func (e *Engine) processQueue(ctx context.Context) {
 
 		// Hash piece including any potential padding to piece size
 		targetPieceSize := e.ShardSize / int64(e.DataShards)
-		hashHex, err := e.hashPiece(filePath, targetPieceSize)
+		hashHex, err := e.hashPiece(ctx, job, targetPieceSize)
 		if err != nil {
 			log.Printf("OutboundWorker: failed to hash piece %s: %v", filePath, err)
 			continue
@@ -325,22 +326,66 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 	}
 	defer client.Close()
 
+	neededJobs, notNeededJobs, duplicateJobs, err := e.negotiateUpload(ctx, client, jobs)
+	if err != nil {
+		e.RemoveActivePeer(peerID)
+		var uniqueJobs []QueueJob
+		uniqueJobs = append(uniqueJobs, neededJobs...)
+		uniqueJobs = append(uniqueJobs, notNeededJobs...)
+		e.failJobs(ctx, peerID, uniqueJobs)
+		return
+	}
+
+	for _, job := range duplicateJobs {
+		e.failJob(ctx, peerID, job)
+	}
+
+	if len(neededJobs) > 0 {
+		streamItems, openFiles := e.prepareStreamItems(ctx, neededJobs)
+		defer func() {
+			for _, f := range openFiles {
+				if f != nil {
+					f.Close()
+				}
+			}
+		}()
+
+		if len(streamItems) > 0 {
+			e.streamSemaphore <- struct{}{}
+			err := e.PushPieceBatched(ctx, peerID, streamItems)
+			<-e.streamSemaphore
+
+			if err != nil {
+				log.Printf("OutboundWorker: batched push failed for peer %d: %v", peerID, err)
+				for _, j := range neededJobs {
+					e.failJob(ctx, peerID, j)
+					e.RecordChallengeResult(ctx, peerID, j.ShardID, j.PieceIndex, "unavailable")
+				}
+				return
+			}
+
+			e.finalizeUploads(ctx, peerID, neededJobs)
+		}
+	}
+
+	e.finalizeUploads(ctx, peerID, notNeededJobs)
+}
+
+func (e *Engine) negotiateUpload(ctx context.Context, client *CapnpPeerClient, jobs []QueueJob) ([]QueueJob, []QueueJob, []QueueJob, error) {
 	var meta []rpc.Metadata
 	jobMap := make(map[string]QueueJob)
 	var uniqueJobs []QueueJob
+	var duplicateJobs []QueueJob
 
 	for _, job := range jobs {
 		if _, exists := jobMap[job.HashHex]; exists {
-			// We cannot send two items with the exact same hash in the same batch,
-			// because Cap'n Proto streams are keyed by hash.
-			// Revert this job so it gets picked up in the next tick (where it will likely be instantly accepted).
-			e.failJob(ctx, peerID, job)
+			duplicateJobs = append(duplicateJobs, job)
 			continue
 		}
-		
+
 		jobMap[job.HashHex] = job
 		uniqueJobs = append(uniqueJobs, job)
-		
+
 		meta = append(meta, rpc.Metadata{
 			Hash:            job.HashHex,
 			Size:            job.Size,
@@ -355,115 +400,94 @@ func (e *Engine) performUploadBatch(ctx context.Context, peerID int64, jobs []Qu
 
 	needed, err := client.OfferItems(ctx, meta)
 	if err != nil {
-		e.RemoveActivePeer(peerID)
-		e.failJobs(ctx, peerID, uniqueJobs)
-		return
+		return nil, nil, nil, err
 	}
 
 	if len(needed) > 0 {
 		err = client.PrepareUpload(ctx, meta)
 		if err != nil {
-			e.RemoveActivePeer(peerID)
-			e.failJobs(ctx, peerID, uniqueJobs)
-			return
-		}
-
-		var streamItems []rpc.StreamItem
-		var openFiles []*os.File
-		defer func() {
-			for _, f := range openFiles {
-				if f != nil {
-					f.Close()
-				}
-			}
-		}()
-
-		var uploadJobs []QueueJob
-
-		for _, idx := range needed {
-			job := jobMap[meta[idx].Hash]
-			uploadJobs = append(uploadJobs, job)
-
-			f, err := os.Open(job.FilePath)
-			if err != nil {
-				log.Printf("OutboundWorker: failed to open shard piece %s: %v", job.FilePath, err)
-				continue
-			}
-			openFiles = append(openFiles, f)
-
-			// Handle special cases where padding to TargetPieceSize is required for Mirrored chunks
-			targetPieceSize := e.ShardSize / int64(e.DataShards)
-			var reader io.Reader = f
-			if job.IsMirrored && int64(job.Size) == targetPieceSize {
-				stat, _ := f.Stat()
-				if stat.Size() < targetPieceSize {
-					padding := make([]byte, targetPieceSize-stat.Size())
-					reader = io.MultiReader(f, strings.NewReader(string(padding)))
-				}
-			}
-
-			hashBytes, _ := hex.DecodeString(job.HashHex)
-			streamItems = append(streamItems, rpc.StreamItem{
-				Header: rpc.StreamItemHeader{
-					OpCode: rpc.OpCodePush,
-					Flags:  rpc.FlagTypePeerShard,
-					Size:   uint64(job.Size),
-				},
-				Data: reader,
-			})
-			copy(streamItems[len(streamItems)-1].Header.Hash[:], hashBytes)
-		}
-
-		if len(streamItems) > 0 {
-			e.streamSemaphore <- struct{}{}
-			err := e.PushPieceBatched(ctx, peerID, streamItems)
-			<-e.streamSemaphore
-
-			if err != nil {
-				log.Printf("OutboundWorker: batched push failed for peer %d: %v", peerID, err)
-				for _, j := range uploadJobs {
-					e.failJob(ctx, peerID, j)
-					e.RecordChallengeResult(ctx, peerID, j.ShardID, j.PieceIndex, "unavailable")
-				}
-				return
-			}
-
-			// Finalize each successful job
-			for _, j := range uploadJobs {
-				e.finalizeJobSuccess(ctx, peerID, j)
-				if !j.IsMirrored || strings.Contains(j.FilePath, "server_queue") {
-					os.Remove(j.FilePath)
-				}
-				e.checkShardCompletion(ctx, j.ShardID)
-			}
-		}
-
-		// Pieces NOT needed were already possessed by the peer
-		neededMap := make(map[int]bool)
-		for _, idx := range needed {
-			neededMap[int(idx)] = true
-		}
-		for i, job := range uniqueJobs {
-			if !neededMap[i] {
-				e.finalizeJobSuccess(ctx, peerID, job)
-				if !job.IsMirrored || strings.Contains(job.FilePath, "server_queue") {
-					os.Remove(job.FilePath)
-				}
-				e.checkShardCompletion(ctx, job.ShardID)
-			}
-		}
-	} else {
-		// All pieces accepted instantly (none needed transfer)
-		for _, j := range uniqueJobs {
-			e.finalizeJobSuccess(ctx, peerID, j)
-			if !j.IsMirrored || strings.Contains(j.FilePath, "server_queue") {
-				os.Remove(j.FilePath)
-			}
-			e.checkShardCompletion(ctx, j.ShardID)
+			return nil, nil, nil, err
 		}
 	}
+
+	var neededJobs []QueueJob
+	var notNeededJobs []QueueJob
+	neededMap := make(map[uint32]bool)
+	for _, idx := range needed {
+		neededMap[idx] = true
+	}
+
+	for i, job := range uniqueJobs {
+		if neededMap[uint32(i)] {
+			neededJobs = append(neededJobs, job)
+		} else {
+			notNeededJobs = append(notNeededJobs, job)
+		}
+	}
+
+	return neededJobs, notNeededJobs, duplicateJobs, nil
 }
 
+func (e *Engine) prepareStreamItems(ctx context.Context, jobs []QueueJob) ([]rpc.StreamItem, []io.Closer) {
+	var streamItems []rpc.StreamItem
+	var openFiles []io.Closer
+
+	for _, job := range jobs {
+		var f io.ReadCloser
+		var err error
+		if job.FilePath != "" {
+			f, err = os.Open(job.FilePath)
+		} else {
+			f, err = e.BlobStore.Get(ctx, job.ShardKey)
+		}
+		if err != nil {
+			log.Printf("OutboundWorker: failed to open shard piece %s: %v", job.FilePath, err)
+			continue
+		}
+		openFiles = append(openFiles, f)
+
+		targetPieceSize := e.ShardSize / int64(e.DataShards)
+		var reader io.Reader = f
+		if job.IsMirrored && int64(job.Size) == targetPieceSize {
+			var currentSize int64
+			if job.FilePath != "" {
+				stat, _ := f.(*os.File).Stat()
+				currentSize = stat.Size()
+			} else {
+				currentSize, _ = e.BlobStore.Stat(ctx, job.ShardKey)
+			}
+
+			if currentSize < targetPieceSize {
+				padding := make([]byte, targetPieceSize-currentSize)
+				reader = io.MultiReader(f, bytes.NewReader(padding))
+			}
+		}
+
+		hashBytes, _ := hex.DecodeString(job.HashHex)
+		streamItem := rpc.StreamItem{
+			Header: rpc.StreamItemHeader{
+				OpCode: rpc.OpCodePush,
+				Flags:  rpc.FlagTypePeerShard,
+				Size:   uint64(job.Size),
+			},
+			Data: reader,
+		}
+		copy(streamItem.Header.Hash[:], hashBytes)
+		streamItems = append(streamItems, streamItem)
+	}
+
+	return streamItems, openFiles
+}
+
+func (e *Engine) finalizeUploads(ctx context.Context, peerID int64, jobs []QueueJob) {
+	for _, j := range jobs {
+		e.finalizeJobSuccess(ctx, peerID, j)
+		if !j.IsMirrored || strings.Contains(j.FilePath, "server_queue") {
+			os.Remove(j.FilePath)
+		}
+		e.checkShardCompletion(ctx, j.ShardID)
+	}
+}
 
 func (e *Engine) failJobs(ctx context.Context, peerID int64, jobs []QueueJob) {
 	for _, j := range jobs {
@@ -483,15 +507,28 @@ func (e *Engine) finalizeJobSuccess(ctx context.Context, peerID int64, job Queue
 	if e.ChallengesPerPiece > 0 {
 		maxOffset := int(job.Size) - 32
 		if maxOffset > 0 {
-			f, err := os.Open(job.FilePath)
-			if err == nil {
-				defer f.Close()
-				for i := 0; i < e.ChallengesPerPiece; i++ {
-					offset := rand.Intn(maxOffset)
-					expectedData := make([]byte, 32)
-					f.ReadAt(expectedData, int64(offset))
-					e.InsertPieceChallenge(ctx, job.ShardID, job.PieceIndex, peerID, job.HashHex, offset, expectedData)
+			for i := 0; i < e.ChallengesPerPiece; i++ {
+				offset := rand.Intn(maxOffset)
+				expectedData := make([]byte, 32)
+
+				if job.FilePath != "" {
+					f, err := os.Open(job.FilePath)
+					if err == nil {
+						_, _ = f.ReadAt(expectedData, int64(offset))
+						f.Close()
+					} else {
+						continue
+					}
+				} else {
+					rc, err := e.BlobStore.GetRange(ctx, job.ShardKey, int64(offset), 32)
+					if err == nil {
+						_, _ = io.ReadFull(rc, expectedData)
+						rc.Close()
+					} else {
+						continue
+					}
 				}
+				e.InsertPieceChallenge(ctx, job.ShardID, job.PieceIndex, peerID, job.HashHex, offset, expectedData)
 			}
 		}
 	}
@@ -518,8 +555,8 @@ func (e *Engine) checkShardCompletion(ctx context.Context, shardID int64) {
 	if count >= (e.DataShards + e.ParityShards) {
 		if !e.KeepLocalCopy {
 			for i := 0; i < e.DataShards; i++ {
-				piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
-				os.Remove(piecePath)
+				pieceKey := fmt.Sprintf("shard_%d_piece_%d", shardID, i)
+				e.BlobStore.Delete(ctx, pieceKey)
 			}
 			if e.Verbose {
 				log.Printf("OutboundWorker: Shard %d fully distributed. Deleted local pieces (KeepLocalCopy=false).", shardID)
@@ -532,8 +569,14 @@ func (e *Engine) checkShardCompletion(ctx context.Context, shardID int64) {
 	}
 }
 
-func (e *Engine) hashPiece(filePath string, targetSize int64) (string, error) {
-	f, err := os.Open(filePath)
+func (e *Engine) hashPiece(ctx context.Context, job QueueJob, targetSize int64) (string, error) {
+	var f io.ReadCloser
+	var err error
+	if job.FilePath != "" {
+		f, err = os.Open(job.FilePath)
+	} else {
+		f, err = e.BlobStore.Get(ctx, job.ShardKey)
+	}
 	if err != nil {
 		return "", err
 	}

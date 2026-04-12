@@ -39,6 +39,16 @@
 | `self_backup_interval_minutes` | int | 1440 | How often to backup the server's own database to the swarm (default 24 hours) |
 | `untrusted_peer_upload_limit_mb` | int | 1024 | Max MB an untrusted peer may store. Set to 0 to reject all untrusted peers |
 
+### s3 (nested under storage)
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | false | If true, offloads sealed shards to the specified S3-compatible backend. |
+| `endpoint` | string | — | S3 Endpoint URL (e.g., `s3.amazonaws.com` or `s3.us-west-004.backblazeb2.com`) |
+| `bucket` | string | — | The target S3 bucket name. |
+| `access_key` | string | — | S3 Access Key ID. |
+| `secret_key` | string | — | S3 Secret Access Key. |
+| `use_ssl` | bool | true | Set to false if connecting to a local insecure Minio instance. |
+
 ## discovery
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -71,6 +81,7 @@ erasure_coding:
 storage:
   sqlite_path: "server_state.db"
   blob_store_dir: "server_blobs"
+  spool_dir: "spool"
   queue_dir: "server_queue"
   keep_local_copy: true
   keep_deleted_minutes: 60
@@ -78,6 +89,14 @@ storage:
   gc_interval_minutes: 360
   self_backup_interval_minutes: 1440
   untrusted_peer_upload_limit_mb: 1024
+  
+  s3:
+    enabled: true
+    endpoint: "s3.amazonaws.com"
+    bucket: "my-bdr-bucket"
+    access_key: "AKIAIOSFODNN7EXAMPLE"
+    secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    use_ssl: true
 
 discovery:
   enabled: true

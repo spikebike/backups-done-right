@@ -49,6 +49,7 @@ Runs locally or remotely. Never sees plaintext data or client encryption keys.
 - **Data Integrity Validation**: Evaluates the BLAKE3 cryptographic hash of every incoming encrypted chunk payload actively against the client's claimed checksum reference during the initial RPC ingestion flow, immediately warning of mismatches before disk commit.
 - **Deduplication**: Tracks which encrypted 4MB chunk hashes already exist. Only stores one copy of identical encrypted chunks, even across multiple clients.
 - **Infinite Stream Packing**: Packs incoming 4MB chunks sequentially into massive shard files. Tracks exact offsets in `blob_locations`.
+- **Pluggable Storage Backend (LayeredBlobStore)**: The server abstracts storage via a `BlobStore` interface. It can store shards purely on the local filesystem (`LocalBlobStore`), or seamlessly offload sealed shards to an S3-compatible object storage provider (`S3BlobStore` via Minio). Incoming client streams are rapidly staged locally in a `spool_dir` and asynchronously flushed to S3 upon sealing, ensuring high ingestion performance without memory exhaustion.
 - **Garbage Collection (GC)**: A background `GCWorker` periodically scans for "wasted" shards.
   - **Waste Threshold**: Shards are eligible for GC if the ratio of deleted bytes (from blobs with `ref_count=0` and expired `deleted_at`) exceeds `waste_threshold`.
   - **Rep repack**: Live blobs are extracted from wasted shards and re-ingested into the current open shard using the primary ingestion pipeline.
@@ -201,12 +202,21 @@ discovery:
 storage:
   sqlite_path: "server_state.db"
   blob_store_dir: "server_blobs"
+  spool_dir: "spool"
   queue_dir: "server_queue"
   keep_local_copy: true
   keep_deleted_minutes: 30
   waste_threshold: 0.5
   gc_interval_minutes: 720
   peer_eviction_hours: 24
+
+  s3:
+    enabled: false
+    endpoint: "s3.amazonaws.com"
+    bucket: "my-bdr-bucket"
+    access_key: "..."
+    secret_key: "..."
+    use_ssl: true
 ```
 
 ## Dependencies

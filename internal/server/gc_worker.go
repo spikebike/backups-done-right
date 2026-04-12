@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
-	"os"
-	"path/filepath"
 	"time"
 
 	"p2p-backup/internal/rpc"
@@ -222,14 +221,14 @@ func (e *Engine) readBlobFromShardFile(ctx context.Context, shardID int64, hash 
 			return nil, err
 		}
 		
-		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, pieceIndex))
-		f, err := os.Open(piecePath)
+		piecePath := fmt.Sprintf("shard_%d_piece_%d", shardID, pieceIndex)
+		f, err := e.BlobStore.GetRange(ctx, piecePath, offset, length)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open piece %d: %w", pieceIndex, err)
 		}
 		
-		buf := make([]byte, length)
-		if _, err := f.ReadAt(buf, offset); err != nil {
+		buf, err := io.ReadAll(f)
+		if err != nil {
 			f.Close()
 			return nil, err
 		}
@@ -277,8 +276,8 @@ func (e *Engine) deleteWastedShard(ctx context.Context, shardID int64) error {
 
 	// 3. Delete files
 	for i := 0; i < e.DataShards; i++ {
-		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
-		_ = os.Remove(piecePath)
+		piecePath := fmt.Sprintf("shard_%d_piece_%d", shardID, i)
+		_ = e.BlobStore.Delete(ctx, piecePath)
 	}
 
 	return nil

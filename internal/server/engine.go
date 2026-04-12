@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"p2p-backup/internal/config"
+
 	"github.com/klauspost/reedsolomon"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -28,7 +30,9 @@ type Engine struct {
 	DB                         *sql.DB
 	SQLitePath                 string
 	BlobStoreDir               string
+	SpoolDir                   string
 	QueueDir                   string
+	BlobStore                  BlobStore
 	DataShards                 int
 	ParityShards               int
 	Verbose                    bool
@@ -83,7 +87,9 @@ type EngineConfig struct {
 	ConfigPath                 string
 	SQLitePath                 string
 	BlobStoreDir               string
+	SpoolDir                   string
 	QueueDir                   string
+	S3Config                   config.S3Config
 	DataShards                 int
 	ParityShards               int
 	ShardSize                  int64
@@ -157,6 +163,11 @@ func NewEngine(cfg EngineConfig) *Engine {
 		cfg.KeepMetadataMinutes = 60 * 24 * 7 // 7 days default
 	}
 
+	spoolDir := cfg.SpoolDir
+	if spoolDir == "" {
+		spoolDir = filepath.Join(cfg.BlobStoreDir, "spool")
+	}
+
 	var maxBytes int64
 	if cfg.MaxStorageGB > 0 {
 		maxBytes = int64(cfg.MaxStorageGB) * 1024 * 1024 * 1024
@@ -170,10 +181,26 @@ func NewEngine(cfg EngineConfig) *Engine {
 		downloadLimiter = rate.NewLimiter(rate.Limit(cfg.MaxDownloadKBPS*1024), cfg.MaxDownloadKBPS*1024)
 	}
 
+	var primaryBlobStore BlobStore
+	if cfg.S3Config.Enabled {
+		bs, err := NewS3BlobStore(cfg.S3Config)
+		if err != nil {
+			log.Fatalf("Failed to initialize S3 BlobStore: %v", err)
+		}
+		primaryBlobStore = bs
+	} else {
+		primaryBlobStore = NewLocalBlobStore(cfg.BlobStoreDir)
+	}
+
+	spoolBlobStore := NewLocalBlobStore(spoolDir)
+	blobStore := NewLayeredBlobStore(primaryBlobStore, spoolBlobStore)
+
 	return &Engine{
 		DB:                         cfg.DB,
 		SQLitePath:                 cfg.SQLitePath,
 		BlobStoreDir:               cfg.BlobStoreDir,
+		SpoolDir:                   spoolDir,
+		BlobStore:                  blobStore,
 		QueueDir:                   cfg.QueueDir,
 		DataShards:                 cfg.DataShards,
 		ParityShards:               cfg.ParityShards,
@@ -366,8 +393,8 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 	isMirrored := e.IsShardMirrored(ctx, shardID)
 
 	if isMirrored {
-		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", shardID))
-		if _, err := os.Stat(piecePath); err == nil {
+		pieceKey := fmt.Sprintf("shard_%d_piece_0", shardID)
+		if _, err := e.BlobStore.Stat(ctx, pieceKey); err == nil {
 			return nil
 		}
 
@@ -389,15 +416,13 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 
 			pieceHash := e.GetPieceHash(ctx, shardID, 0, peerID)
 
-			f, err := os.OpenFile(piecePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			buf := new(bytes.Buffer)
+			err = e.PullPiece(ctx, peerID, pieceHash, buf)
 			if err != nil {
 				continue
 			}
 
-			err = e.PullPiece(ctx, peerID, pieceHash, f)
-			f.Close()
-			if err != nil {
-				os.Remove(piecePath)
+			if err := e.BlobStore.Put(ctx, pieceKey, buf, int64(buf.Len())); err != nil {
 				continue
 			}
 			return nil
@@ -409,10 +434,16 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 	allLocal := true
 	shardsData := make([][]byte, e.DataShards+e.ParityShards)
 	for i := 0; i < e.DataShards; i++ {
-		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
-		data, err := os.ReadFile(piecePath)
+		pieceKey := fmt.Sprintf("shard_%d_piece_%d", shardID, i)
+		rc, err := e.BlobStore.Get(ctx, pieceKey)
 		if err == nil {
-			shardsData[i] = data
+			data, err := io.ReadAll(rc)
+			rc.Close()
+			if err == nil {
+				shardsData[i] = data
+			} else {
+				allLocal = false
+			}
 		} else {
 			allLocal = false
 		}
@@ -503,11 +534,11 @@ func (e *Engine) EnsureShardLocal(ctx context.Context, shardID int64) error {
 		return fmt.Errorf("RS reconstruction failed: %w", err)
 	}
 
-	// Save reconstructed data pieces back to disk
+	// Save reconstructed data pieces back to store
 	for i := 0; i < e.DataShards; i++ {
-		piecePath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
-		if _, err := os.Stat(piecePath); os.IsNotExist(err) {
-			if err := os.WriteFile(piecePath, shardsData[i], 0644); err != nil {
+		pieceKey := fmt.Sprintf("shard_%d_piece_%d", shardID, i)
+		if _, err := e.BlobStore.Stat(ctx, pieceKey); err != nil {
+			if err := e.BlobStore.Put(ctx, pieceKey, bytes.NewReader(shardsData[i]), int64(len(shardsData[i]))); err != nil {
 				return fmt.Errorf("failed to write reconstructed piece %d: %w", i, err)
 			}
 		}
@@ -658,7 +689,10 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 
 	// 2. PHASE 2: Data Streaming (UNLOCKED)
 	for _, res := range reservations {
-		shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", res.ShardID, res.PieceIndex))
+		shardPath := filepath.Join(e.SpoolDir, fmt.Sprintf("shard_%d_piece_%d", res.ShardID, res.PieceIndex))
+		if err := os.MkdirAll(e.SpoolDir, 0755); err != nil {
+			return err
+		}
 		f, err := os.OpenFile(shardPath, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return err
@@ -725,10 +759,10 @@ func (e *Engine) IngestItemsStreamed(ctx context.Context, clientPubKey string, h
 		return err
 	}
 
-	// Trigger async encoding for any shards we sealed
+	// Trigger async sealing and encoding for any shards we sealed
 	for _, sid := range sealedShards {
 		e.wg.Add(1)
-		go e.encodeShard(sid)
+		go e.sealShard(sid)
 	}
 
 	if clientPubKey != "" && clientPubKey != "insecure-local-client" {
@@ -745,8 +779,15 @@ func (e *Engine) GetHostedItems(ctx context.Context, hashes []string) ([]rpc.Ite
 	var missing []string
 
 	for _, h := range hashes {
-		path := filepath.Join(e.BlobStoreDir, "peer_"+h)
-		fullData, err := os.ReadFile(path)
+		key := "peer_" + h
+		rc, err := e.BlobStore.Get(ctx, key)
+		if err != nil {
+			missing = append(missing, h)
+			continue
+		}
+		
+		fullData, err := io.ReadAll(rc)
+		rc.Close()
 		if err != nil {
 			missing = append(missing, h)
 			continue
@@ -796,14 +837,13 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 			}
 			foundLocations = true
 
-			shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, pieceIndex))
-			f, err := os.Open(shardPath)
+			shardPath := fmt.Sprintf("shard_%d_piece_%d", shardID, pieceIndex)
+			f, err := e.BlobStore.GetRange(ctx, shardPath, offset, length)
 			if err != nil {
 				log.Printf("GetItems error: failed to open shard piece %d for shard %d: %v", pieceIndex, shardID, err)
 				break
 			}
-			data := make([]byte, length)
-			_, err = f.ReadAt(data, offset)
+			data, err := io.ReadAll(f)
 			f.Close()
 			if err != nil {
 				log.Printf("GetItems error: failed to read from shard piece %d for shard %d: %v", pieceIndex, shardID, err)
@@ -815,9 +855,15 @@ func (e *Engine) GetItems(ctx context.Context, hashes []string) ([]rpc.ItemData,
 
 		if !foundLocations {
 			// Fallback to direct file if no locations (legacy or standalone)
-			path := filepath.Join(e.BlobStoreDir, h)
 			var err error
-			fullData, err = os.ReadFile(path)
+			f, err := e.BlobStore.Get(ctx, h)
+			if err != nil {
+				log.Printf("GetItems: failed to open legacy blob %s: %v", h, err)
+				missing = append(missing, h)
+				continue
+			}
+			fullData, err = io.ReadAll(f)
+			f.Close()
 			if err != nil {
 				log.Printf("GetItems: failed to read legacy blob %s: %v", h, err)
 				missing = append(missing, h)
@@ -948,6 +994,47 @@ func (p *PadReader) Read(buf []byte) (int, error) {
 	return n, err
 }
 
+func (e *Engine) sealShard(shardID int64) {
+	defer e.wg.Done()
+
+	if e.Verbose {
+		log.Printf("Sealing shard %d...", shardID)
+	}
+
+	// For each piece (0..DataShards-1), upload to BlobStore
+	for i := 0; i < e.DataShards; i++ {
+		pieceKey := fmt.Sprintf("shard_%d_piece_%d", shardID, i)
+		localPath := filepath.Join(e.SpoolDir, pieceKey)
+		
+		f, err := os.Open(localPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Shard piece might be empty if no blobs were allocated to it.
+				continue 
+			}
+			log.Printf("sealShard error: failed to open local piece %d: %v", i, err)
+			return
+		}
+
+		stat, _ := f.Stat()
+		if err := e.BlobStore.Put(context.Background(), pieceKey, f, stat.Size()); err != nil {
+			f.Close()
+			log.Printf("sealShard error: failed to upload piece %d to BlobStore: %v", i, err)
+			return
+		}
+		f.Close()
+
+		// Delete local staged file
+		if err := os.Remove(localPath); err != nil {
+			log.Printf("sealShard: warning: failed to remove staged piece %s: %v", pieceKey, err)
+		}
+	}
+
+	// Now proceed to erasure coding
+	e.wg.Add(1)
+	e.encodeShard(shardID)
+}
+
 func (e *Engine) encodeShard(shardID int64) {
 	defer e.wg.Done()
 
@@ -962,74 +1049,70 @@ func (e *Engine) encodeShard(shardID int64) {
 		log.Printf("Starting erasure coding for shard %d", shardID)
 	}
 
-	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", shardID))
-	inFile, err := os.Open(shardPath)
+	ctx := context.Background()
+
+	// Check if this is a mirrored (metadata) shard
+	if e.IsShardMirrored(ctx, shardID) {
+		e.encodeMirroredShard(ctx, shardID)
+	} else {
+		e.encodeStandardShard(ctx, shardID)
+	}
+}
+
+func (e *Engine) encodeMirroredShard(ctx context.Context, shardID int64) {
+	piece0Key := fmt.Sprintf("shard_%d_piece_0", shardID)
+	
+	inFile, err := e.BlobStore.Get(ctx, piece0Key)
 	if err != nil {
 		log.Printf("encodeShard error: failed to open piece_0 for shard %d: %v", shardID, err)
 		return
 	}
 	defer inFile.Close()
 
-	_, err = inFile.Stat()
-	if err != nil {
-		log.Printf("encodeShard error: failed to stat piece_0 for shard %d: %v", shardID, err)
-		return
-	}
-
 	// Calculate target piece size
 	targetPieceSize := e.ShardSize / int64(e.DataShards)
 
-	// Check if this is a mirrored (metadata) shard
-	isMirrored := e.IsShardMirrored(context.Background(), shardID)
+	// Mirroring profile: Every peer gets a full copy of the shard data,
+	// padded to the target piece size (e.g. 256MB).
+	if e.Verbose {
+		log.Printf("encodeShard: Shard %d is MIRRORED. Padded to %d MB piece.", shardID, targetPieceSize/(1024*1024))
+	}
 
-	if isMirrored {
-		// Mirroring profile: Every peer gets a full copy of the shard data,
-		// padded to the target piece size (e.g. 256MB).
-		if e.Verbose {
-			log.Printf("encodeShard: Shard %d is MIRRORED. Padded to %d MB piece.", shardID, targetPieceSize/(1024*1024))
-		}
+	// For special shards, Piece 0 is just a copy of the shard itself, padded to targetPieceSize.
+	// We use an in-memory buffer for the padded result since it will be uploaded back to BlobStore.
+	buf := new(bytes.Buffer)
 
-		// For special shards, Piece 0 is just a copy of the shard itself, padded to targetPieceSize.
-		dstPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0.padded", shardID))
-		dst, err := os.Create(dstPath)
-		if err != nil {
-			log.Printf("encodeShard error: failed to create mirrored piece: %v", err)
-			return
-		}
+	// Use PadReader to ensure the piece is exactly targetPieceSize
+	pr := &PadReader{Reader: inFile, TotalSize: targetPieceSize}
+	hasher := blake3.New(32, nil)
+	teeReader := io.TeeReader(pr, hasher)
 
-		// Use PadReader to ensure the piece is exactly targetPieceSize
-		pr := &PadReader{Reader: inFile, TotalSize: targetPieceSize}
-		hasher := blake3.New(32, nil)
-		teeReader := io.TeeReader(pr, hasher)
+	if _, err := io.Copy(buf, teeReader); err != nil {
+		log.Printf("encodeShard error: failed to copy/pad mirrored piece: %v", err)
+		return
+	}
+	inFile.Close() // Close early
 
-		if _, err := io.Copy(dst, teeReader); err != nil {
-			log.Printf("encodeShard error: failed to copy mirrored piece: %v", err)
-			dst.Close()
-			return
-		}
-		dst.Close()
-		inFile.Close() // Close early so we can remove it
+	// Save the padded hash to DB so syncMirroredShards can find it
+	shardHash := hex.EncodeToString(hasher.Sum(nil))
+	_, err = e.DB.Exec("UPDATE shards SET hash = ? WHERE id = ?", shardHash, shardID)
+	if err != nil {
+		log.Printf("encodeShard error: failed to update shard hash in DB: %v", err)
+	}
 
-		// Save the padded hash to DB so syncMirroredShards can find it
-		shardHash := hex.EncodeToString(hasher.Sum(nil))
-		_, err = e.DB.Exec("UPDATE shards SET hash = ? WHERE id = ?", shardHash, shardID)
-		if err != nil {
-			log.Printf("encodeShard error: failed to update shard hash in DB: %v", err)
-		}
-
-		// Replace the unpadded piece with the padded one in BlobStoreDir
-		os.Rename(dstPath, shardPath)
-
-		if !e.KeepLocalCopy {
-			// syncMirroredShards will pick it up from BlobStoreDir and then outbound_worker handles deleting it
-			// Wait, outbound_worker only deletes if count >= threshold.
-		}
-
-		log.Printf("ErasureCoder: Successfully prepared special shard %d for mirroring (padded to %d MB, hash: %s)", shardID, targetPieceSize/(1024*1024), shardHash[:16])
+	// Put the padded piece back to BlobStore
+	if err := e.BlobStore.Put(ctx, piece0Key, bytes.NewReader(buf.Bytes()), int64(buf.Len())); err != nil {
+		log.Printf("encodeShard error: failed to put padded mirrored piece back: %v", err)
 		return
 	}
 
+	log.Printf("ErasureCoder: Successfully prepared special shard %d for mirroring (padded to %d MB, hash: %s)", shardID, targetPieceSize/(1024*1024), shardHash[:16])
+}
+
+func (e *Engine) encodeStandardShard(ctx context.Context, shardID int64) {
 	// --- Standard RS Encoding for Data Shards ---
+
+	targetPieceSize := e.ShardSize / int64(e.DataShards)
 
 	enc, err := reedsolomon.NewStream(e.DataShards, e.ParityShards)
 	if err != nil {
@@ -1046,23 +1129,13 @@ func (e *Engine) encodeShard(shardID int64) {
 	inReaders := make([]io.Reader, e.DataShards)
 	hasher := blake3.New(32, nil)
 
-	// Close inFile since we are going to open all N pieces
-	inFile.Close()
-
 	for i := 0; i < e.DataShards; i++ {
-		srcPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_%d", shardID, i))
+		pieceKey := fmt.Sprintf("shard_%d_piece_%d", shardID, i)
 		var reader io.Reader
-		inf, err := os.Open(srcPath)
+		
+		inf, err := e.BlobStore.Get(ctx, pieceKey)
 		if err != nil {
-			if os.IsNotExist(err) {
-				reader = bytes.NewReader([]byte{})
-			} else {
-				log.Printf("encodeShard error: failed to open source piece %d: %v", i, err)
-				for j := 0; j < i; j++ {
-					inFiles[j].Close()
-				}
-				return
-			}
+			reader = bytes.NewReader([]byte{})
 		} else {
 			reader = inf
 		}
@@ -1098,7 +1171,7 @@ func (e *Engine) encodeShard(shardID int64) {
 		if inf != nil {
 			inf.Close()
 			if !e.KeepLocalCopy {
-				os.Remove(srcPath)
+				e.BlobStore.Delete(ctx, pieceKey)
 			}
 		}
 
@@ -1230,11 +1303,9 @@ func (e *Engine) UploadPeerItems(ctx context.Context, pubKeyHex string, items []
 	defer stmt.Close()
 
 	for _, item := range items {
-		shardPath := filepath.Join(e.BlobStoreDir, "peer_"+item.Meta.Hash)
-
-		// Write to disk
-		if err := os.WriteFile(shardPath, item.Data, 0644); err != nil {
-			return fmt.Errorf("failed to write peer shard %s to disk: %w", item.Meta.Hash, err)
+		// Write to blob store
+		if err := e.BlobStore.Put(ctx, "peer_"+item.Meta.Hash, bytes.NewReader(item.Data), int64(len(item.Data))); err != nil {
+			return fmt.Errorf("failed to write peer shard %s: %w", item.Meta.Hash, err)
 		}
 
 		// Update DB
@@ -1334,28 +1405,24 @@ func (e *Engine) ChallengePiece(ctx context.Context, pubKeyHex string, checksum 
 		return nil, fmt.Errorf("shard %s not actively tracked for this peer", hashStr)
 	}
 
-	shardPath := filepath.Join(e.BlobStoreDir, "peer_"+hashStr)
-	f, err := os.Open(shardPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open shard file: %w", err)
-	}
-	defer f.Close()
-
-	fi, err := f.Stat()
+	key := "peer_" + hashStr
+	fileSize, err := e.BlobStore.Stat(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat shard file: %w", err)
 	}
-	if int64(offset)+32 > fi.Size() {
-		return nil, fmt.Errorf("offset %d + 32 exceeds file size %d for shard %s", offset, fi.Size(), hashStr)
+	if int64(offset)+32 > fileSize {
+		return nil, fmt.Errorf("offset %d + 32 exceeds file size %d for shard %s", offset, fileSize, hashStr)
 	}
 
-	if _, err := f.Seek(int64(offset), 0); err != nil {
-		return nil, fmt.Errorf("seek failed at offset %d: %w", offset, err)
+	rc, err := e.BlobStore.GetRange(ctx, key, int64(offset), 32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read shard at offset %d: %w", offset, err)
 	}
+	defer rc.Close()
 
 	buf := make([]byte, 32)
-	if _, err := io.ReadFull(f, buf); err != nil {
-		return nil, fmt.Errorf("read failed at offset %d (file size %d): %w", offset, fi.Size(), err)
+	if _, err := io.ReadFull(rc, buf); err != nil {
+		return nil, fmt.Errorf("read failed at offset %d (file size %d): %w", offset, fileSize, err)
 	}
 
 	return buf, nil
@@ -1416,9 +1483,8 @@ func (e *Engine) ReleasePiece(ctx context.Context, hashBytes []byte, pubKeyHex s
 	}
 
 	if othersCount == 0 {
-		shardPath := filepath.Join(e.BlobStoreDir, "peer_"+hashStr)
-		if err := os.Remove(shardPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("Warning: failed to remove shard file %s: %v", shardPath, err)
+		if err := e.BlobStore.Delete(ctx, "peer_"+hashStr); err != nil {
+			log.Printf("Warning: failed to remove shard file peer_%s: %v", hashStr, err)
 		}
 	}
 

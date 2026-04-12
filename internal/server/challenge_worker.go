@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -146,57 +147,47 @@ func (e *Engine) replenishPool(ctx context.Context) {
 		isMirrored := e.IsShardMirrored(ctx, t.shardID)
 
 		// Can we regenerate? Only if we have the piece locally.
-		var shardPath string
+		var pieceData []byte
 		if isMirrored {
-			// For mirrored shards, the full shard is the piece
-			shardPath = filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", t.shardID))
-			if _, err := os.Stat(shardPath); err != nil {
-				// Not local, maybe it's in the queue?
-				shardPath = filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", t.shardID, t.pieceIndex))
-				if _, err := os.Stat(shardPath); err != nil {
+			// For mirrored shards, try BlobStore first, then QueueDir
+			blobKey := fmt.Sprintf("shard_%d_piece_0", t.shardID)
+			rc, err := e.BlobStore.Get(ctx, blobKey)
+			if err == nil {
+				data, rerr := io.ReadAll(rc)
+				rc.Close()
+				if rerr == nil {
+					pieceData = padToTargetPieceSize(data, e.ShardSize/int64(e.DataShards))
+				}
+			}
+			if pieceData == nil {
+				queuePath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", t.shardID, t.pieceIndex))
+				data, err := os.ReadFile(queuePath)
+				if err != nil {
 					continue // Cannot replenish without data
 				}
+				pieceData = padToTargetPieceSize(data, e.ShardSize/int64(e.DataShards))
 			}
 		} else {
 			// For standard shards, we can only replenish if the specific piece is still on disk
-			shardPath = filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", t.shardID, t.pieceIndex))
-			if _, err := os.Stat(shardPath); err != nil {
+			queuePath := filepath.Join(e.QueueDir, fmt.Sprintf("shard_%d_piece_%d", t.shardID, t.pieceIndex))
+			data, err := os.ReadFile(queuePath)
+			if err != nil {
 				continue // Cannot replenish without the encoded piece data
 			}
-		}
-
-		// 1. Get the existing hash from the database to ensure consistency with what the peer tracks.
-		hashHex := e.GetPieceHash(ctx, t.shardID, t.pieceIndex, t.peerID)
-		if hashHex == "" {
-			// If we lost all challenges, fall back to calculation, but try to use hashPiece if possible
-			// For now, calculating it is better than nothing, but hashing mirrored shards needs care
-			data, err := os.ReadFile(shardPath)
-			if err != nil {
-				continue
-			}
-
-			pieceData := data
-			if isMirrored {
-				pieceData = padToTargetPieceSize(data, e.ShardSize/int64(e.DataShards))
-			}
-			hashHex = hex.EncodeToString(e.Hash(pieceData))
-		}
-
-		// 2. Read piece bytes for generating new challenges (random offsets)
-		data, err := os.ReadFile(shardPath)
-		if err != nil {
-			continue
-		}
-
-		pieceData := data
-		if isMirrored {
-			pieceData = padToTargetPieceSize(data, e.ShardSize/int64(e.DataShards))
+			pieceData = data
 		}
 
 		if len(pieceData) < 32 {
 			continue
 		}
 
+		// 1. Get the existing hash from the database to ensure consistency with what the peer tracks.
+		hashHex := e.GetPieceHash(ctx, t.shardID, t.pieceIndex, t.peerID)
+		if hashHex == "" {
+			hashHex = hex.EncodeToString(e.Hash(pieceData))
+		}
+
+		// 2. Generate new challenges (random offsets)
 		maxOffset := len(pieceData) - 32
 		for i := 0; i < e.ChallengesPerPiece; i++ {
 			offset := rand.Intn(maxOffset)

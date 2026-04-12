@@ -52,7 +52,7 @@ func (e *Engine) HandleUnifiedStream(s network.Stream) {
 	}
 
 	var responseItems []rpc.StreamItem
-	var openFiles []*os.File
+	var openFiles []io.ReadCloser
 	var totalInboundBytes uint64
 	var totalOutboundBytes uint64
 
@@ -74,19 +74,26 @@ func (e *Engine) HandleUnifiedStream(s network.Stream) {
 			return err
 		case rpc.OpCodePull:
 			// Load file but don't send yet
-			filePath := filepath.Join(e.BlobStoreDir, "peer_"+checksumHex)
-			f, err := os.Open(filePath)
+			key := "peer_" + checksumHex
+			f, err := e.BlobStore.Get(ctx, key)
 			if err != nil {
 				return fmt.Errorf("pull item %s missing: %w", checksumHex, err)
 			}
+			
+			// We need the size, use Stat
+			size, err := e.BlobStore.Stat(ctx, key)
+			if err != nil {
+				f.Close()
+				return fmt.Errorf("pull item %s stat failed: %w", checksumHex, err)
+			}
+			
 			openFiles = append(openFiles, f)
-			stat, _ := f.Stat()
 
 			item := rpc.StreamItem{
 				Header: rpc.StreamItemHeader{
 					OpCode: rpc.OpCodePush, // Response is a push from us
 					Flags:  rpc.FlagTypePeerShard,
-					Size:   uint64(stat.Size()),
+					Size:   uint64(size),
 				},
 				Data: f,
 			}
@@ -171,7 +178,10 @@ func (e *Engine) handleIncomingPush(s io.Reader, pubKeyHex, checksumHex string, 
 
 	// FALLBACK (Original logic for 256MB Peer Shards):
 	// 2. Stream to temporary file
-	tmpPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("tmp_%s", checksumHex))
+	if err := os.MkdirAll(e.SpoolDir, 0755); err != nil {
+		return fmt.Errorf("failed to create spool dir: %w", err)
+	}
+	tmpPath := filepath.Join(e.SpoolDir, fmt.Sprintf("tmp_%s", checksumHex))
 	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to create tmp file: %w", err)
@@ -222,13 +232,22 @@ func (e *Engine) finalizePeerShard(checksumHex string, size uint64, tmpPath stri
 	}
 	meta := metaVal.(PendingStreamMeta)
 
-	finalPath := filepath.Join(e.BlobStoreDir, "peer_"+checksumHex)
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to finalize file: %w", err)
-	}
-
 	ctx := context.Background()
+	
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to open tmp file for blob store: %w", err)
+	}
+	defer f.Close()
+
+	if err := e.BlobStore.Put(ctx, "peer_"+checksumHex, f, int64(size)); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to put shard in blob store: %w", err)
+	}
+	f.Close()
+	os.Remove(tmpPath)
+
 	tx, err := e.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err

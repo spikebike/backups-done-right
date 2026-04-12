@@ -158,6 +158,7 @@ func main() {
 	dirs := []string{
 		filepath.Dir(cfg.Storage.SQLitePath),
 		cfg.Storage.BlobStoreDir,
+		cfg.Storage.SpoolDir,
 		queueDir,
 	}
 	for _, dir := range dirs {
@@ -305,6 +306,8 @@ func main() {
 		ConfigPath:                 *configPath,
 		SQLitePath:                 cfg.Storage.SQLitePath,
 		BlobStoreDir:               cfg.Storage.BlobStoreDir,
+		SpoolDir:                   cfg.Storage.SpoolDir,
+		S3Config:                   cfg.Storage.S3,
 		QueueDir:                   queueDir,
 		DataShards:                 dataShards,
 		ParityShards:               parityShards,

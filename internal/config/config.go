@@ -52,6 +52,16 @@ type PeerConfig struct {
 	StorageLimitGB int    `yaml:"storage_limit_gb"`
 }
 
+// S3Config holds configuration for the S3-compatible BlobStore.
+type S3Config struct {
+	Enabled   bool   `yaml:"enabled"`
+	Endpoint  string `yaml:"endpoint"`
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	Bucket    string `yaml:"bucket"`
+	UseSSL    bool   `yaml:"use_ssl"`
+}
+
 // ServerConfig represents the configuration for the zero-knowledge server node.
 type ServerConfig struct {
 	Mnemonic       string `yaml:"mnemonic"`         // 24-word recovery phrase
@@ -87,8 +97,9 @@ type ServerConfig struct {
 		GCIntervalMinutes          int     `yaml:"gc_interval_minutes"`          // How often to run the GC worker
 		SelfBackupIntervalMinutes  int     `yaml:"self_backup_interval_minutes"` // How often to backup the server's own database
 		PeerEvictionHours          int     `yaml:"peer_eviction_hours"`          // Hours before a peer is considered dead and its data migrated
-		UntrustedPeerUploadLimitMB int     `yaml:"untrusted_peer_upload_limit_mb"`
-		BasePieceBuffer            int     `yaml:"base_piece_buffer"`
+		UntrustedPeerUploadLimitMB int      `yaml:"untrusted_peer_upload_limit_mb"`
+		BasePieceBuffer            int      `yaml:"base_piece_buffer"`
+		S3                         S3Config `yaml:"s3"`
 	} `yaml:"storage"`
 
 	Discovery struct {

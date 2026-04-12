@@ -190,8 +190,8 @@ func (e *Engine) RunSelfBackup(ctx context.Context) {
 	}
 	e.mu.Unlock()
 
-	shardPath := filepath.Join(e.BlobStoreDir, fmt.Sprintf("shard_%d_piece_0", shardID))
-	if err := os.WriteFile(shardPath, ciphertext, 0644); err != nil {
+	shardKey := fmt.Sprintf("shard_%d_piece_0", shardID)
+	if err := e.BlobStore.Put(ctx, shardKey, bytes.NewReader(ciphertext), int64(len(ciphertext))); err != nil {
 		log.Printf("SelfBackupWorker: failed to write shard file: %v", err)
 		return
 	}
